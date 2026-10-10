@@ -1,0 +1,439 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import {
+	copyFileSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { pathToFileURL } from "node:url";
+
+const interval = 30 * 60 * 1000;
+const checklistContent =
+	"# Periodic checks\n\nReport current Git status and test failures. No edits.\n";
+
+function git(cwd, ...args) {
+	return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5000 });
+}
+
+function createProject(home, name) {
+	const root = join(home, name);
+	mkdirSync(root, { recursive: true });
+	git(root, "init", "--quiet");
+	writeFileSync(join(root, "periodic-checks.md"), checklistContent);
+	return root;
+}
+
+async function fixture(
+	t,
+	overrides = {},
+	tools = ["spawn_agent", "send_agent_message"],
+) {
+	const home = mkdtempSync(join(tmpdir(), "periodic-test-"));
+	t.after(() => rmSync(home, { recursive: true, force: true }));
+	const project = createProject(home, "first-project");
+	const secondProject = createProject(home, "second-project");
+	const checklist = join(project, "periodic-checks.md");
+	const extensionPath = join(home, "periodic-checks.ts");
+	copyFileSync(
+		new URL("../periodic-checks.ts", import.meta.url),
+		extensionPath,
+	);
+	const globalDirectory = join(home, ".config/pi/agent/extensions");
+	mkdirSync(globalDirectory, { recursive: true });
+	const globalExtension = join(globalDirectory, "periodic-checks.ts");
+	symlinkSync(extensionPath, globalExtension);
+	const extensionUrl = pathToFileURL(globalExtension);
+	t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+	const handlers = new Map();
+	const messages = [];
+	const agents = [];
+	let idle = true;
+	let pending = false;
+	let sessionId = "main-session";
+	const ctx = {
+		cwd: project,
+		mode: "tui",
+		multiAgentAgentId: undefined,
+		multiAgentRequiresAgentId: false,
+		multiAgentStore: { listAgents: () => agents },
+		sessionManager: { getSessionId: () => sessionId },
+		isIdle: () => idle,
+		hasPendingMessages: () => pending,
+		...overrides,
+	};
+	const pi = {
+		on: (name, handler) => handlers.set(name, handler),
+		getActiveTools: () => tools,
+		sendMessage: (message, options) => messages.push({ message, options }),
+	};
+	const extension = (await import(extensionUrl.href)).default;
+	extension(pi);
+	const emit = (name, event = {}) => handlers.get(name)?.(event, ctx);
+	const finishPrompt = (sessionContinuation) =>
+		emit("agent_end", {
+			messages: [{ role: "custom", ...messages.at(-1).message }],
+			sessionContinuation,
+		});
+	return {
+		messages,
+		agents,
+		emit,
+		finishPrompt,
+		ctx,
+		home,
+		project,
+		secondProject,
+		checklist,
+		removeChecklist: () => rmSync(checklist),
+		restoreChecklist: () => writeFileSync(checklist, checklistContent),
+		tick: (ms = interval) => t.mock.timers.tick(ms),
+		busy: (value) => {
+			idle = !value;
+		},
+		pending: (value) => {
+			pending = value;
+		},
+		switchIdentity: (nextSessionId = "different-session") => {
+			sessionId = nextSessionId;
+		},
+	};
+}
+
+test("first audit only at 30 minutes; prompt delegates bounded report-only checklist audit", async (t) => {
+	const f = await fixture(t);
+	f.tick();
+	assert.equal(f.messages.length, 0, "factory must not start a timer");
+	f.emit("session_start");
+	f.emit("agent_end", { messages: [] });
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+	const { message, options } = f.messages[0];
+	assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
+	for (const text of [
+		"spawn_agent",
+		"read-only",
+		"bounded",
+		"send_agent_message",
+		"worktree",
+		"disk",
+		"build",
+		"error",
+		"delegation",
+		"headroom",
+		"no cleanup",
+		"no blocking",
+		"no cancellation",
+		"no steering",
+		"periodic-checks.md",
+		"exactly one",
+		"no edits or deployment",
+		"do not audit in main",
+		"delegate nested children",
+	]) {
+		assert.ok(
+			message.content.includes(text),
+			`missing audit instruction: ${text}`,
+		);
+	}
+	assert.ok(message.content.includes(f.checklist));
+	f.finishPrompt();
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 1);
+	f.tick(1);
+	assert.equal(
+		f.messages.length,
+		2,
+		"recurring audit exactly 30 minutes later",
+	);
+});
+
+test("audit prompt routes child findings to originating main session and confirms mailbox receipt", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	const prompt = f.messages[0].message.content;
+	assert.ok(
+		prompt.includes(
+			'send_agent_message with toAgentId "main" AND toSessionId "main-session"',
+		),
+	);
+	assert.ok(
+		prompt.includes("Check the tool result and confirm successful delivery"),
+	);
+	assert.ok(prompt.includes("Main must confirm mailbox receipt"));
+	assert.ok(prompt.includes("not just wait_agent recovery"));
+});
+
+test("replacement and restarted sessions route audits to current parent identity", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	assert.ok(
+		f.messages[0].message.content.includes('toSessionId "main-session"'),
+	);
+	for (const [reason, sessionId] of [
+		["replacement", "replacement-main-session"],
+		["restart", "restarted-main-session"],
+	]) {
+		if (reason === "restart") f.emit("session_shutdown");
+		f.switchIdentity(sessionId);
+		f.emit("session_start", { reason });
+		f.tick();
+		const prompt = f.messages.at(-1).message.content;
+		assert.ok(prompt.includes(`toSessionId "${sessionId}"`));
+		assert.ok(!prompt.includes('toSessionId "main-session"'));
+	}
+	assert.equal(f.messages.length, 3);
+});
+
+test("second Git project opts in without remote-agent mapping", async (t) => {
+	const f = await fixture(t);
+	f.ctx.cwd = f.secondProject;
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	assert.ok(
+		f.messages[0].message.content.includes(
+			join(f.secondProject, "periodic-checks.md"),
+		),
+	);
+	assert.ok(!f.messages[0].message.content.includes(f.checklist));
+});
+
+test("nested cwd discovers checklist at Git project root", async (t) => {
+	const f = await fixture(t);
+	f.ctx.cwd = join(f.project, "src/nested");
+	mkdirSync(f.ctx.cwd, { recursive: true });
+	writeFileSync(
+		join(f.ctx.cwd, "periodic-checks.md"),
+		"Not the project checklist",
+	);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	assert.ok(f.messages[0].message.content.includes(f.checklist));
+	assert.ok(
+		!f.messages[0].message.content.includes(
+			join(f.ctx.cwd, "periodic-checks.md"),
+		),
+	);
+});
+
+test("Git worktree uses its own checklist, not canonical checkout", async (t) => {
+	const f = await fixture(t);
+	git(f.project, "add", "periodic-checks.md");
+	git(
+		f.project,
+		"-c",
+		"user.name=Periodic Test",
+		"-c",
+		"user.email=periodic@example.test",
+		"-c",
+		"commit.gpgsign=false",
+		"-c",
+		"core.hooksPath=/dev/null",
+		"commit",
+		"--quiet",
+		"-m",
+		"Add checklist",
+	);
+	const worktree = join(f.home, "linked-worktree");
+	git(f.project, "worktree", "add", "--quiet", "--detach", worktree);
+	f.removeChecklist();
+	f.ctx.cwd = join(worktree, "src");
+	mkdirSync(f.ctx.cwd);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	assert.ok(
+		f.messages[0].message.content.includes(
+			join(worktree, "periodic-checks.md"),
+		),
+	);
+	assert.ok(!f.messages[0].message.content.includes(f.checklist));
+});
+
+test("busy and queued input ticks are skipped, never dispatched on completion", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.busy(true);
+	f.tick();
+	f.busy(false);
+	f.emit("agent_end", { messages: [] });
+	assert.equal(f.messages.length, 0);
+	f.pending(true);
+	f.tick();
+	f.pending(false);
+	f.emit("agent_end", { messages: [] });
+	assert.equal(f.messages.length, 0);
+	f.tick();
+	assert.equal(f.messages.length, 1);
+});
+
+test("queued audit and live audit child suppress overlap until child terminal state", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick();
+	f.tick();
+	f.emit("agent_end", { messages: [] });
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	f.finishPrompt("cwd_relocation");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	f.agents.push({
+		id: "audit-child",
+		displayName: "periodic-checks-audit",
+		lifecycle: "running",
+	});
+	f.finishPrompt();
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	f.agents[0].lifecycle = "waiting_for_input";
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	f.agents[0].lifecycle = "completed";
+	f.emit("agent_end", { messages: [] });
+	assert.equal(f.messages.length, 1, "no completion-triggered audit");
+	f.tick();
+	assert.equal(f.messages.length, 2);
+});
+
+test("every session_start rearms from zero; shutdown clears; stale identity cannot fire", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick(interval - 1);
+	f.emit("session_start", { reason: "reload" });
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+	f.emit("session_shutdown");
+	f.tick(interval * 3);
+	assert.equal(f.messages.length, 1);
+	f.emit("session_start", { reason: "resume" });
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 1);
+	f.tick(1);
+	assert.equal(f.messages.length, 2);
+	f.finishPrompt();
+	f.switchIdentity();
+	f.tick();
+	assert.equal(f.messages.length, 2);
+});
+
+test("only supported Pi main runtimes arm", async (t) => {
+	for (const [label, overrides, tools] of [
+		["child", { multiAgentAgentId: "child-1" }],
+		["child awaiting identity", { multiAgentRequiresAgentId: true }],
+		["print", { mode: "print" }],
+		["json", { mode: "json" }],
+		["missing runtime store", { multiAgentStore: undefined }],
+		["missing delegation", {}, ["send_agent_message"]],
+		["missing mailbox", {}, ["spawn_agent"]],
+	]) {
+		await t.test(label, async (t) => {
+			const f = await fixture(t, overrides, tools);
+			f.emit("session_start");
+			f.tick(interval * 2);
+			assert.equal(f.messages.length, 0);
+		});
+	}
+});
+
+test("absent checklist disables scheduling until restored and session_start fires", async (t) => {
+	const f = await fixture(t);
+	f.removeChecklist();
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 0, "absent checklist must not arm a timer");
+	f.restoreChecklist();
+	f.tick(interval * 2);
+	assert.equal(
+		f.messages.length,
+		0,
+		"restoration must not start polling audits",
+	);
+	f.emit("session_start");
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("removed checklist prevents the next armed audit", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.removeChecklist();
+	f.tick();
+	assert.equal(f.messages.length, 0, "removed checklist must not audit");
+});
+
+test("removed checklist stops armed timer even while busy; restoration requires session_start", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.busy(true);
+	f.removeChecklist();
+	f.tick();
+	assert.equal(f.messages.length, 0, "removed checklist must not audit");
+	f.restoreChecklist();
+	f.busy(false);
+	f.tick(interval * 2);
+	assert.equal(f.messages.length, 0, "removed checklist must stop the timer");
+	f.emit("session_start");
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("ticks remain scoped to startup project after cwd changes", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.ctx.cwd = f.secondProject;
+	f.tick();
+	assert.equal(f.messages.length, 0);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	assert.ok(
+		f.messages[0].message.content.includes(
+			join(f.secondProject, "periodic-checks.md"),
+		),
+	);
+});
+
+test("non-Git directory with checklist cannot opt in", async (t) => {
+	const f = await fixture(t);
+	f.ctx.cwd = f.home;
+	writeFileSync(join(f.home, "periodic-checks.md"), checklistContent);
+	f.emit("session_start");
+	f.tick(interval * 2);
+	assert.equal(f.messages.length, 0);
+});
+
+test("stale generation completion cannot clear current queued audit", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	const stale = { role: "custom", ...f.messages[0].message };
+	f.emit("session_start");
+	f.tick();
+	f.emit("agent_end", { messages: [stale] });
+	f.tick();
+	assert.equal(f.messages.length, 2);
+	f.finishPrompt();
+	f.tick();
+	assert.equal(f.messages.length, 3);
+});

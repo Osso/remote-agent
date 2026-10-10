@@ -1,0 +1,6 @@
+PLAN.md
+__pycache__/
+*.py[cod]
+.ruff_cache/
+remote-hosts.json
+remote-projects.json

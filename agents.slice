@@ -1,0 +1,6 @@
+[Slice]
+# Example limits for remote-agent sessions and child processes.
+# Adjust to the host's capacity before deploying.
+CPUQuota=1000%
+MemoryHigh=11G
+MemoryMax=12G
