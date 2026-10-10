@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 const maxTimerMs = 2147483647;
 const millisecondsPerSecond = 1000;
+const millisecondsPerMinute = 60 * millisecondsPerSecond;
 const messageType = "periodic-checks";
 const auditName = "periodic-checks-audit";
 const terminalStates = new Set(["completed", "failed", "aborted"]);
@@ -36,6 +37,12 @@ function parseChecklistInterval(content: string): number {
 		);
 	}
 	return delay;
+}
+
+function formatRemainingTime(remainingMs: number): string {
+	if (remainingMs < millisecondsPerMinute) return "in less than a minute";
+	const minutes = Math.ceil(remainingMs / millisecondsPerMinute);
+	return `in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 }
 
 function readChecklistInterval(checklist: string): number {
@@ -223,7 +230,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 				nextTick !== undefined
 			) {
 				lines.push(`interval_seconds: ${intervalMs / millisecondsPerSecond}`);
-				lines.push(`Next scheduled tick: ${new Date(nextTick).toISOString()}`);
+				lines.push(`Next run: ${formatRemainingTime(nextTick - Date.now())}`);
 			} else {
 				lines.push(`Reason: ${disabledReason}`);
 			}

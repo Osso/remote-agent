@@ -70,7 +70,7 @@ async function fixture(
 	const globalExtension = join(globalDirectory, "periodic-checks.ts");
 	symlinkSync(extensionPath, globalExtension);
 	const extensionUrl = pathToFileURL(globalExtension);
-	t.mock.timers.enable({ apis: ["setInterval", "Date"] });
+	t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 1800000000000 });
 	const handlers = new Map();
 	const commands = new Map();
 	const notifications = [];
@@ -142,13 +142,12 @@ test("status reports armed schedule without changing metadata or original deadli
 	const f = await fixture(t);
 	f.restoreChecklist(configuredChecklist(60));
 	f.emit("session_start");
-	const deadline = new Date(Date.now() + 60000).toISOString();
 	f.tick(30000);
 	f.restoreChecklist(checklistBody);
 	for (const args of ["status", "", "  status  "]) {
 		assert.equal(
 			await f.status(args),
-			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 60\nNext scheduled tick: ${deadline}`,
+			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 60\nNext run: in less than a minute`,
 		);
 	}
 	assert.equal(f.messages.length, 0);
@@ -156,6 +155,56 @@ test("status reports armed schedule without changing metadata or original deadli
 	assert.equal(f.messages.length, 0);
 	f.tick(1);
 	assert.equal(f.messages.length, 1);
+});
+
+test("status counts down without auditing, rereading metadata or resetting the original tick", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.restoreChecklist(checklistBody);
+	for (const [elapsed, expected] of [
+		[0, "Next run: in 30 minutes"],
+		[60000, "Next run: in 29 minutes"],
+		[28 * 60000, "Next run: in 1 minute"],
+		[1, "Next run: in less than a minute"],
+	]) {
+		f.tick(elapsed);
+		for (let repeat = 0; repeat < 2; repeat++) {
+			assert.equal(
+				await f.status(),
+				`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\n${expected}`,
+			);
+			assert.equal(f.notifications.at(-1).type, "info");
+		}
+		assert.equal(f.messages.length, 0);
+	}
+	f.tick(59998);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("status rounds 90 seconds up to 2 minutes", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(configuredChecklist(90));
+	f.emit("session_start");
+	assert.equal(
+		await f.status(),
+		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 90\nNext run: in 2 minutes`,
+	);
+});
+
+test("status clamps due and overdue ticks to less than a minute without dispatch", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	const start = Date.now();
+	for (const elapsed of [interval, interval + 1, interval + 60000]) {
+		t.mock.timers.setTime(start + elapsed);
+		assert.equal(
+			await f.status(),
+			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in less than a minute`,
+		);
+		assert.equal(f.messages.length, 0);
+	}
 });
 
 test("status rejects controls and extra arguments without resetting deadline", async (t) => {
@@ -220,10 +269,9 @@ test("status restart resets interval, checklist and scheduled boundary", async (
 		configuredChecklist(60),
 	);
 	f.emit("session_start", { reason: "restart" });
-	const deadline = new Date(Date.now() + 60000).toISOString();
 	assert.equal(
 		await f.status(),
-		`Periodic checks: armed\nChecklist: ${join(f.secondProject, "periodic-checks.md")}\ninterval_seconds: 60\nNext scheduled tick: ${deadline}`,
+		`Periodic checks: armed\nChecklist: ${join(f.secondProject, "periodic-checks.md")}\ninterval_seconds: 60\nNext run: in 1 minute`,
 	);
 	f.tick(59999);
 	assert.equal(f.messages.length, 0);
@@ -234,19 +282,25 @@ test("status restart resets interval, checklist and scheduled boundary", async (
 test("status advances scheduled boundary through busy and in-flight skipped ticks", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	const start = Date.now();
 	f.busy(true);
 	f.tick();
-	assert.ok(
-		(await f.status()).includes(new Date(start + interval * 2).toISOString()),
+	assert.equal(
+		await f.status(),
+		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 30 minutes`,
+	);
+	f.tick(60000);
+	assert.equal(
+		await f.status(),
+		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 29 minutes`,
 	);
 	assert.equal(f.messages.length, 0);
 	f.busy(false);
-	f.tick();
+	f.tick(interval - 60000);
 	assert.equal(f.messages.length, 1);
 	f.tick();
-	assert.ok(
-		(await f.status()).includes(new Date(start + interval * 4).toISOString()),
+	assert.equal(
+		await f.status(),
+		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 30 minutes`,
 	);
 	assert.equal(f.messages.length, 1);
 	f.finishPrompt();

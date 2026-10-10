@@ -247,8 +247,11 @@ Use `/periodic-checks status` (or `/periodic-checks` with no arguments) to displ
 scheduler state. Other arguments show `Usage: /periodic-checks status`.
 The notification reports `Periodic checks: armed` or `Periodic checks: disabled`,
 plus `Checklist:` when its path is known. Armed status includes the active
-`interval_seconds:` and `Next scheduled tick:` as an ISO timestamp; disabled
-status includes `Reason:` (for example, `No checklist` or `Checklist removed`).
+`interval_seconds:` and a relative schedule estimate: `Next run: in N minutes`,
+`Next run: in 1 minute`, or `Next run: in less than a minute`. Remaining time is
+calculated when status is requested; minutes round up (90 seconds shows 2
+minutes), and due or overdue ticks show less than a minute. Disabled status
+includes `Reason:` (for example, `No checklist` or `Checklist removed`).
 Status reflects the current scheduler, not unapplied metadata edits. The command
 is read-only: it triggers no audit and does not reset or re-arm the timer.
 A scheduled tick is not a guaranteed audit: busy sessions, pending messages,
