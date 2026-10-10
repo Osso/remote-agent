@@ -136,18 +136,19 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		generation++;
 	}
 
+	function advanceScheduledTick(now: number): void {
+		if (intervalMs === undefined || nextTick === undefined) return;
+		if (now < nextTick) return;
+		const elapsedIntervals = Math.floor((now - nextTick) / intervalMs) + 1;
+		nextTick += elapsedIntervals * intervalMs;
+	}
+
 	function dispatchAuditTick(
 		ctx: ExtensionContext,
 		audit: ScheduledAudit,
 	): void {
 		if (audit.generation !== generation) return;
-		if (intervalMs !== undefined && nextTick !== undefined) {
-			const now = Date.now();
-			if (now >= nextTick) {
-				const elapsedIntervals = Math.floor((now - nextTick) / intervalMs) + 1;
-				nextTick += elapsedIntervals * intervalMs;
-			}
-		}
+		advanceScheduledTick(Date.now());
 		if (!existsSync(audit.checklist)) {
 			stopTimer("Checklist removed");
 			return;
