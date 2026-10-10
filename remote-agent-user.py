@@ -3,9 +3,9 @@
 
 import argparse
 import os
-from pathlib import Path
 import pwd
 import sys
+from pathlib import Path
 
 
 def build_user_environment(account, source):

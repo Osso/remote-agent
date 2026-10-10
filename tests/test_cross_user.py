@@ -6,11 +6,11 @@ separately proves the real Unix UID/tmux boundary without model calls.
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -130,6 +130,7 @@ sys.exit(r.returncode)
             text=True,
             capture_output=True,
             timeout=10,
+            check=False,
         )
 
     def assert_target_identity(self, identity):

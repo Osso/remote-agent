@@ -21,8 +21,9 @@ The controller and privileged helper implement the account boundary; see
 - [x] Unknown users, authorization failures and wrapped hosts fail explicitly;
   authorization/configuration failure does not enter Mosh retries. Covered by
   `CrossUserControllerTests`.
-- [ ] Actual Unix UID, default tmux socket ownership, and interactive Mosh
-  attachment are proven with owned disposable sessions across two server accounts.
+- [x] Actual Unix UID, default tmux socket ownership, and interactive Mosh
+  attachment are proven with same-named owned disposable sessions across two
+  server accounts; clean detach preserves both sessions. Proven by live acceptance.
 
 ## How it works
 
@@ -43,7 +44,7 @@ The controller and privileged helper implement the account boundary; see
 
 ## Known gaps (current cycle)
 
-- [ ] Live cross-UID/Mosh acceptance pending deployment.
+None.
 
 ## Out of scope
 
