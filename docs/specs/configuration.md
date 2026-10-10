@@ -13,6 +13,9 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - [x] Google OKF YAML frontmatter requires a nonempty string `type` and custom positive safe-integer `interval_seconds` within 1–2147483 seconds; unknown fields are allowed. Missing, malformed, or invalid metadata raises an explicit error and disables the timer, with no fixed 30-minute fallback. Asserted by scheduler metadata tests.
 - [x] Metadata is read on `session_start`/reload; the first tick waits the full configured interval. Metadata edits require another start/reload; ticks do not reread metadata. Asserted by scheduler runtime tests.
 
+- [x] `/periodic-checks status` (and no-argument `/periodic-checks`) reports `armed` or `disabled`, the checklist path when known, active `interval_seconds` and next scheduled tick as an ISO timestamp when armed, or the disabled reason otherwise. Other arguments produce a usage warning. Status reads current scheduler state without triggering an audit, resetting the timer, or applying metadata edits. Asserted by scheduler command tests.
+- [x] Existing Pi sessions require reload (or a new session) to discover the newly installed command. A next scheduled tick does not guarantee an audit: busy sessions, pending messages, and audit overlap skip dispatch. Asserted by scheduler runtime tests for skipped ticks; command discovery requires extension loading.
+
 ## How it works
 
 - [Mapping setup and deployment](../../README.md#mapping-setup).
@@ -23,12 +26,12 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - `remote-agent.py` — controller host and project mapping consumption.
 - `remote-agent-worker.py` — worker mapping consumption and selected-host agent environment.
 - `deploy.py` — separate code archive and private mapping transfer.
-- `periodic-checks.ts` — Git-root checklist discovery and bounded metadata scheduling, using Pi's exported YAML `parseFrontmatter` without a new dependency.
+- `periodic-checks.ts` — Git-root checklist discovery, bounded metadata scheduling, and read-only scheduler status, using Pi's exported YAML `parseFrontmatter` without a new dependency.
 
 ## Tests asserting this spec
 
 - `tests/test_remote_agent.py` — isolated configuration, selected controller/sync/worker behavior, real-tmux host environment propagation, and local execution of deployed payload.
-- `tests/test_periodic_scheduler.mjs` — isolated extension scheduling, OKF metadata validation, full-interval timing, start/reload metadata changes, Git-root/checklist discovery, and unmapped-project participation; also exercised from deployed code. Native Node execution requires the installed Pi npm package to be resolvable, including through `NODE_PATH` for compiled-only Pi installations. See the [canonical test command and prerequisites](../../README.md#tests).
+- `tests/test_periodic_scheduler.mjs` — isolated extension scheduling, OKF metadata validation, full-interval timing, start/reload metadata changes, Git-root/checklist discovery, unmapped-project participation, read-only status output and argument validation, and skipped ticks while busy or overlapping; also exercised from deployed code. Native Node execution requires the installed Pi npm package to be resolvable, including through `NODE_PATH` for compiled-only Pi installations. See the [canonical test command and prerequisites](../../README.md#tests).
 
 ## Known gaps (current cycle)
 

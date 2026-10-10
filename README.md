@@ -181,8 +181,9 @@ At session start, the extension discovers the current directory's Git root and
 looks for `periodic-checks.md` there. Keep this host-local policy file Git-ignored
 and configure its contents independently on each host. Deployment ships plugin
 code, never project checklist contents. That file opts the project in; no file
-means no timer. Start a new Pi session after installing the extension or adding the
-checklist. Eligible local and remote main sessions behave alike: TUI or RPC
+means no timer. Reload an existing Pi session or start a new one after installing
+the extension to discover newly installed commands, or after adding the checklist
+to arm its timer. Eligible local and remote main sessions behave alike: TUI or RPC
 mode, a multi-agent store, and active `spawn_agent` and `send_agent_message`
 tools are required. Child sessions are excluded. These are custom Pi
 multi-agent capabilities; compatibility with stock Pi is not guaranteed.
@@ -213,6 +214,17 @@ disabled; an absent file means no timer. Reload or start a new session to apply
 metadata edits or re-arm after restoring the file. Busy sessions, pending
 messages, or an existing live audit skip a tick. Removing the checklist stops
 the timer at the next tick. This is not an offline scheduler.
+
+Use `/periodic-checks status` (or `/periodic-checks` with no arguments) to display
+scheduler state. Other arguments show `Usage: /periodic-checks status`.
+The notification reports `Periodic checks: armed` or `Periodic checks: disabled`,
+plus `Checklist:` when its path is known. Armed status includes the active
+`interval_seconds:` and `Next scheduled tick:` as an ISO timestamp; disabled
+status includes `Reason:` (for example, `No checklist` or `Checklist removed`).
+Status reflects the current scheduler, not unapplied metadata edits. The command
+is read-only: it triggers no audit and does not reset or re-arm the timer.
+A scheduled tick is not a guaranteed audit: busy sessions, pending messages,
+or overlapping audits can cause it to be skipped.
 
 Each dispatched prompt requests one bounded, read-only audit child that rereads
 the checklist and sends findings to the originating main session. Audits are
