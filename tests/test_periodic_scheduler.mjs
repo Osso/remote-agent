@@ -72,6 +72,8 @@ async function fixture(
 	const extensionUrl = pathToFileURL(globalExtension);
 	t.mock.timers.enable({ apis: ["setInterval", "Date"] });
 	const handlers = new Map();
+	const commands = new Map();
+	const notifications = [];
 	const messages = [];
 	const agents = [];
 	let idle = true;
@@ -79,6 +81,7 @@ async function fixture(
 	let sessionId = "main-session";
 	const ctx = {
 		cwd: project,
+		ui: { notify: (text, type) => notifications.push({ text, type }) },
 		mode: "tui",
 		multiAgentAgentId: undefined,
 		multiAgentRequiresAgentId: false,
@@ -90,6 +93,7 @@ async function fixture(
 	};
 	const pi = {
 		on: (name, handler) => handlers.set(name, handler),
+		registerCommand: (name, command) => commands.set(name, command),
 		getActiveTools: () => tools,
 		sendMessage: (message, options) => messages.push({ message, options }),
 	};
@@ -103,6 +107,13 @@ async function fixture(
 		});
 	return {
 		messages,
+		notifications,
+		status: async (args = "status") => {
+			const command = commands.get("periodic-checks");
+			assert.ok(command, "periodic-checks command must be registered");
+			await command.handler(args, ctx);
+			return notifications.at(-1).text;
+		},
 		agents,
 		emit,
 		finishPrompt,
@@ -126,6 +137,179 @@ async function fixture(
 		},
 	};
 }
+
+test("status reports armed schedule without changing metadata or original deadline", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(configuredChecklist(60));
+	f.emit("session_start");
+	const deadline = new Date(Date.now() + 60000).toISOString();
+	f.tick(30000);
+	f.restoreChecklist(checklistBody);
+	for (const args of ["status", "", "  status  "]) {
+		assert.equal(
+			await f.status(args),
+			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 60\nNext scheduled tick: ${deadline}`,
+		);
+	}
+	assert.equal(f.messages.length, 0);
+	f.tick(29999);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("status rejects controls and extra arguments without resetting deadline", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick(interval - 1);
+	for (const args of ["start", "stop", "status extra"]) {
+		assert.equal(await f.status(args), "Usage: /periodic-checks status");
+		assert.equal(f.notifications.at(-1).type, "warning");
+	}
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("status records missing checklist without rearming on restoration", async (t) => {
+	const f = await fixture(t);
+	f.removeChecklist();
+	f.emit("session_start");
+	assert.equal(
+		await f.status(),
+		`Periodic checks: disabled\nChecklist: ${f.checklist}\nReason: No checklist`,
+	);
+	f.restoreChecklist();
+	await f.status();
+	f.tick(interval * 2);
+	assert.equal(f.messages.length, 0);
+});
+
+test("status preserves explicit invalid metadata startup error and disabled state", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.restoreChecklist(checklistBody);
+	let startupError;
+	assert.throws(
+		() => f.emit("session_start"),
+		(error) => {
+			startupError = error.message;
+			return error.message.includes(f.checklist);
+		},
+	);
+	assert.equal(
+		await f.status(),
+		`Periodic checks: disabled\nChecklist: ${f.checklist}\nReason: ${startupError}`,
+	);
+	f.restoreChecklist();
+	await f.status();
+	f.tick(interval * 2);
+	assert.equal(f.messages.length, 0);
+});
+
+test("status restart resets interval, checklist and scheduled boundary", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick(30000);
+	f.emit("session_shutdown");
+	assert.match(await f.status(), /disabled[\s\S]*Reason: Session shutdown/);
+	assert.ok((await f.status()).includes(f.checklist));
+	f.ctx.cwd = f.secondProject;
+	writeFileSync(
+		join(f.secondProject, "periodic-checks.md"),
+		configuredChecklist(60),
+	);
+	f.emit("session_start", { reason: "restart" });
+	const deadline = new Date(Date.now() + 60000).toISOString();
+	assert.equal(
+		await f.status(),
+		`Periodic checks: armed\nChecklist: ${join(f.secondProject, "periodic-checks.md")}\ninterval_seconds: 60\nNext scheduled tick: ${deadline}`,
+	);
+	f.tick(59999);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("status advances scheduled boundary through busy and in-flight skipped ticks", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	const start = Date.now();
+	f.busy(true);
+	f.tick();
+	assert.ok(
+		(await f.status()).includes(new Date(start + interval * 2).toISOString()),
+	);
+	assert.equal(f.messages.length, 0);
+	f.busy(false);
+	f.tick();
+	assert.equal(f.messages.length, 1);
+	f.tick();
+	assert.ok(
+		(await f.status()).includes(new Date(start + interval * 4).toISOString()),
+	);
+	assert.equal(f.messages.length, 1);
+	f.finishPrompt();
+	await f.status();
+	assert.equal(f.messages.length, 1);
+});
+
+test("status reflects removal only after scheduled tick and never restarts timer", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.removeChecklist();
+	assert.match(await f.status(), /Periodic checks: armed/);
+	f.busy(true);
+	f.tick();
+	assert.equal(
+		await f.status(),
+		`Periodic checks: disabled\nChecklist: ${f.checklist}\nReason: Checklist removed`,
+	);
+	f.restoreChecklist();
+	f.busy(false);
+	await f.status();
+	f.tick(interval * 2);
+	assert.equal(f.messages.length, 0);
+});
+
+test("status explains unsupported runtimes and missing tools", async (t) => {
+	for (const [overrides, tools, reason] of [
+		[{ multiAgentAgentId: "child-1" }, undefined, "Child session"],
+		[{ multiAgentRequiresAgentId: true }, undefined, "Child session"],
+		[{ mode: "print" }, undefined, "Unsupported runtime mode: print"],
+		[
+			{ multiAgentStore: undefined },
+			undefined,
+			"Missing multi-agent runtime store",
+		],
+		[{}, ["send_agent_message"], "Missing required tools: spawn_agent"],
+		[{}, ["spawn_agent"], "Missing required tools: send_agent_message"],
+	]) {
+		await t.test(reason, async (t) => {
+			const f = await fixture(t, overrides, tools);
+			f.emit("session_start");
+			assert.equal(
+				await f.status(),
+				`Periodic checks: disabled\nReason: ${reason}`,
+			);
+			f.tick(interval);
+			assert.equal(f.messages.length, 0);
+		});
+	}
+});
+
+test("status explains non-Git cwd without stale checklist or interval", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.ctx.cwd = f.home;
+	f.emit("session_start");
+	assert.equal(
+		await f.status(),
+		"Periodic checks: disabled\nReason: Not a Git project",
+	);
+	f.tick(interval);
+	assert.equal(f.messages.length, 0);
+});
 
 test("1800-second metadata delays first and recurring bounded report-only audit", async (t) => {
 	const f = await fixture(t);

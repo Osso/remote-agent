@@ -68,12 +68,22 @@ function queryProjectRoot(cwd: string): string | undefined {
 	return git.stdout.trim() || undefined;
 }
 
-function supportsAudit(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
-	if (ctx.multiAgentAgentId || ctx.multiAgentRequiresAgentId) return false;
-	if (ctx.mode !== "tui" && ctx.mode !== "rpc") return false;
-	if (!ctx.multiAgentStore) return false;
+function auditDisabledReason(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+): string | undefined {
+	if (ctx.multiAgentAgentId || ctx.multiAgentRequiresAgentId)
+		return "Child session";
+	if (ctx.mode !== "tui" && ctx.mode !== "rpc")
+		return `Unsupported runtime mode: ${ctx.mode}`;
+	if (!ctx.multiAgentStore) return "Missing multi-agent runtime store";
 	const tools = pi.getActiveTools();
-	return tools.includes("spawn_agent") && tools.includes("send_agent_message");
+	const missing = ["spawn_agent", "send_agent_message"].filter(
+		(name) => !tools.includes(name),
+	);
+	return missing.length
+		? `Missing required tools: ${missing.join(", ")}`
+		: undefined;
 }
 
 function hasLiveAudit(ctx: ExtensionContext): boolean {
@@ -111,10 +121,17 @@ export default function periodicExtension(pi: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let generation = 0;
 	let inFlight = false;
+	let checklist: string | undefined;
+	let intervalMs: number | undefined;
+	let nextTick: number | undefined;
+	let disabledReason = "Session not started";
 
-	function stopTimer(): void {
+	function stopTimer(reason: string): void {
 		if (timer !== undefined) clearInterval(timer);
 		timer = undefined;
+		intervalMs = undefined;
+		nextTick = undefined;
+		disabledReason = reason;
 		inFlight = false;
 		generation++;
 	}
@@ -123,13 +140,21 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 		audit: ScheduledAudit,
 	): void {
+		if (audit.generation !== generation) return;
+		if (intervalMs !== undefined && nextTick !== undefined) {
+			const now = Date.now();
+			if (now >= nextTick) {
+				const elapsedIntervals = Math.floor((now - nextTick) / intervalMs) + 1;
+				nextTick += elapsedIntervals * intervalMs;
+			}
+		}
 		if (!existsSync(audit.checklist)) {
-			stopTimer();
+			stopTimer("Checklist removed");
 			return;
 		}
-		if (audit.generation !== generation || inFlight) return;
+		if (inFlight) return;
 		if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
-		if (!supportsAudit(pi, ctx)) return;
+		if (auditDisabledReason(pi, ctx)) return;
 		if (queryProjectRoot(ctx.cwd) !== audit.projectRoot) return;
 		if (hasAuditOverlap(ctx)) return;
 		pi.sendMessage(
@@ -145,23 +170,67 @@ export default function periodicExtension(pi: ExtensionAPI) {
 	}
 
 	function startTimer(ctx: ExtensionContext): void {
-		stopTimer();
-		if (!supportsAudit(pi, ctx)) return;
-		const projectRoot = queryProjectRoot(ctx.cwd);
-		if (!projectRoot) return;
-		const checklist = join(projectRoot, "periodic-checks.md");
-		if (!existsSync(checklist)) return;
-		const intervalMs = readChecklistInterval(checklist);
+		stopTimer("Session starting");
+		checklist = undefined;
+		const unsupportedReason = auditDisabledReason(pi, ctx);
+		disabledReason = unsupportedReason ?? "Not a Git project";
+		if (unsupportedReason) return;
+		try {
+			const projectRoot = queryProjectRoot(ctx.cwd);
+			if (!projectRoot) return;
+			checklist = join(projectRoot, "periodic-checks.md");
+			disabledReason = "No checklist";
+			if (!existsSync(checklist)) return;
+			armTimer(ctx, projectRoot, checklist);
+		} catch (error) {
+			disabledReason = error instanceof Error ? error.message : String(error);
+			throw error;
+		}
+	}
+
+	function armTimer(
+		ctx: ExtensionContext,
+		projectRoot: string,
+		path: string,
+	): void {
+		intervalMs = readChecklistInterval(path);
+		nextTick = Date.now() + intervalMs;
 		const audit = {
 			projectRoot,
-			checklist,
+			checklist: path,
 			sessionId: ctx.sessionManager.getSessionId(),
 			generation,
 		};
 		timer = setInterval(() => dispatchAuditTick(ctx, audit), intervalMs);
 	}
 
-	pi.on("session_shutdown", stopTimer);
+	pi.registerCommand("periodic-checks", {
+		description: "Show periodic checklist scheduler status",
+		handler: async (args, ctx) => {
+			const action = args.trim();
+			if (action !== "" && action !== "status") {
+				ctx.ui.notify("Usage: /periodic-checks status", "warning");
+				return;
+			}
+			const lines = [
+				`Periodic checks: ${timer === undefined ? "disabled" : "armed"}`,
+			];
+			if (checklist) lines.push(`Checklist: ${checklist}`);
+			if (
+				timer !== undefined &&
+				intervalMs !== undefined &&
+				nextTick !== undefined
+			) {
+				lines.push(`interval_seconds: ${intervalMs / millisecondsPerSecond}`);
+				lines.push(`Next scheduled tick: ${new Date(nextTick).toISOString()}`);
+			} else {
+				lines.push(`Reason: ${disabledReason}`);
+			}
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
+
+	pi.on("session_shutdown", () => stopTimer("Session shutdown"));
 	pi.on("session_start", (_event, ctx) => startTimer(ctx));
 	pi.on("agent_end", (event, ctx) => {
 		if (event.sessionContinuation) return;
