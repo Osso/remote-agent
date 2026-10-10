@@ -2,20 +2,40 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
 	copyFileSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 const interval = 30 * 60 * 1000;
-const checklistContent =
+const checklistBody =
 	"# Periodic checks\n\nReport current Git status and test failures. No edits.\n";
+const checklistContent = configuredChecklist(1800);
+
+function configuredChecklist(seconds) {
+	return `---\ntype: Periodic Checks\ninterval_seconds: ${seconds}\n---\n${checklistBody}`;
+}
+
+function linkPiPackage(home) {
+	const require = createRequire(import.meta.url);
+	const packageName = "@earendil-works/pi-coding-agent";
+	const root = require.resolve
+		.paths(packageName)
+		.map((path) => join(path, packageName))
+		.find((path) => existsSync(join(path, "package.json")));
+	assert.ok(root, "Install Pi's npm package or expose it through NODE_PATH");
+	const scope = join(home, "node_modules/@earendil-works");
+	mkdirSync(scope, { recursive: true });
+	symlinkSync(root, join(scope, "pi-coding-agent"));
+}
 
 function git(cwd, ...args) {
 	return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5000 });
@@ -36,6 +56,7 @@ async function fixture(
 ) {
 	const home = mkdtempSync(join(tmpdir(), "periodic-test-"));
 	t.after(() => rmSync(home, { recursive: true, force: true }));
+	linkPiPackage(home);
 	const project = createProject(home, "first-project");
 	const secondProject = createProject(home, "second-project");
 	const checklist = join(project, "periodic-checks.md");
@@ -91,7 +112,8 @@ async function fixture(
 		secondProject,
 		checklist,
 		removeChecklist: () => rmSync(checklist),
-		restoreChecklist: () => writeFileSync(checklist, checklistContent),
+		restoreChecklist: (content = checklistContent) =>
+			writeFileSync(checklist, content),
 		tick: (ms = interval) => t.mock.timers.tick(ms),
 		busy: (value) => {
 			idle = !value;
@@ -105,7 +127,7 @@ async function fixture(
 	};
 }
 
-test("first audit only at 30 minutes; prompt delegates bounded report-only checklist audit", async (t) => {
+test("1800-second metadata delays first and recurring bounded report-only audit", async (t) => {
 	const f = await fixture(t);
 	f.tick();
 	assert.equal(f.messages.length, 0, "factory must not start a timer");
@@ -153,6 +175,160 @@ test("first audit only at 30 minutes; prompt delegates bounded report-only check
 		2,
 		"recurring audit exactly 30 minutes later",
 	);
+});
+
+for (const seconds of [60, 1, 2147483]) {
+	test(`${seconds}-second metadata delays first and recurring audit`, async (t) => {
+		const f = await fixture(t);
+		f.restoreChecklist(configuredChecklist(seconds));
+		f.emit("session_start");
+		const delay = seconds * 1000;
+		f.tick(delay - 1);
+		assert.equal(f.messages.length, 0);
+		f.tick(1);
+		assert.equal(f.messages.length, 1);
+		f.finishPrompt();
+		f.tick(delay - 1);
+		assert.equal(f.messages.length, 1);
+		f.tick(1);
+		assert.equal(f.messages.length, 2);
+	});
+}
+
+const invalidChecklists = [
+	["missing frontmatter", checklistBody],
+	[
+		"unclosed frontmatter",
+		"---\ntype: Periodic Checks\ninterval_seconds: 60\n",
+	],
+	[
+		"bad opening delimiter",
+		"---oops\ntype: Periodic Checks\ninterval_seconds: 60\n---\n",
+	],
+	[
+		"bad closing delimiter",
+		"---\ntype: Periodic Checks\ninterval_seconds: 60\n---oops\n",
+	],
+	["empty metadata", "---\n---\n"],
+	["sequence metadata", "---\n- Periodic Checks\n- 60\n---\n"],
+	["scalar metadata", "---\nPeriodic Checks\n---\n"],
+	["missing type", "---\ninterval_seconds: 60\n---\n"],
+	["missing interval", "---\ntype: Periodic Checks\n---\n"],
+	[
+		"duplicate type",
+		"---\ntype: First\ntype: Second\ninterval_seconds: 60\n---\n",
+	],
+	[
+		"duplicate interval",
+		"---\ntype: Periodic Checks\ninterval_seconds: 60\ninterval_seconds: 1800\n---\n",
+	],
+	[
+		"malformed YAML",
+		"---\ntype: Periodic Checks\ninterval_seconds: [60\n---\n",
+	],
+	[
+		"malformed indentation",
+		"---\ntype: Periodic Checks\ninterval_seconds:\n\tvalue: 60\n---\n",
+	],
+	...["''", "'  '", "null", "123", "[]", "{}"].map((value) => [
+		`invalid type ${value}`,
+		`---\ntype: ${value}\ninterval_seconds: 60\n---\n`,
+	]),
+	...[
+		"0",
+		"-1",
+		"0.5",
+		"1.5",
+		".nan",
+		".inf",
+		"-.inf",
+		"9007199254740992",
+		"2147484",
+		"'60'",
+		"true",
+		"null",
+		"[]",
+		"{}",
+	].map((value) => [`invalid interval ${value}`, configuredChecklist(value)]),
+];
+
+for (const [label, content] of invalidChecklists) {
+	test(`${label} reports checklist path and never schedules`, async (t) => {
+		const f = await fixture(t);
+		f.restoreChecklist(content);
+		assert.throws(
+			() => f.emit("session_start"),
+			(error) => {
+				assert.ok(error instanceof Error);
+				assert.ok(error.message.includes(f.checklist));
+				assert.match(error.message, /metadata/i);
+				return true;
+			},
+		);
+		f.tick(interval * 3);
+		assert.equal(f.messages.length, 0);
+	});
+}
+
+test("standard YAML unknown nested keys, aliases, flow mappings, and block strings are accepted", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(
+		`---\ntype: >-\n  Custom Checks\ninterval_seconds: &delay 60\nfuture: {copied_delay: *delay, tags: [one, two]}\nnotes: |\n  Unknown multiline metadata\n  is allowed.\n---\n${checklistBody}`,
+	);
+	f.emit("session_start");
+	f.tick(59999);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+});
+
+test("CRLF frontmatter supports quoted YAML keys and values", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(
+		'---\r\n"type": \'Periodic Checks\'\r\n"interval_seconds": 60 # seconds\r\n---\r\nBody\r\n',
+	);
+	f.emit("session_start");
+	f.tick(60000);
+	assert.equal(f.messages.length, 1);
+});
+
+test("reload and restart reread metadata and wait the full new delay", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(configuredChecklist(60));
+	f.emit("session_start");
+	f.tick(59000);
+	f.restoreChecklist(configuredChecklist(1800));
+	f.emit("session_start", { reason: "reload" });
+	f.tick(interval - 1);
+	assert.equal(f.messages.length, 0);
+	f.tick(1);
+	assert.equal(f.messages.length, 1);
+	f.emit("session_shutdown");
+	f.restoreChecklist(configuredChecklist(60));
+	f.emit("session_start", { reason: "restart" });
+	f.tick(59999);
+	assert.equal(f.messages.length, 1);
+	f.tick(1);
+	assert.equal(f.messages.length, 2);
+});
+
+test("metadata edits do not change an armed delay until session_start", async (t) => {
+	const f = await fixture(t);
+	f.restoreChecklist(configuredChecklist(60));
+	f.emit("session_start");
+	f.restoreChecklist(configuredChecklist(1800));
+	f.tick(60000);
+	assert.equal(f.messages.length, 1);
+});
+
+test("invalid metadata on reload clears the previously armed timer", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.tick(interval - 1);
+	f.restoreChecklist(checklistBody);
+	assert.throws(() => f.emit("session_start", { reason: "reload" }));
+	f.tick(interval * 3);
+	assert.equal(f.messages.length, 0);
 });
 
 test("audit prompt routes child findings to originating main session and confirms mailbox receipt", async (t) => {

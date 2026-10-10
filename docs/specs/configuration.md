@@ -9,7 +9,9 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - [x] Deployment sends local user mapping bytes to the selected remote user's `~/.config/remote-agent/`, with directory mode `0700` and file modes `0600`, including replacement of existing public permissions. Fresh deployed code directories contain neither map. Asserted by `DeployTests`.
 - [x] Optional selected-host `build_host_scripts` is passed unchanged as `BUILD_HOST_SCRIPTS` to launched and restarted agents through tmux. An absent setting injects no value or personal fallback; an inherited caller value remains unchanged. Asserted by `WorkerTests.test_build_scripts_*`.
 - [x] Deployment installs the generic periodic extension at user level without bundling project checklists. Worker launch and restart add no explicit extension arguments. Asserted by `DeployTests` and `WorkerTests.test_user_extension_*`.
-- [x] Periodic checks opt in through `periodic-checks.md` at the current Git project root, without host or project mappings. Asserted by scheduler runtime tests.
+- [x] Periodic checks opt in through ignored, host-private `periodic-checks.md` at the current Git project root, without host or project mappings. Each host maintains its own file; deployment never copies it. An absent file means no timer. Asserted by scheduler runtime and deployment tests.
+- [x] Google OKF YAML frontmatter requires a nonempty string `type` and custom positive safe-integer `interval_seconds` within 1–2147483 seconds; unknown fields are allowed. Missing, malformed, or invalid metadata raises an explicit error and disables the timer, with no fixed 30-minute fallback. Asserted by scheduler metadata tests.
+- [x] Metadata is read on `session_start`/reload; the first tick waits the full configured interval. Metadata edits require another start/reload; ticks do not reread metadata. Asserted by scheduler runtime tests.
 
 ## How it works
 
@@ -21,12 +23,12 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - `remote-agent.py` — controller host and project mapping consumption.
 - `remote-agent-worker.py` — worker mapping consumption and selected-host agent environment.
 - `deploy.py` — separate code archive and private mapping transfer.
-- `periodic-checks.ts` — Git-root checklist discovery independent of mapping configuration.
+- `periodic-checks.ts` — Git-root checklist discovery and bounded metadata scheduling, using Pi's exported YAML `parseFrontmatter` without a new dependency.
 
 ## Tests asserting this spec
 
 - `tests/test_remote_agent.py` — isolated configuration, selected controller/sync/worker behavior, real-tmux host environment propagation, and local execution of deployed payload.
-- `tests/test_periodic_scheduler.mjs` — isolated extension scheduling, Git-root/checklist discovery, and unmapped-project participation; also executed from deployed code.
+- `tests/test_periodic_scheduler.mjs` — isolated extension scheduling, OKF metadata validation, full-interval timing, start/reload metadata changes, Git-root/checklist discovery, and unmapped-project participation; also exercised from deployed code. Native Node execution requires the installed Pi npm package to be resolvable, including through `NODE_PATH` for compiled-only Pi installations. See the [canonical test command and prerequisites](../../README.md#tests).
 
 ## Known gaps (current cycle)
 

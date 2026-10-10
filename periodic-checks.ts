@@ -1,17 +1,56 @@
-import type {
-	ExtensionAPI,
-	ExtensionContext,
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const intervalMs = 30 * 60 * 1000;
+const maxTimerMs = 2147483647;
+const millisecondsPerSecond = 1000;
 const messageType = "periodic-checks";
 const auditName = "periodic-checks-audit";
 const terminalStates = new Set(["completed", "failed", "aborted"]);
 const gitTimeoutMs = 5000;
 const gitMaxBuffer = 64 * 1024;
+
+function parseChecklistInterval(content: string): number {
+	const header = /^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/.exec(content);
+	if (!header) throw new Error("Missing or malformed YAML frontmatter");
+	const { frontmatter } = parseFrontmatter(header[0]);
+	if (typeof frontmatter !== "object" || Array.isArray(frontmatter)) {
+		throw new Error("YAML frontmatter must be a mapping");
+	}
+	if (typeof frontmatter.type !== "string" || !frontmatter.type.trim()) {
+		throw new Error("type must be a nonempty string");
+	}
+	const seconds = frontmatter.interval_seconds;
+	if (typeof seconds !== "number" || !Number.isSafeInteger(seconds)) {
+		throw new Error("interval_seconds must be a positive finite safe integer");
+	}
+	const delay = seconds * millisecondsPerSecond;
+	if (seconds <= 0 || delay > maxTimerMs) {
+		throw new Error(
+			`interval_seconds must yield timer milliseconds in 1..${maxTimerMs}`,
+		);
+	}
+	return delay;
+}
+
+function readChecklistInterval(checklist: string): number {
+	try {
+		return parseChecklistInterval(readFileSync(checklist, "utf8"));
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Invalid periodic checks metadata at ${checklist}: ${reason}`,
+			{
+				cause: error,
+			},
+		);
+	}
+}
 
 function queryProjectRoot(cwd: string): string | undefined {
 	const git = spawnSync("git", ["rev-parse", "--show-toplevel"], {
@@ -112,6 +151,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		if (!projectRoot) return;
 		const checklist = join(projectRoot, "periodic-checks.md");
 		if (!existsSync(checklist)) return;
+		const intervalMs = readChecklistInterval(checklist);
 		const audit = {
 			projectRoot,
 			checklist,

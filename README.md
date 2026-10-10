@@ -187,10 +187,32 @@ mode, a multi-agent store, and active `spawn_agent` and `send_agent_message`
 tools are required. Child sessions are excluded. These are custom Pi
 multi-agent capabilities; compatibility with stock Pi is not guaranteed.
 
-The first tick is after 30 minutes, not immediately; ticks repeat every 30
-minutes while the session is alive. Busy sessions, pending messages, or an
-existing live audit skip a tick. Removing the checklist stops the timer at the
-next tick. This is not an offline scheduler.
+Use Google OKF YAML frontmatter inside the ignored, host-private
+`periodic-checks.md`, followed by the audit checklist:
+
+```markdown
+---
+type: Periodic Checks
+interval_seconds: 1800
+---
+# Periodic checks
+
+Report Git status and test failures. No edits.
+```
+
+`type` must be a nonempty string; custom `interval_seconds` must be a positive
+safe integer, bounded to 1–2147483 seconds by Node's timer limit. Unknown fields
+are allowed. For manual testing, use `interval_seconds: 60`. The extension reuses
+Pi's exported `parseFrontmatter` YAML parser; no new dependency is added.
+
+Metadata is read on `session_start` (including reload), not on every tick.
+The first tick waits the full configured interval; subsequent ticks use that
+interval while the session is alive. There is no fixed 30-minute fallback.
+Missing or invalid metadata produces an explicit error and leaves the timer
+disabled; an absent file means no timer. Reload or start a new session to apply
+metadata edits or re-arm after restoring the file. Busy sessions, pending
+messages, or an existing live audit skip a tick. Removing the checklist stops
+the timer at the next tick. This is not an offline scheduler.
 
 Each dispatched prompt requests one bounded, read-only audit child that rereads
 the checklist and sends findings to the originating main session. Audits are
@@ -203,10 +225,17 @@ Run from this checkout:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py'
-node --test tests/test_periodic_scheduler.mjs
+NODE_PATH="$(npm root -g)${NODE_PATH:+:$NODE_PATH}" node --test tests/test_periodic_scheduler.mjs
 ```
 
 Python discovery includes `test_remote_agent.py` and `test_unc_mapping.py`.
+
+Native Node scheduler tests require a Node version that can load TypeScript and
+an installed `@earendil-works/pi-coding-agent` npm package reachable through Node
+resolution. The command above exposes global npm packages through `NODE_PATH`.
+If Pi's npm package is installed elsewhere, set `NODE_PATH` to its containing
+`node_modules` directory instead. A compiled-only Pi executable is insufficient
+for these tests; they do not universally run with just `pi` installed.
 
 ## License
 
