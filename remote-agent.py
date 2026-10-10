@@ -25,8 +25,18 @@ def ssh_target(host):
     return os.environ.get(key, HOSTS[host]["ssh"])
 
 
-def destination(host=DEFAULT_HOST):
+def destination(host=DEFAULT_HOST, user=None):
     profile = HOSTS[host]
+    if user is not None:
+        if profile["windows_shell"] or profile["wrap"]:
+            raise ValueError("--user requires a native Linux host without wrapping")
+        return [
+            ssh_target(host),
+            "python3",
+            profile["home"] + "/Projects/cli/remote-agent/remote-agent-user.py",
+            user,
+            host,
+        ]
     argv = [
         ssh_target(host),
         *profile["wrap"],
@@ -46,16 +56,17 @@ def validate_project(project, projects=None):
         raise ValueError("project must be one of: " + ", ".join(projects))
 
 
-def query(host, request):
+def query(host, request, user=None):
     result = run_read_only(
-        ["ssh", *KEEPALIVE, *destination(host)],
+        ["ssh", *KEEPALIVE, *destination(host, user)],
         input=json.dumps(request),
         text=True,
         capture_output=True,
     )
     if result.returncode:
         raise ValueError(
-            f"{host}: worker failed (exit {result.returncode}): "
+            f"{host}{' (user ' + user + ')' if user else ''}: "
+            f"worker failed (exit {result.returncode}): "
             + result.stdout.strip()
             + result.stderr.strip()
         )
@@ -65,12 +76,15 @@ def query(host, request):
     return json.loads(output)
 
 
-def list_sessions(host=DEFAULT_HOST):
+def list_sessions(host=DEFAULT_HOST, user=None):
     sessions, errors = [], []
     try:
+        context = {"host": host}
+        if user is not None:
+            context["user"] = user
         sessions = [
-            {**session, "host": host}
-            for session in query(host, {"action": "list"})["sessions"]
+            {**session, **context}
+            for session in query(host, {"action": "list"}, user)["sessions"]
         ]
     except (ValueError, OSError) as error:
         errors.append(str(error))
@@ -102,6 +116,11 @@ def parse_args():
     start.add_argument("--resume", metavar="ID", help="conversation id to continue")
     projects = commands.add_parser("projects")
     listing = commands.add_parser("list")
+    listing.add_argument(
+        "--user",
+        type=validate_name,
+        help="inspect another Unix user's sessions via authsudo",
+    )
     account = commands.add_parser(
         "claude-account", help="list or switch Claude accounts on the selected host"
     )
@@ -150,6 +169,12 @@ def parse_args():
         command = commands.add_parser(action)
         command.add_argument("name", type=validate_name)
         command.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
+        if action == "attach":
+            command.add_argument(
+                "--user",
+                type=validate_name,
+                help="attach another Unix user's session via authsudo",
+            )
     return parser.parse_args()
 
 
@@ -339,17 +364,22 @@ def restore_terminal():
     subprocess.run(["stty", "sane"], check=True)
 
 
-def attach(name, host=DEFAULT_HOST):
+def attach(name, host=DEFAULT_HOST, user=None):
     """Attach until a clean detach; reconnect after any dropped connection.
     The worker restarts (with resume) a session lost to a desktop restart."""
+    if user is not None:
+        # Authorization/configuration failures must not enter the reconnect loop.
+        query(host, {"action": "list"}, user)
     failures = 0
     while True:
-        code = subprocess.call(["mosh", "--", *destination(host), "--attach", name])
+        code = subprocess.call(
+            ["mosh", "--", *destination(host, user), "--attach", name]
+        )
         restore_terminal()
         if code == 0:
             # Mosh does not propagate the worker's refused-attach exit status.
             # Verify the session survived rather than silently accepting refusal.
-            query(host, {"action": "status", "name": name})
+            query(host, {"action": "status", "name": name}, user)
             return 0
         delay = min(2**failures, RECONNECT_MAX_DELAY) * (0.5 + random.random() / 2)
         failures += 1
@@ -538,12 +568,12 @@ def main():
             )
             return 0
         if args.action == "list":
-            return list_sessions(args.host)
+            return list_sessions(args.host, args.user)
         if args.action == "start":
             validate_project(args.project)
         host = args.host
         if args.action == "attach":
-            return attach(args.name, host)
+            return attach(args.name, host, args.user)
         request = {"action": args.action}
         if args.action == "start":
             request.update(

@@ -19,10 +19,12 @@ DEFAULT_HOST = "agent-server"
 FILES = (
     "remote-agent.py",
     "remote-agent-worker.py",
+    "remote-agent-user.py",
     "periodic-checks.ts",
     "agents.slice",
     "tmux.conf",
     "tests/test_remote_agent.py",
+    "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
     "README.md",
 )

@@ -101,6 +101,34 @@ dropped connections; the worker can resume a recorded conversation after its
 session is lost. This does not guarantee recovery of unsaved work or availability
 of the host, harness, or provider.
 
+### Another user's sessions
+
+On a native Linux host, an administrator can use the configured SSH account to
+inspect or attach another Unix user's managed sessions:
+
+```text
+remote-agent list --user researcher
+remote-agent attach task --user researcher
+```
+
+`--user` is available only for `list` and `attach`. The configured SSH account
+must already have `authsudo -u USER` authorization; this option grants no access
+and never changes policies or SSH keys. Wrapped/Windows hosts are unsupported.
+
+Deploy the updated helper for the configured SSH account with `./deploy.sh`.
+The target user must already have their own worker and host/project maps; the
+selected `--host` key must exist in their host map. No maps or credentials are
+copied by listing or attaching. The target home is resolved from the server's
+Unix account directory, not by changing the controller's configured `home`.
+
+The SSH/Mosh transport remains authenticated as the configured administrator.
+The worker and tmux client run as the selected user with their HOME, runtime
+and Pi config directory; administrator credentials and tmux environment are not
+inherited. Listing includes a `user` field. Attachment checks authorization and
+configuration before entering the Mosh reconnect loop and remains interactive,
+with the existing detach/recovery behavior. It does not discover standalone Pi
+processes or arbitrary tmux sessions outside the `remote-agent-*` namespace.
+
 ## File transfer
 
 ```text
