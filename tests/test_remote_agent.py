@@ -1154,13 +1154,15 @@ if 'show' in sys.argv:
             for helper in (
                 "tests/periodic_scheduler_dispatch.mjs",
                 "tests/periodic_scheduler_fixture.mjs",
+                "tests/test_periodic_runtime.py",
+                "tests/fixtures/periodic-runtime-provider.ts",
             ):
                 self.assertIn(helper, names)
                 with bundle.extractfile(helper) as content:
                     self.assertEqual(content.read(), (ROOT / helper).read_bytes())
             self.assertEqual(
                 [name for name in names if name.endswith(".ts")],
-                ["periodic-checks.ts"],
+                ["periodic-checks.ts", "tests/fixtures/periodic-runtime-provider.ts"],
             )
             self.assertEqual(
                 [name for name in names if name.endswith(".md")], ["README.md"]

@@ -28,6 +28,8 @@ FILES = (
     "tests/test_periodic_scheduler.mjs",
     "tests/periodic_scheduler_dispatch.mjs",
     "tests/periodic_scheduler_fixture.mjs",
+    "tests/test_periodic_runtime.py",
+    "tests/fixtures/periodic-runtime-provider.ts",
     "README.md",
 )
 REMOTE_PROGRAM = r"""import base64,io,json,os,pathlib,subprocess,sys,tarfile
