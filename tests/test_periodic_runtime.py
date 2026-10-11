@@ -8,7 +8,6 @@ import errno
 import fcntl
 import json
 import os
-from pathlib import Path
 import re
 import select
 import shutil
@@ -19,7 +18,7 @@ import tempfile
 import termios
 import time
 import unittest
-
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PROVIDER = REPO / "tests/fixtures/periodic-runtime-provider.ts"
