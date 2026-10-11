@@ -1676,7 +1676,7 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
             (("--host", "agent-server"), "agent-server"),
         ):
             with self.subTest(host=host, options=options):
-                result = self.invoke("paste", *options)
+                result = self.invoke("paste", *options, platform="linux")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 data = json.loads(result.stdout)
                 self.assertEqual(data["argv"][0], host)
@@ -1726,7 +1726,7 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
         wl_paste = self.root / "wl-paste"
         wl_paste.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(1)\n")
         wl_paste.chmod(0o700)
-        result = self.invoke("paste")
+        result = self.invoke("paste", platform="linux")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no PNG image", result.stderr)
         self.assertEqual(result.stdout, "")
