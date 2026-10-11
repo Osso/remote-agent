@@ -291,9 +291,10 @@ new schedule or emit stale diagnostics.
 Each audit rereads the checklist and sends findings to the originating main
 session, checking successful delivery. Audits are report-only: no corrections,
 nested audit spawning, builds, cleanup, blocking, cancellation, steering, edits,
-or deployment. Authorized work continues independently. Isolated scheduler
-fixtures cover these behaviors; high-fidelity live acceptance of busy-main
-audits, immediate manual status, and manual-run dispatch/feedback remains pending.
+or deployment. Authorized work continues independently. Offline real-Pi PTY
+fixtures prove scheduled/manual audits and visible status during active model
+and tool turns, overlap refusal, unchanged countdown, and normal main completion.
+Findings are delivered while main is busy; main consumes its mailbox when idle.
 
 ## Tests
 
@@ -304,13 +305,17 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 NODE_PATH="$(npm root -g)${NODE_PATH:+:$NODE_PATH}" node --test tests/test_periodic_scheduler.mjs
 ```
 
-Python discovery includes `test_remote_agent.py` and `test_unc_mapping.py`.
+Python discovery also includes `test_periodic_runtime.py`, which uses an installed
+Pi executable (`PI_TEST_BINARY` overrides discovery), temporary private state,
+and a faux provider without network requests or credentials. Its three cases
+exercise scheduled audits during held model/tool turns and manual-run dispatch.
 
 Native Node scheduler tests require a Node version that can load TypeScript and
 an installed `@earendil-works/pi-coding-agent` npm package reachable through Node
 resolution. The command above exposes global npm packages through `NODE_PATH`.
 If Pi's npm package is installed elsewhere, set `NODE_PATH` to its containing
-`node_modules` directory instead. A compiled-only Pi executable is insufficient
+`node_modules` directory instead. Python's embedded Node runner needs the same
+`NODE_PATH`. A compiled-only Pi executable is insufficient
 for these tests; they do not universally run with just `pi` installed.
 
 ## License

@@ -36,9 +36,9 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - `tests/test_remote_agent.py` — isolated configuration, selected controller/sync/worker behavior, real-tmux host environment propagation, and local execution of deployed payload.
 - `tests/test_periodic_scheduler.mjs` — isolated extension scheduling, OKF metadata validation, full-interval timing, start/reload metadata changes, Git-root/checklist discovery, unmapped-project participation, read-only status output and argument validation, and checklist removal while busy; also exercised from deployed code. `tests/periodic_scheduler_dispatch.mjs` supplies isolated direct-dispatch, immediate busy-status, busy/pending manual runs, unchanged scheduled deadlines, manual refusal/acceptance feedback, overlap lifecycle, spawn-error, and late-result fencing fixtures. Native Node execution requires the installed Pi npm package to be resolvable, including through `NODE_PATH` for compiled-only Pi installations. See the [canonical test command and prerequisites](../../README.md#tests).
 
-## Known gaps (current cycle)
+- `tests/test_periodic_runtime.py` with `tests/fixtures/periodic-runtime-provider.ts` — offline installed-Pi PTY proof during held model/tool turns: immediate visible status, direct scheduled/manual child dispatch, successful durable findings delivery before main release, duplicate refusal, unchanged regular countdown, and normal main completion. Main consumes its mailbox after becoming idle. Private test state and faux-provider requests do not use credentials or external provider networks.
 
-- [ ] High-fidelity live acceptance of scheduled read-only audits during a busy main turn, immediate manual status, and manual-run dispatch/feedback remains pending; isolated fixture assertions are not live acceptance evidence.
+## Known gaps (current cycle)
 
 - [ ] Desktop WSL is inactive; migrate its existing code-directory maps when that host is used again.
 
