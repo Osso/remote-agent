@@ -177,7 +177,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		audit: ScheduledAudit,
 		manual = false,
 	): string | undefined {
-		const reason = readDispatchBlockReason(ctx, audit);
+		const reason = enforceDispatchGate(ctx, audit);
 		if (reason) return reason;
 		inFlight = true;
 		if (manual) ctx.ui.notify("Periodic audit starting", "info");
@@ -185,7 +185,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		return undefined;
 	}
 
-	function readDispatchBlockReason(
+	function enforceDispatchGate(
 		ctx: ExtensionContext,
 		audit: ScheduledAudit,
 	): string | undefined {
@@ -212,6 +212,16 @@ export default function periodicExtension(pi: ExtensionAPI) {
 			ctx.ui.notify(`Cannot run periodic audit: ${reason}`, "warning");
 	}
 
+	function isCurrentAudit(
+		ctx: ExtensionContext,
+		audit: ScheduledAudit,
+	): boolean {
+		return (
+			audit.generation === generation &&
+			ctx.sessionManager.getSessionId() === audit.sessionId
+		);
+	}
+
 	async function spawnAudit(
 		ctx: ExtensionContext,
 		audit: ScheduledAudit,
@@ -225,12 +235,10 @@ export default function periodicExtension(pi: ExtensionAPI) {
 				prompt: auditPrompt(audit.checklist, audit.sessionId),
 			});
 			assertAuditDispatched(result);
-			if (audit.generation !== generation) return;
-			if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
+			if (!isCurrentAudit(ctx, audit)) return;
 			if (manual) ctx.ui.notify("Periodic audit started", "info");
 		} catch (error) {
-			if (audit.generation !== generation) return;
-			if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
+			if (!isCurrentAudit(ctx, audit)) return;
 			const reason = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(
 				`Periodic audit spawn_agent failed for session ${audit.sessionId} at ${audit.checklist}: ${reason}`,

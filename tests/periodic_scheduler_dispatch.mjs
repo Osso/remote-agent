@@ -90,6 +90,18 @@ test("manual removal stops timer before checking pending spawn and never rearms"
 	assert.ok(!f.notifications.some(({ text }) => /started/i.test(text)));
 });
 
+function applyUnavailableSchedule(f, unavailable) {
+	if (unavailable === "missing") f.removeChecklist();
+	if (unavailable === "invalid") f.restoreChecklist(checklistBody);
+	if (unavailable === "invalid") assert.throws(() => f.emit("session_start"));
+	else if (unavailable !== "not started") f.emit("session_start");
+	if (unavailable === "shutdown") f.emit("session_shutdown");
+	if (unavailable === "runtime") f.ctx.multiAgentStore = undefined;
+	if (unavailable === "identity") f.switchIdentity();
+	if (unavailable === "project") f.ctx.cwd = f.secondProject;
+	if (unavailable === "tools") f.disableTools();
+}
+
 for (const unavailable of [
 	"not started",
 	"missing",
@@ -102,15 +114,7 @@ for (const unavailable of [
 ]) {
 	test(`manual run refuses ${unavailable} schedule`, async (t) => {
 		const f = await fixture(t);
-		if (unavailable === "missing") f.removeChecklist();
-		if (unavailable === "invalid") f.restoreChecklist(checklistBody);
-		if (unavailable === "invalid") assert.throws(() => f.emit("session_start"));
-		else if (unavailable !== "not started") f.emit("session_start");
-		if (unavailable === "shutdown") f.emit("session_shutdown");
-		if (unavailable === "runtime") f.ctx.multiAgentStore = undefined;
-		if (unavailable === "identity") f.switchIdentity();
-		if (unavailable === "project") f.ctx.cwd = f.secondProject;
-		if (unavailable === "tools") f.disableTools();
+		applyUnavailableSchedule(f, unavailable);
 		const notice = await f.status("run");
 		assert.match(notice, /Cannot run periodic audit:/);
 		assert.equal(f.notifications.at(-1).type, "warning");
