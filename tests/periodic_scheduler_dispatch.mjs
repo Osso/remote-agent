@@ -1,6 +1,152 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fixture, interval } from "./periodic_scheduler_fixture.mjs";
+import {
+	checklistBody,
+	fixture,
+	interval,
+} from "./periodic_scheduler_fixture.mjs";
+
+test("manual run starts immediately while main busy and pending without moving timer", async (t) => {
+	const f = await fixture(t);
+	f.emit("session_start");
+	f.busy(true);
+	f.pending(true);
+	await f.tick(60000);
+	const before = await f.status();
+	const launching = f.status("run");
+	assert.equal(f.calls.length, 1, "manual dispatch precedes async yield");
+	assert.match(f.notifications.at(-1).text, /starting/i);
+	await launching;
+	await f.flush();
+	assert.match(f.notifications.at(-1).text, /started/i);
+	assert.equal(await f.status(), before);
+	assert.equal(f.ctx.isIdle(), false);
+	assert.equal(f.ctx.hasPendingMessages(), true);
+	assert.deepEqual(f.messages, []);
+	for (let repeat = 0; repeat < 2; repeat++) {
+		assert.match(await f.status("run"), /already.*live/i);
+		assert.equal(f.calls.length, 1);
+		assert.equal(await f.status(), before);
+	}
+	f.finishAudit();
+	await f.status("run");
+	assert.equal(f.calls.length, 2);
+	assert.equal(await f.status(), before);
+	f.finishAudit();
+	await f.tick(interval - 60001);
+	assert.equal(f.calls.length, 2);
+	await f.tick(1);
+	assert.equal(f.calls.length, 3, "timer retains original scheduled boundary");
+	assert.deepEqual(
+		f.calls[0].params,
+		f.calls[2].params,
+		"same report-only prompt and dispatch contract",
+	);
+});
+
+test("manual pending spawn refuses duplicates and timer overlap without awaiting child", async (t) => {
+	const f = await fixture(t);
+	const slow = deferred();
+	f.setSpawn(() => slow.promise);
+	f.emit("session_start");
+	assert.match(await f.status("run"), /starting/i);
+	assert.equal(f.calls.length, 1);
+	assert.match(await f.status("run"), /already.*starting/i);
+	await f.tick();
+	assert.equal(f.calls.length, 1);
+	slow.resolve(spawned());
+	await f.flush();
+	assert.match(f.notifications.at(-1).text, /started/i);
+	assert.match(await f.status(), /Next run: in 30 minutes/);
+});
+
+for (const terminal of ["completed", "failed", "aborted"]) {
+	test(`manual run accepts another audit after child ${terminal}`, async (t) => {
+		const f = await fixture(t);
+		f.emit("session_start");
+		await f.status("run");
+		f.agents[0].lifecycle = terminal;
+		await f.status("run");
+		assert.equal(f.calls.length, 2);
+		assert.match(await f.status(), /Next run: in 30 minutes/);
+	});
+}
+
+test("manual removal stops timer before checking pending spawn and never rearms", async (t) => {
+	const f = await fixture(t);
+	const slow = deferred();
+	f.setSpawn(() => slow.promise);
+	f.emit("session_start");
+	await f.status("run");
+	f.removeChecklist();
+	assert.match(await f.status("run"), /Checklist removed/);
+	assert.match(await f.status(), /disabled.*\n[\s\S]*Checklist removed/);
+	f.restoreChecklist();
+	slow.resolve(spawned());
+	await f.flush();
+	assert.match(await f.status("run"), /Checklist removed/);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 1);
+	assert.ok(!f.notifications.some(({ text }) => /started/i.test(text)));
+});
+
+for (const unavailable of [
+	"not started",
+	"missing",
+	"invalid",
+	"shutdown",
+	"runtime",
+	"identity",
+	"project",
+	"tools",
+]) {
+	test(`manual run refuses ${unavailable} schedule`, async (t) => {
+		const f = await fixture(t);
+		if (unavailable === "missing") f.removeChecklist();
+		if (unavailable === "invalid") f.restoreChecklist(checklistBody);
+		if (unavailable === "invalid") assert.throws(() => f.emit("session_start"));
+		else if (unavailable !== "not started") f.emit("session_start");
+		if (unavailable === "shutdown") f.emit("session_shutdown");
+		if (unavailable === "runtime") f.ctx.multiAgentStore = undefined;
+		if (unavailable === "identity") f.switchIdentity();
+		if (unavailable === "project") f.ctx.cwd = f.secondProject;
+		if (unavailable === "tools") f.disableTools();
+		const notice = await f.status("run");
+		assert.match(notice, /Cannot run periodic audit:/);
+		assert.equal(f.notifications.at(-1).type, "warning");
+		assert.equal(f.calls.length, 0);
+	});
+}
+
+for (const failure of [
+	"tool error",
+	"blocked",
+	"not dispatched",
+	"rejection",
+]) {
+	test(`manual ${failure} emits diagnostic without false started success`, async (t) => {
+		const f = await fixture(t);
+		f.setSpawn(() => refuseSpawn(failure));
+		f.emit("session_start");
+		await f.status("run");
+		await f.flush();
+		assert.equal(f.calls.length, 1);
+		const notice = f.notifications.at(-1);
+		assert.equal(notice.type, "error");
+		for (const text of [
+			"spawn_agent",
+			"main-session",
+			f.checklist,
+			failure === "rejection" ? "Approval rejected" : "Policy refused audit",
+		]) {
+			assert.ok(notice.text.includes(text));
+		}
+		assert.ok(!f.notifications.some(({ text }) => /started/i.test(text)));
+		assert.match(await f.status(), /Next run: in 30 minutes/);
+		await f.status("run");
+		assert.equal(f.calls.length, 2, "failure releases pending lock");
+	});
+}
 
 function deferred() {
 	let resolve;

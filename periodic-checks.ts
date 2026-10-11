@@ -139,6 +139,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let generation = 0;
 	let inFlight = false;
+	let scheduledAudit: ScheduledAudit | undefined;
 	let checklist: string | undefined;
 	let intervalMs: number | undefined;
 	let nextTick: number | undefined;
@@ -147,6 +148,7 @@ export default function periodicExtension(pi: ExtensionAPI) {
 	function stopTimer(reason: string): void {
 		if (timer !== undefined) clearInterval(timer);
 		timer = undefined;
+		scheduledAudit = undefined;
 		intervalMs = undefined;
 		nextTick = undefined;
 		disabledReason = reason;
@@ -167,22 +169,53 @@ export default function periodicExtension(pi: ExtensionAPI) {
 	): void {
 		if (audit.generation !== generation) return;
 		advanceScheduledTick(Date.now());
+		dispatchAudit(ctx, audit);
+	}
+
+	function dispatchAudit(
+		ctx: ExtensionContext,
+		audit: ScheduledAudit,
+		manual = false,
+	): string | undefined {
+		const reason = readDispatchBlockReason(ctx, audit);
+		if (reason) return reason;
+		inFlight = true;
+		if (manual) ctx.ui.notify("Periodic audit starting", "info");
+		void spawnAudit(ctx, audit, manual);
+		return undefined;
+	}
+
+	function readDispatchBlockReason(
+		ctx: ExtensionContext,
+		audit: ScheduledAudit,
+	): string | undefined {
 		if (!existsSync(audit.checklist)) {
 			stopTimer("Checklist removed");
-			return;
+			return "Checklist removed";
 		}
-		if (inFlight) return;
-		if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
-		if (auditDisabledReason(pi, ctx)) return;
-		if (queryProjectRoot(ctx.cwd) !== audit.projectRoot) return;
-		if (hasLiveAudit(ctx)) return;
-		inFlight = true;
-		void spawnAudit(ctx, audit);
+		if (inFlight) return "Audit already starting";
+		if (ctx.sessionManager.getSessionId() !== audit.sessionId)
+			return "Session identity changed";
+		const unsupportedReason = auditDisabledReason(pi, ctx);
+		if (unsupportedReason) return unsupportedReason;
+		if (queryProjectRoot(ctx.cwd) !== audit.projectRoot)
+			return "Project changed";
+		if (hasLiveAudit(ctx)) return "Audit already live";
+		return undefined;
+	}
+
+	function runManualAudit(ctx: ExtensionContext): void {
+		const reason = scheduledAudit
+			? dispatchAudit(ctx, scheduledAudit, true)
+			: disabledReason;
+		if (reason)
+			ctx.ui.notify(`Cannot run periodic audit: ${reason}`, "warning");
 	}
 
 	async function spawnAudit(
 		ctx: ExtensionContext,
 		audit: ScheduledAudit,
+		manual: boolean,
 	): Promise<void> {
 		try {
 			const result = await pi.callTool("spawn_agent", {
@@ -192,6 +225,9 @@ export default function periodicExtension(pi: ExtensionAPI) {
 				prompt: auditPrompt(audit.checklist, audit.sessionId),
 			});
 			assertAuditDispatched(result);
+			if (audit.generation !== generation) return;
+			if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
+			if (manual) ctx.ui.notify("Periodic audit started", "info");
 		} catch (error) {
 			if (audit.generation !== generation) return;
 			if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
@@ -237,15 +273,20 @@ export default function periodicExtension(pi: ExtensionAPI) {
 			sessionId: ctx.sessionManager.getSessionId(),
 			generation,
 		};
+		scheduledAudit = audit;
 		timer = setInterval(() => dispatchAuditTick(ctx, audit), intervalMs);
 	}
 
 	pi.registerCommand("periodic-checks", {
-		description: "Show periodic checklist scheduler status",
+		description: "Show periodic checklist scheduler status or run an audit",
 		handler: async (args, ctx) => {
 			const action = args.trim();
+			if (action === "run") {
+				runManualAudit(ctx);
+				return;
+			}
 			if (action !== "" && action !== "status") {
-				ctx.ui.notify("Usage: /periodic-checks status", "warning");
+				ctx.ui.notify("Usage: /periodic-checks status|run", "warning");
 				return;
 			}
 			const lines = [

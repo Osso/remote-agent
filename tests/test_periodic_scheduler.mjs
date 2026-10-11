@@ -85,8 +85,8 @@ test("status rejects controls and extra arguments without resetting deadline", a
 	const f = await fixture(t);
 	f.emit("session_start");
 	await f.tick(interval - 1);
-	for (const args of ["start", "stop", "status extra"]) {
-		assert.equal(await f.status(args), "Usage: /periodic-checks status");
+	for (const args of ["start", "stop", "status extra", "run extra"]) {
+		assert.equal(await f.status(args), "Usage: /periodic-checks status|run");
 		assert.equal(f.notifications.at(-1).type, "warning");
 	}
 	assert.equal(f.calls.length, 0);

@@ -128,6 +128,7 @@ async function fixture(
 	};
 	return {
 		calls,
+		disableTools: () => tools.splice(0),
 		messages,
 		flush,
 		setSpawn: (handler) => {
