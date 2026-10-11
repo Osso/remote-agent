@@ -28,7 +28,7 @@ ANSI = re.compile(r"\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class RuntimeFixture:
-    def __init__(self, mode):
+    def __init__(self, mode, interval_seconds=1):
         self.temp = tempfile.TemporaryDirectory(prefix="periodic-runtime-")
         self.root = Path(self.temp.name)
         self.project = self.root / "project"
@@ -38,6 +38,7 @@ class RuntimeFixture:
         self.process = None
         self.master = None
         self.mode = mode
+        self.interval_seconds = interval_seconds
 
     def start(self):
         for path in (self.project, self.agent, self.sessions):
@@ -47,7 +48,8 @@ class RuntimeFixture:
         )
         self.checklist = self.project / "periodic-checks.md"
         self.checklist.write_text(
-            "---\ntype: Periodic Checks\ninterval_seconds: 1\n---\n"
+            "---\ntype: Periodic Checks\n"
+            f"interval_seconds: {self.interval_seconds}\n---\n"
             "Read-only test audit. Report findings; no edits or nested children.\n"
         )
         extensions = self.agent / "extensions"
@@ -314,6 +316,122 @@ class PeriodicRuntimeTests(unittest.TestCase):
         self.assertFalse(fixture.events("provider_error"))
         errors = [entry for entry in fixture.events("tool_result") if entry["isError"]]
         self.assertEqual(errors, [], "Real runtime tool errors must not be hidden")
+
+    def assert_manual_run_during_busy_main(self, mode):
+        # Cross a countdown rounding boundary without approaching the real tick.
+        fixture = RuntimeFixture(mode, interval_seconds=65)
+        self.addCleanup(fixture.close)
+        fixture.start()
+        self.assertFalse(fixture.events("child_provider_request"))
+        initial_output = len(fixture.output)
+        fixture.send("/periodic-checks status\r")
+        fixture.wait(
+            lambda: (
+                "Next run: in 2 minutes"
+                in ANSI.sub("", fixture.output[initial_output:])
+            ),
+            "initial scheduled countdown",
+            timeout=3,
+        )
+        deadline = time.monotonic() + 6.5
+        while time.monotonic() < deadline:
+            fixture.pump()
+        self.assert_busy(fixture)
+        before_run = len(fixture.output)
+        fixture.send("/periodic-checks status\r")
+        fixture.wait(
+            lambda: (
+                "Next run: in less than a minute"
+                in ANSI.sub("", fixture.output[before_run:])
+            ),
+            "original deadline countdown before manual run",
+            timeout=3,
+        )
+        self.assertFalse(fixture.events("child_provider_request"))
+        run_output = len(fixture.output)
+        fixture.send("/periodic-checks run\r")
+        fixture.wait(
+            lambda: (
+                bool(fixture.events("child_model_held"))
+                or "Usage:" in ANSI.sub("", fixture.output[run_output:])
+            ),
+            "manual command launches child immediately while main remains busy",
+            timeout=3,
+        )
+        self.assertTrue(
+            fixture.events("child_model_held"),
+            f"Manual run did not launch audit: {fixture.visible()[-3000:]}",
+        )
+        self.assert_busy(fixture)
+        deliveries = [
+            entry
+            for entry in fixture.events("tool_result")
+            if entry["toolName"] == "send_agent_message"
+        ]
+        self.assertEqual(len(deliveries), 1)
+        self.assertFalse(deliveries[0]["isError"], deliveries[0])
+        self.assertIn(REPORT, json.dumps(fixture.events("mailbox_enqueued")))
+        repeated_output = len(fixture.output)
+        fixture.send("/periodic-checks run\r")
+        fixture.send("/periodic-checks status\r")
+        fixture.wait(
+            lambda: (
+                "Next run: in less than a minute"
+                in ANSI.sub("", fixture.output[repeated_output:])
+            ),
+            "unchanged scheduled deadline after repeated manual command",
+            timeout=3,
+        )
+        # Allow an erroneous duplicate enough time to reach the provider.
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            fixture.pump()
+        self.assert_busy(fixture)
+        self.assertNotIn(
+            "Next run: in 2 minutes",
+            ANSI.sub("", fixture.output[repeated_output:]),
+            "Manual run must not restart the scheduled interval",
+        )
+        children = [
+            entry
+            for entry in fixture.events("session_start")
+            if entry["agentId"] != "main"
+        ]
+        self.assertEqual(len(children), 1, "Repeated run must not launch a duplicate")
+        self.assertEqual(len(fixture.events("child_provider_request")), 1)
+        main_starts = [
+            entry
+            for entry in fixture.events("agent_start")
+            if entry["agentId"] == "main"
+        ]
+        self.assertEqual(len(main_starts), 1, "Run must not inject a main prompt")
+        fixture.release("child")
+        fixture.release("main")
+        fixture.wait(
+            lambda: any(
+                entry["agentId"] == "main" for entry in fixture.events("agent_end")
+            ),
+            "normal main completion after manual audit",
+        )
+        fixture.wait(
+            lambda: REPORT in json.dumps(fixture.events("mailbox")),
+            "parent consumes durable manual audit report after becoming idle",
+        )
+        main_end = next(
+            entry for entry in fixture.events("agent_end") if entry["agentId"] == "main"
+        )
+        self.assertIn("PERIODIC_RUNTIME_MAIN_FINISHED", json.dumps(main_end))
+        self.assertEqual(len(fixture.events(f"main_{mode}_released")), 1)
+        self.assertNotIn('"stopReason": "aborted"', json.dumps(fixture.events()))
+        self.assertFalse(fixture.events("provider_error"))
+        self.assertEqual(
+            [entry for entry in fixture.events("tool_result") if entry["isError"]], []
+        )
+
+    def test_manual_run_during_busy_main_preserves_schedule(self):
+        for mode in ("model", "tool"):
+            with self.subTest(mode=mode):
+                self.assert_manual_run_during_busy_main(mode)
 
     def test_timer_and_manual_status_during_main_model(self):
         self.assert_live_periodic_audit("model")
