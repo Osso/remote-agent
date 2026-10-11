@@ -239,8 +239,9 @@ The first tick waits the full configured interval; subsequent ticks use that
 interval while the session is alive. There is no fixed 30-minute fallback.
 Missing or invalid metadata produces an explicit error and leaves the timer
 disabled; an absent file means no timer. Reload or start a new session to apply
-metadata edits or re-arm after restoring the file. Busy sessions, pending
-messages, or an existing live audit skip a tick. Removing the checklist stops
+metadata edits or re-arm after restoring the file. Main-session activity and
+pending messages do not skip ticks. A pending spawn or an existing live audit
+skips overlapping dispatch. Removing the checklist stops
 the timer at the next tick. This is not an offline scheduler.
 
 Use `/periodic-checks status` (or `/periodic-checks` with no arguments) to display
@@ -253,14 +254,29 @@ calculated when status is requested; minutes round up (90 seconds shows 2
 minutes), and due or overdue ticks show less than a minute. Disabled status
 includes `Reason:` (for example, `No checklist` or `Checklist removed`).
 Status reflects the current scheduler, not unapplied metadata edits. The command
-is read-only: it triggers no audit and does not reset or re-arm the timer.
-A scheduled tick is not a guaranteed audit: busy sessions, pending messages,
-or overlapping audits can cause it to be skipped.
+is read-only and displays its notification immediately, including while main is
+busy: no audit, abort, model turn, timer reset, or re-arm. The next-run estimate
+tracks the scheduled boundary, not child completion or a guaranteed dispatch;
+skipped ticks still advance that boundary.
 
-Each dispatched prompt requests one bounded, read-only audit child that rereads
-the checklist and sends findings to the originating main session. Audits are
-report-only: no cleanup, blocking, cancellation, steering, edits, or deployment.
-Authorized work continues independently.
+The scheduler calls `pi.callTool("spawn_agent", ...)` directly to launch one
+fresh-context `explore` child named `periodic-checks-audit`, independently of
+main's current turn. It sends no follow-up/steering prompt to main and queues no
+model prompt for main to spawn the audit. The pending-spawn lock releases when
+the tool call settles, including errors; dispatch failures produce an explicit
+error notification. A child with that name blocks overlap until its stored
+lifecycle is `completed`, `failed`, or `aborted`. Completion permits a later
+scheduled tick, not an immediate audit; main's turn ending does not release it.
+A restored live audit also blocks overlap after reload. Unrelated children do
+not block dispatch. Late spawn results from an old schedule cannot unlock the
+new schedule or emit stale diagnostics.
+
+Each audit rereads the checklist and sends findings to the originating main
+session, checking successful delivery. Audits are report-only: no corrections,
+nested audit spawning, builds, cleanup, blocking, cancellation, steering, edits,
+or deployment. Authorized work continues independently. Isolated scheduler
+fixtures cover these behaviors; high-fidelity live acceptance of busy-main
+audits and immediate manual status remains pending.
 
 ## Tests
 
