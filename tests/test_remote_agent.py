@@ -1327,6 +1327,9 @@ class ControllerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         isolate_home(self, self.root)
+        wl_paste = self.root / "wl-paste"
+        wl_paste.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(1)\n")
+        wl_paste.chmod(0o700)
         ssh = self.root / "ssh"
         ssh.write_text(f"""#!{sys.executable}
 import json, pathlib, sys
@@ -1362,9 +1365,20 @@ else:
             os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]
         )
 
-    def invoke(self, *args):
+    def invoke(self, *args, platform=None):
+        command = [sys.executable, str(ROOT / "remote-agent.py"), *args]
+        if platform is not None:
+            command = [
+                sys.executable,
+                "-c",
+                "import runpy, sys; "
+                f"sys.platform = {platform!r}; "
+                "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')",
+                str(ROOT / "remote-agent.py"),
+                *args,
+            ]
         return subprocess.run(
-            [sys.executable, str(ROOT / "remote-agent.py"), *args],
+            command,
             env=self.env,
             capture_output=True,
             text=True,
@@ -1669,6 +1683,44 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
                 request = data["request"]
                 self.assertEqual(request["action"], "clipboard")
                 self.assertEqual(base64.b64decode(request["png"]), PNG)
+
+    def test_macos_paste_sends_png_to_selected_host(self):
+        osascript = self.root / "osascript"
+        osascript.write_text(
+            f"#!{sys.executable}\nprint({base64.b64encode(PNG).decode()!r})\n"
+        )
+        osascript.chmod(0o700)
+        for options, host in (((), "agent-server"), (("--host", "desktop"), "desktop")):
+            with self.subTest(host=host):
+                result = self.invoke("paste", *options, platform="darwin")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data = json.loads(result.stdout)
+                self.assertEqual(data["argv"][0], host)
+                self.assertEqual(data["request"]["action"], "clipboard")
+                self.assertEqual(base64.b64decode(data["request"]["png"]), PNG)
+
+    def test_macos_clipboard_failure_does_not_upload(self):
+        osascript = self.root / "osascript"
+        for output, error, code in (
+            ("", "clipboard has no image", 1),
+            ("", "", 0),
+            ("", "clipboard access denied", 1),
+            ("not base64!", "", 0),
+        ):
+            with self.subTest(output=output, error=error, code=code):
+                osascript.write_text(
+                    f"#!{sys.executable}\nimport sys\n"
+                    f"sys.stdout.write({output!r})\n"
+                    f"sys.stderr.write({error!r})\nsys.exit({code})\n"
+                )
+                osascript.chmod(0o700)
+                result = self.invoke("paste", platform="darwin")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("clipboard", result.stderr)
+                if error:
+                    self.assertIn(error, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertFalse((self.root / "ssh-calls").exists())
 
     def test_paste_without_image_fails_before_ssh(self):
         wl_paste = self.root / "wl-paste"

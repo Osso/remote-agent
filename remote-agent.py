@@ -304,13 +304,47 @@ def claude_account(args):
     return send({**request, "name_current": args.login}, host)
 
 
-def paste(host=DEFAULT_HOST):
-    image = subprocess.run(
-        ["wl-paste", "--no-newline", "--type", "image/png"], capture_output=True
-    )
-    if image.returncode or not image.stdout:
+MACOS_CLIPBOARD_SCRIPT = """
+ObjC.import('AppKit');
+function run() {
+    const image = $.NSImage.alloc.initWithPasteboard($.NSPasteboard.generalPasteboard);
+    if (image.isNil()) throw new Error('clipboard has no image');
+    const bitmap = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation);
+    if (bitmap.isNil()) throw new Error('clipboard image cannot be decoded');
+    const png = bitmap.representationUsingTypeProperties(
+        $.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
+    if (png.isNil()) throw new Error('clipboard image cannot be converted to PNG');
+    return ObjC.unwrap(png.base64EncodedStringWithOptions(0));
+}
+"""
+
+
+def read_clipboard_png():
+    if sys.platform == "darwin":
+        image = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", MACOS_CLIPBOARD_SCRIPT],
+            capture_output=True,
+        )
+        if image.returncode:
+            detail = image.stderr.decode(errors="replace").strip()
+            raise ValueError(f"macOS clipboard read failed: {detail}")
+        try:
+            png = base64.b64decode(image.stdout.strip(), validate=True)
+        except ValueError as error:
+            raise ValueError("macOS clipboard returned invalid image data") from error
+    else:
+        image = subprocess.run(
+            ["wl-paste", "--no-newline", "--type", "image/png"], capture_output=True
+        )
+        png = image.stdout if image.returncode == 0 else b""
+    if not png:
         raise ValueError("laptop clipboard has no PNG image")
-    request = {"action": "clipboard", "png": base64.b64encode(image.stdout).decode()}
+    return png
+
+
+def paste(host=DEFAULT_HOST):
+    png = read_clipboard_png()
+    request = {"action": "clipboard", "png": base64.b64encode(png).decode()}
     return send(request, host)
 
 

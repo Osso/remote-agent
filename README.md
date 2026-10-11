@@ -152,6 +152,23 @@ land in `~/Downloads/remote-agent/`; folders retain their name and update
 incrementally. `--open` opens fetched images through Chromium and requires that
 controller-side integration.
 
+## Clipboard images
+
+```text
+remote-agent paste
+remote-agent paste --host agent-server
+```
+
+`paste` uploads the controller's clipboard image to the selected remote host.
+On macOS it uses the built-in `osascript` and AppKit pasteboard APIs to convert
+clipboard images to PNG; no extra clipboard package is needed. On Linux it
+requires `wl-paste` from `wl-clipboard` and an image available as PNG.
+An empty, non-image, or unreadable clipboard fails before upload.
+
+After uploading, use the remote harness's image-paste shortcut (Ctrl+V in Pi).
+This command does not paste text or send a keyboard shortcut into the session.
+The remote worker and its deployed `wl-paste` shim remain Linux-side components.
+
 ## Deploy
 
 ```text
