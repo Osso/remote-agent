@@ -1151,6 +1151,13 @@ if 'show' in sys.argv:
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
             names = bundle.getnames()
             self.assertIn("periodic-checks.ts", names)
+            for helper in (
+                "tests/periodic_scheduler_dispatch.mjs",
+                "tests/periodic_scheduler_fixture.mjs",
+            ):
+                self.assertIn(helper, names)
+                with bundle.extractfile(helper) as content:
+                    self.assertEqual(content.read(), (ROOT / helper).read_bytes())
             self.assertEqual(
                 [name for name in names if name.endswith(".ts")],
                 ["periodic-checks.ts"],

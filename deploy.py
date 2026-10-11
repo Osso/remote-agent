@@ -26,6 +26,8 @@ FILES = (
     "tests/test_remote_agent.py",
     "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
+    "tests/periodic_scheduler_dispatch.mjs",
+    "tests/periodic_scheduler_fixture.mjs",
     "README.md",
 )
 REMOTE_PROGRAM = r"""import base64,io,json,os,pathlib,subprocess,sys,tarfile
