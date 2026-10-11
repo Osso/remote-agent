@@ -2,6 +2,7 @@ import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
 	createAssistantMessageEventStream,
+	type Api,
 	type AssistantMessage,
 	type Context,
 	type Model,
@@ -108,7 +109,7 @@ async function respond(
 }
 
 function stream(
-	model: Model<"periodic-runtime-faux">,
+	model: Model<Api>,
 	context: Context,
 	options?: SimpleStreamOptions,
 ) {
@@ -206,6 +207,7 @@ export default function registerPeriodicRuntimeProvider(
 			record("main_tool_released");
 			return {
 				content: [{ type: "text", text: "Held tool finished normally" }],
+				details: undefined,
 			};
 		},
 	});
