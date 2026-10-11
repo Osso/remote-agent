@@ -110,6 +110,51 @@ test("restored live audit survives reload; unrelated children do not block", asy
 	assert.equal(f.calls.length, 1);
 });
 
+function refuseSpawn(failure) {
+	if (failure === "rejection")
+		return Promise.reject(new Error("Approval rejected"));
+	return Promise.resolve({
+		content: [{ type: "text", text: "Policy refused audit" }],
+		isError: failure !== "not dispatched",
+		details:
+			failure === "blocked"
+				? {}
+				: {
+						agent: { id: "failed-child" },
+						dispatched: false,
+						prompt: "audit",
+					},
+	});
+}
+
+async function transitionSchedule(f, transition, newSpawn) {
+	if (transition !== "reload") f.emit("session_shutdown");
+	if (transition === "replacement") f.switchIdentity();
+	if (transition === "shutdown") return;
+	f.setSpawn(() => newSpawn.promise);
+	f.emit("session_start", { reason: transition });
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 1);
+	await f.tick(1);
+	assert.equal(f.calls.length, 2);
+}
+
+function settleSpawn(spawn, settlement) {
+	if (settlement === "rejection") {
+		spawn.reject(new Error("Old approval rejected"));
+		return;
+	}
+	spawn.resolve(
+		settlement === "success"
+			? spawned("old")
+			: {
+					isError: true,
+					content: [{ type: "text", text: "Old error" }],
+					details: {},
+				},
+	);
+}
+
 for (const failure of [
 	"tool error",
 	"blocked",
@@ -118,22 +163,7 @@ for (const failure of [
 ]) {
 	test(`${failure} reports spawn context and releases pending lock`, async (t) => {
 		const f = await fixture(t);
-		f.setSpawn(() =>
-			failure === "rejection"
-				? Promise.reject(new Error("Approval rejected"))
-				: Promise.resolve({
-						content: [{ type: "text", text: "Policy refused audit" }],
-						isError: failure !== "not dispatched",
-						details:
-							failure === "blocked"
-								? {}
-								: {
-										agent: { id: "failed-child" },
-										dispatched: false,
-										prompt: "audit",
-									},
-					}),
-		);
+		f.setSpawn(() => refuseSpawn(failure));
 		f.emit("session_start");
 		await f.tick();
 		assert.equal(f.notifications.length, 1);
@@ -162,28 +192,8 @@ for (const transition of ["reload", "shutdown", "replacement"]) {
 			f.setSpawn(() => oldSpawn.promise);
 			f.emit("session_start");
 			await f.tick();
-			if (transition !== "reload") f.emit("session_shutdown");
-			if (transition === "replacement") f.switchIdentity();
-			if (transition !== "shutdown") {
-				f.setSpawn(() => newSpawn.promise);
-				f.emit("session_start", { reason: transition });
-				await f.tick(interval - 1);
-				assert.equal(f.calls.length, 1);
-				await f.tick(1);
-				assert.equal(f.calls.length, 2);
-			}
-			if (settlement === "rejection")
-				oldSpawn.reject(new Error("Old approval rejected"));
-			else
-				oldSpawn.resolve(
-					settlement === "success"
-						? spawned("old")
-						: {
-								isError: true,
-								content: [{ type: "text", text: "Old error" }],
-								details: {},
-							},
-				);
+			await transitionSchedule(f, transition, newSpawn);
+			settleSpawn(oldSpawn, settlement);
 			await f.flush();
 			assert.deepEqual(f.notifications, []);
 			await f.tick(interval * 2);
