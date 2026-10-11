@@ -245,7 +245,8 @@ skips overlapping dispatch. Removing the checklist stops
 the timer at the next tick. This is not an offline scheduler.
 
 Use `/periodic-checks status` (or `/periodic-checks` with no arguments) to display
-scheduler state. Other arguments show `Usage: /periodic-checks status`.
+scheduler state. Use `/periodic-checks run` to request an audit immediately.
+Other arguments show `Usage: /periodic-checks status|run`.
 The notification reports `Periodic checks: armed` or `Periodic checks: disabled`,
 plus `Checklist:` when its path is known. Armed status includes the active
 `interval_seconds:` and a relative schedule estimate: `Next run: in N minutes`,
@@ -258,6 +259,22 @@ is read-only and displays its notification immediately, including while main is
 busy: no audit, abort, model turn, timer reset, or re-arm. The next-run estimate
 tracks the scheduled boundary, not child completion or a guaranteed dispatch;
 skipped ticks still advance that boundary.
+
+`/periodic-checks run` uses the armed schedule's same direct, read-only child
+dispatch, even while main is busy or has pending messages. It does not reset or
+advance the normal scheduled countdown, reread metadata, or re-arm a disabled
+schedule. A pending spawn or live `periodic-checks-audit` refuses duplicate runs
+with `Cannot run periodic audit: Audit already starting` or `Audit already live`.
+Disabled schedules, missing/removed checklists, unavailable runtime/tools, and
+changed session/project identity produce a reason-bearing warning rather than
+claiming success. Removing the checklist during a manual run also stops the timer.
+
+An accepted manual request first reports `Periodic audit starting`. Only a
+successful tool result with `details.dispatched: true` reports `Periodic audit
+started`; tool errors, blocked/undispatched results, and rejection report a
+`spawn_agent` error with session ID, checklist path, and failure details. The
+command does not wait for spawn settlement or child completion. `started` means
+dispatch accepted, not audit completed or findings delivered.
 
 The scheduler calls `pi.callTool("spawn_agent", ...)` directly to launch one
 fresh-context `explore` child named `periodic-checks-audit`, independently of
@@ -276,7 +293,7 @@ session, checking successful delivery. Audits are report-only: no corrections,
 nested audit spawning, builds, cleanup, blocking, cancellation, steering, edits,
 or deployment. Authorized work continues independently. Isolated scheduler
 fixtures cover these behaviors; high-fidelity live acceptance of busy-main
-audits and immediate manual status remains pending.
+audits, immediate manual status, and manual-run dispatch/feedback remains pending.
 
 ## Tests
 
