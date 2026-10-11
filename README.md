@@ -174,6 +174,8 @@ are not removed automatically.
 
 Deployment links remote `~/.tmux.conf` and `~/.local/bin/wl-paste` to shipped
 files and refuses to replace unmanaged files or foreign symlinks at those paths.
+Tmux mouse handling is disabled: use terminal selection and copy shortcuts without
+Shift. Mouse scrolling through tmux history and clicking panes are disabled.
 It preserves an existing system or user `agents.slice`; otherwise it installs
 the bundled user slice and reloads the user manager. Review its limits for your
 host. System-scope authorization, SSH configuration, Mosh networking, harness
