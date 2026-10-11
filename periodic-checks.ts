@@ -10,7 +10,6 @@ import { join } from "node:path";
 const maxTimerMs = 2147483647;
 const millisecondsPerSecond = 1000;
 const millisecondsPerMinute = 60 * millisecondsPerSecond;
-const messageType = "periodic-checks";
 const auditName = "periodic-checks-audit";
 const terminalStates = new Set(["completed", "failed", "aborted"]);
 const gitTimeoutMs = 5000;
@@ -103,18 +102,30 @@ function hasLiveAudit(ctx: ExtensionContext): boolean {
 	);
 }
 
-function hasAuditOverlap(ctx: ExtensionContext): boolean {
-	if (!ctx.isIdle() || ctx.hasPendingMessages()) return true;
-	return hasLiveAudit(ctx);
-}
-
 function auditPrompt(checklist: string, parentSessionId: string): string {
 	return [
-		`Periodic project monitor: use spawn_agent now with agentType "explore", context "fresh", displayName "${auditName}".`,
-		`Delegate exactly one read-only, bounded audit child; do not audit in main or delegate nested children. Child must reread the current project's checklist at ${JSON.stringify(checklist)} for this audit.`,
-		"Examine this project's worktree/disk/build/error/delegation state and host headroom, following the checklist. Report missing checklist or unavailable evidence explicitly.",
-		`Include this exact delivery instruction in the child prompt: Send child findings through send_agent_message with toAgentId "main" AND toSessionId ${JSON.stringify(parentSessionId)}, the originating parent session ID. Check the tool result and confirm successful delivery; a failed tool call is not delivery. Main must confirm mailbox receipt, not just wait_agent recovery. Main reports findings only. Monitor report only: no cleanup, no blocking, no cancellation, no steering, no edits or deployment. Continue authorized work independently.`,
+		`Perform one read-only, bounded project audit. Reread the current project's checklist at ${JSON.stringify(checklist)} for this audit. Follow only the checklist; do not invent unrelated task scope.`,
+		"Report this project's worktree/disk/build/error/delegation state and host headroom only as requested by the checklist. Count other agents and resource usage when requested. Report missing checklist or unavailable evidence explicitly.",
+		"Monitor report only: no nested spawn, no cleanup, no blocking, no cancellation, no steering, no edits or deployment, no builds, no operational mutation. Do not cancel audit children or restart main.",
+		`Send child findings through send_agent_message with toAgentId "main" AND toSessionId ${JSON.stringify(parentSessionId)}, the originating parent session ID. Check the tool result and confirm successful delivery; a failed tool call is not delivery. Report delivery failure explicitly; no wait_agent recovery.`,
 	].join("\n");
+}
+
+function assertAuditDispatched(
+	result: Awaited<ReturnType<ExtensionAPI["callTool"]>>,
+): void {
+	const details = result.details;
+	const dispatched =
+		typeof details === "object" &&
+		details !== null &&
+		"dispatched" in details &&
+		details.dispatched === true;
+	if (!result.isError && dispatched) return;
+	const reason = result.content
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+	throw new Error(`Audit was not dispatched: ${reason}`);
 }
 
 type ScheduledAudit = {
@@ -164,17 +175,34 @@ export default function periodicExtension(pi: ExtensionAPI) {
 		if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
 		if (auditDisabledReason(pi, ctx)) return;
 		if (queryProjectRoot(ctx.cwd) !== audit.projectRoot) return;
-		if (hasAuditOverlap(ctx)) return;
-		pi.sendMessage(
-			{
-				customType: messageType,
-				content: auditPrompt(audit.checklist, audit.sessionId),
-				display: true,
-				details: { generation: audit.generation, sessionId: audit.sessionId },
-			},
-			{ deliverAs: "followUp", triggerTurn: true },
-		);
+		if (hasLiveAudit(ctx)) return;
 		inFlight = true;
+		void spawnAudit(ctx, audit);
+	}
+
+	async function spawnAudit(
+		ctx: ExtensionContext,
+		audit: ScheduledAudit,
+	): Promise<void> {
+		try {
+			const result = await pi.callTool("spawn_agent", {
+				agentType: "explore",
+				context: "fresh",
+				displayName: auditName,
+				prompt: auditPrompt(audit.checklist, audit.sessionId),
+			});
+			assertAuditDispatched(result);
+		} catch (error) {
+			if (audit.generation !== generation) return;
+			if (ctx.sessionManager.getSessionId() !== audit.sessionId) return;
+			const reason = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(
+				`Periodic audit spawn_agent failed for session ${audit.sessionId} at ${audit.checklist}: ${reason}`,
+				"error",
+			);
+		} finally {
+			if (audit.generation === generation) inFlight = false;
+		}
 	}
 
 	function startTimer(ctx: ExtensionContext): void {
@@ -240,19 +268,4 @@ export default function periodicExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => stopTimer("Session shutdown"));
 	pi.on("session_start", (_event, ctx) => startTimer(ctx));
-	pi.on("agent_end", (event, ctx) => {
-		if (event.sessionContinuation) return;
-		const completedPrompt = event.messages.some((message) => {
-			if (message.role !== "custom" || message.customType !== messageType)
-				return false;
-			const details = message.details as
-				| { generation?: number; sessionId?: string }
-				| undefined;
-			return (
-				details?.generation === generation &&
-				details.sessionId === ctx.sessionManager.getSessionId()
-			);
-		});
-		if (completedPrompt) inFlight = false;
-	});
 }

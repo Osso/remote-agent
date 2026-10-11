@@ -1,148 +1,22 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import {
-	copyFileSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
-
-const interval = 30 * 60 * 1000;
-const checklistBody =
-	"# Periodic checks\n\nReport current Git status and test failures. No edits.\n";
-const checklistContent = configuredChecklist(1800);
-
-function configuredChecklist(seconds) {
-	return `---\ntype: Periodic Checks\ninterval_seconds: ${seconds}\n---\n${checklistBody}`;
-}
-
-function linkPiPackage(home) {
-	const require = createRequire(import.meta.url);
-	const packageName = "@earendil-works/pi-coding-agent";
-	const root = require.resolve
-		.paths(packageName)
-		.map((path) => join(path, packageName))
-		.find((path) => existsSync(join(path, "package.json")));
-	assert.ok(root, "Install Pi's npm package or expose it through NODE_PATH");
-	const scope = join(home, "node_modules/@earendil-works");
-	mkdirSync(scope, { recursive: true });
-	symlinkSync(root, join(scope, "pi-coding-agent"));
-}
-
-function git(cwd, ...args) {
-	return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5000 });
-}
-
-function createProject(home, name) {
-	const root = join(home, name);
-	mkdirSync(root, { recursive: true });
-	git(root, "init", "--quiet");
-	writeFileSync(join(root, "periodic-checks.md"), checklistContent);
-	return root;
-}
-
-async function fixture(
-	t,
-	overrides = {},
-	tools = ["spawn_agent", "send_agent_message"],
-) {
-	const home = mkdtempSync(join(tmpdir(), "periodic-test-"));
-	t.after(() => rmSync(home, { recursive: true, force: true }));
-	linkPiPackage(home);
-	const project = createProject(home, "first-project");
-	const secondProject = createProject(home, "second-project");
-	const checklist = join(project, "periodic-checks.md");
-	const extensionPath = join(home, "periodic-checks.ts");
-	copyFileSync(
-		new URL("../periodic-checks.ts", import.meta.url),
-		extensionPath,
-	);
-	const globalDirectory = join(home, ".config/pi/agent/extensions");
-	mkdirSync(globalDirectory, { recursive: true });
-	const globalExtension = join(globalDirectory, "periodic-checks.ts");
-	symlinkSync(extensionPath, globalExtension);
-	const extensionUrl = pathToFileURL(globalExtension);
-	t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 1800000000000 });
-	const handlers = new Map();
-	const commands = new Map();
-	const notifications = [];
-	const messages = [];
-	const agents = [];
-	let idle = true;
-	let pending = false;
-	let sessionId = "main-session";
-	const ctx = {
-		cwd: project,
-		ui: { notify: (text, type) => notifications.push({ text, type }) },
-		mode: "tui",
-		multiAgentAgentId: undefined,
-		multiAgentRequiresAgentId: false,
-		multiAgentStore: { listAgents: () => agents },
-		sessionManager: { getSessionId: () => sessionId },
-		isIdle: () => idle,
-		hasPendingMessages: () => pending,
-		...overrides,
-	};
-	const pi = {
-		on: (name, handler) => handlers.set(name, handler),
-		registerCommand: (name, command) => commands.set(name, command),
-		getActiveTools: () => tools,
-		sendMessage: (message, options) => messages.push({ message, options }),
-	};
-	const extension = (await import(extensionUrl.href)).default;
-	extension(pi);
-	const emit = (name, event = {}) => handlers.get(name)?.(event, ctx);
-	const finishPrompt = (sessionContinuation) =>
-		emit("agent_end", {
-			messages: [{ role: "custom", ...messages.at(-1).message }],
-			sessionContinuation,
-		});
-	return {
-		messages,
-		notifications,
-		status: async (args = "status") => {
-			const command = commands.get("periodic-checks");
-			assert.ok(command, "periodic-checks command must be registered");
-			await command.handler(args, ctx);
-			return notifications.at(-1).text;
-		},
-		agents,
-		emit,
-		finishPrompt,
-		ctx,
-		home,
-		project,
-		secondProject,
-		checklist,
-		removeChecklist: () => rmSync(checklist),
-		restoreChecklist: (content = checklistContent) =>
-			writeFileSync(checklist, content),
-		tick: (ms = interval) => t.mock.timers.tick(ms),
-		busy: (value) => {
-			idle = !value;
-		},
-		pending: (value) => {
-			pending = value;
-		},
-		switchIdentity: (nextSessionId = "different-session") => {
-			sessionId = nextSessionId;
-		},
-	};
-}
+import {
+	fixture,
+	interval,
+	checklistBody,
+	checklistContent,
+	configuredChecklist,
+	git,
+} from "./periodic_scheduler_fixture.mjs";
+import "./periodic_scheduler_dispatch.mjs";
 
 test("status reports armed schedule without changing metadata or original deadline", async (t) => {
 	const f = await fixture(t);
 	f.restoreChecklist(configuredChecklist(60));
 	f.emit("session_start");
-	f.tick(30000);
+	await f.tick(30000);
 	f.restoreChecklist(checklistBody);
 	for (const args of ["status", "", "  status  "]) {
 		assert.equal(
@@ -150,11 +24,11 @@ test("status reports armed schedule without changing metadata or original deadli
 			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 60\nNext run: in less than a minute`,
 		);
 	}
-	assert.equal(f.messages.length, 0);
-	f.tick(29999);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(29999);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("status counts down without auditing, rereading metadata or resetting the original tick", async (t) => {
@@ -167,7 +41,7 @@ test("status counts down without auditing, rereading metadata or resetting the o
 		[28 * 60000, "Next run: in 1 minute"],
 		[1, "Next run: in less than a minute"],
 	]) {
-		f.tick(elapsed);
+		await f.tick(elapsed);
 		for (let repeat = 0; repeat < 2; repeat++) {
 			assert.equal(
 				await f.status(),
@@ -175,12 +49,12 @@ test("status counts down without auditing, rereading metadata or resetting the o
 			);
 			assert.equal(f.notifications.at(-1).type, "info");
 		}
-		assert.equal(f.messages.length, 0);
+		assert.equal(f.calls.length, 0);
 	}
-	f.tick(59998);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(59998);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("status rounds 90 seconds up to 2 minutes", async (t) => {
@@ -203,21 +77,21 @@ test("status clamps due and overdue ticks to less than a minute without dispatch
 			await f.status(),
 			`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in less than a minute`,
 		);
-		assert.equal(f.messages.length, 0);
+		assert.equal(f.calls.length, 0);
 	}
 });
 
 test("status rejects controls and extra arguments without resetting deadline", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick(interval - 1);
+	await f.tick(interval - 1);
 	for (const args of ["start", "stop", "status extra"]) {
 		assert.equal(await f.status(args), "Usage: /periodic-checks status");
 		assert.equal(f.notifications.at(-1).type, "warning");
 	}
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("status records missing checklist without rearming on restoration", async (t) => {
@@ -230,8 +104,8 @@ test("status records missing checklist without rearming on restoration", async (
 	);
 	f.restoreChecklist();
 	await f.status();
-	f.tick(interval * 2);
-	assert.equal(f.messages.length, 0);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0);
 });
 
 test("status preserves explicit invalid metadata startup error and disabled state", async (t) => {
@@ -252,14 +126,14 @@ test("status preserves explicit invalid metadata startup error and disabled stat
 	);
 	f.restoreChecklist();
 	await f.status();
-	f.tick(interval * 2);
-	assert.equal(f.messages.length, 0);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0);
 });
 
 test("status restart resets interval, checklist and scheduled boundary", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick(30000);
+	await f.tick(30000);
 	f.emit("session_shutdown");
 	assert.match(await f.status(), /disabled[\s\S]*Reason: Session shutdown/);
 	assert.ok((await f.status()).includes(f.checklist));
@@ -273,39 +147,10 @@ test("status restart resets interval, checklist and scheduled boundary", async (
 		await f.status(),
 		`Periodic checks: armed\nChecklist: ${join(f.secondProject, "periodic-checks.md")}\ninterval_seconds: 60\nNext run: in 1 minute`,
 	);
-	f.tick(59999);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
-});
-
-test("status advances scheduled boundary through busy and in-flight skipped ticks", async (t) => {
-	const f = await fixture(t);
-	f.emit("session_start");
-	f.busy(true);
-	f.tick();
-	assert.equal(
-		await f.status(),
-		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 30 minutes`,
-	);
-	f.tick(60000);
-	assert.equal(
-		await f.status(),
-		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 29 minutes`,
-	);
-	assert.equal(f.messages.length, 0);
-	f.busy(false);
-	f.tick(interval - 60000);
-	assert.equal(f.messages.length, 1);
-	f.tick();
-	assert.equal(
-		await f.status(),
-		`Periodic checks: armed\nChecklist: ${f.checklist}\ninterval_seconds: 1800\nNext run: in 30 minutes`,
-	);
-	assert.equal(f.messages.length, 1);
-	f.finishPrompt();
-	await f.status();
-	assert.equal(f.messages.length, 1);
+	await f.tick(59999);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("status reflects removal only after scheduled tick and never restarts timer", async (t) => {
@@ -314,7 +159,7 @@ test("status reflects removal only after scheduled tick and never restarts timer
 	f.removeChecklist();
 	assert.match(await f.status(), /Periodic checks: armed/);
 	f.busy(true);
-	f.tick();
+	await f.tick();
 	assert.equal(
 		await f.status(),
 		`Periodic checks: disabled\nChecklist: ${f.checklist}\nReason: Checklist removed`,
@@ -322,8 +167,8 @@ test("status reflects removal only after scheduled tick and never restarts timer
 	f.restoreChecklist();
 	f.busy(false);
 	await f.status();
-	f.tick(interval * 2);
-	assert.equal(f.messages.length, 0);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0);
 });
 
 test("status explains unsupported runtimes and missing tools", async (t) => {
@@ -346,8 +191,8 @@ test("status explains unsupported runtimes and missing tools", async (t) => {
 				await f.status(),
 				`Periodic checks: disabled\nReason: ${reason}`,
 			);
-			f.tick(interval);
-			assert.equal(f.messages.length, 0);
+			await f.tick(interval);
+			assert.equal(f.calls.length, 0);
 		});
 	}
 });
@@ -361,24 +206,26 @@ test("status explains non-Git cwd without stale checklist or interval", async (t
 		await f.status(),
 		"Periodic checks: disabled\nReason: Not a Git project",
 	);
-	f.tick(interval);
-	assert.equal(f.messages.length, 0);
+	await f.tick(interval);
+	assert.equal(f.calls.length, 0);
 });
 
 test("1800-second metadata delays first and recurring bounded report-only audit", async (t) => {
 	const f = await fixture(t);
-	f.tick();
-	assert.equal(f.messages.length, 0, "factory must not start a timer");
+	await f.tick();
+	assert.equal(f.calls.length, 0, "factory must not start a timer");
 	f.emit("session_start");
 	f.emit("agent_end", { messages: [] });
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
-	const { message, options } = f.messages[0];
-	assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
+	const { name, params } = f.calls[0];
+	assert.equal(name, "spawn_agent");
+	assert.equal(params.agentType, "explore");
+	assert.equal(params.context, "fresh");
+	assert.equal(params.displayName, "periodic-checks-audit");
 	for (const text of [
-		"spawn_agent",
 		"read-only",
 		"bounded",
 		"send_agent_message",
@@ -393,26 +240,24 @@ test("1800-second metadata delays first and recurring bounded report-only audit"
 		"no cancellation",
 		"no steering",
 		"periodic-checks.md",
-		"exactly one",
 		"no edits or deployment",
-		"do not audit in main",
-		"delegate nested children",
+		"no nested spawn",
+		"other agents",
+		"no builds",
+		"no operational mutation",
+		"only the checklist",
 	]) {
 		assert.ok(
-			message.content.includes(text),
+			params.prompt.includes(text),
 			`missing audit instruction: ${text}`,
 		);
 	}
-	assert.ok(message.content.includes(f.checklist));
-	f.finishPrompt();
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 1);
-	f.tick(1);
-	assert.equal(
-		f.messages.length,
-		2,
-		"recurring audit exactly 30 minutes later",
-	);
+	assert.ok(params.prompt.includes(f.checklist));
+	f.finishAudit();
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 1);
+	await f.tick(1);
+	assert.equal(f.calls.length, 2, "recurring audit exactly 30 minutes later");
 });
 
 for (const seconds of [60, 1, 2147483]) {
@@ -421,15 +266,15 @@ for (const seconds of [60, 1, 2147483]) {
 		f.restoreChecklist(configuredChecklist(seconds));
 		f.emit("session_start");
 		const delay = seconds * 1000;
-		f.tick(delay - 1);
-		assert.equal(f.messages.length, 0);
-		f.tick(1);
-		assert.equal(f.messages.length, 1);
-		f.finishPrompt();
-		f.tick(delay - 1);
-		assert.equal(f.messages.length, 1);
-		f.tick(1);
-		assert.equal(f.messages.length, 2);
+		await f.tick(delay - 1);
+		assert.equal(f.calls.length, 0);
+		await f.tick(1);
+		assert.equal(f.calls.length, 1);
+		f.finishAudit();
+		await f.tick(delay - 1);
+		assert.equal(f.calls.length, 1);
+		await f.tick(1);
+		assert.equal(f.calls.length, 2);
 	});
 }
 
@@ -503,8 +348,8 @@ for (const [label, content] of invalidChecklists) {
 				return true;
 			},
 		);
-		f.tick(interval * 3);
-		assert.equal(f.messages.length, 0);
+		await f.tick(interval * 3);
+		assert.equal(f.calls.length, 0);
 	});
 }
 
@@ -514,10 +359,10 @@ test("standard YAML unknown nested keys, aliases, flow mappings, and block strin
 		`---\ntype: >-\n  Custom Checks\ninterval_seconds: &delay 60\nfuture: {copied_delay: *delay, tags: [one, two]}\nnotes: |\n  Unknown multiline metadata\n  is allowed.\n---\n${checklistBody}`,
 	);
 	f.emit("session_start");
-	f.tick(59999);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(59999);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("CRLF frontmatter supports quoted YAML keys and values", async (t) => {
@@ -526,28 +371,29 @@ test("CRLF frontmatter supports quoted YAML keys and values", async (t) => {
 		'---\r\n"type": \'Periodic Checks\'\r\n"interval_seconds": 60 # seconds\r\n---\r\nBody\r\n',
 	);
 	f.emit("session_start");
-	f.tick(60000);
-	assert.equal(f.messages.length, 1);
+	await f.tick(60000);
+	assert.equal(f.calls.length, 1);
 });
 
 test("reload and restart reread metadata and wait the full new delay", async (t) => {
 	const f = await fixture(t);
 	f.restoreChecklist(configuredChecklist(60));
 	f.emit("session_start");
-	f.tick(59000);
+	await f.tick(59000);
 	f.restoreChecklist(configuredChecklist(1800));
 	f.emit("session_start", { reason: "reload" });
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 	f.emit("session_shutdown");
+	f.finishAudit();
 	f.restoreChecklist(configuredChecklist(60));
 	f.emit("session_start", { reason: "restart" });
-	f.tick(59999);
-	assert.equal(f.messages.length, 1);
-	f.tick(1);
-	assert.equal(f.messages.length, 2);
+	await f.tick(59999);
+	assert.equal(f.calls.length, 1);
+	await f.tick(1);
+	assert.equal(f.calls.length, 2);
 });
 
 test("metadata edits do not change an armed delay until session_start", async (t) => {
@@ -555,26 +401,26 @@ test("metadata edits do not change an armed delay until session_start", async (t
 	f.restoreChecklist(configuredChecklist(60));
 	f.emit("session_start");
 	f.restoreChecklist(configuredChecklist(1800));
-	f.tick(60000);
-	assert.equal(f.messages.length, 1);
+	await f.tick(60000);
+	assert.equal(f.calls.length, 1);
 });
 
 test("invalid metadata on reload clears the previously armed timer", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick(interval - 1);
+	await f.tick(interval - 1);
 	f.restoreChecklist(checklistBody);
 	assert.throws(() => f.emit("session_start", { reason: "reload" }));
-	f.tick(interval * 3);
-	assert.equal(f.messages.length, 0);
+	await f.tick(interval * 3);
+	assert.equal(f.calls.length, 0);
 });
 
 test("audit prompt routes child findings to originating main session and confirms mailbox receipt", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	const prompt = f.messages[0].message.content;
+	await f.tick();
+	assert.equal(f.calls.length, 1);
+	const prompt = f.calls[0].params.prompt;
 	assert.ok(
 		prompt.includes(
 			'send_agent_message with toAgentId "main" AND toSessionId "main-session"',
@@ -583,18 +429,16 @@ test("audit prompt routes child findings to originating main session and confirm
 	assert.ok(
 		prompt.includes("Check the tool result and confirm successful delivery"),
 	);
-	assert.ok(prompt.includes("Main must confirm mailbox receipt"));
-	assert.ok(prompt.includes("not just wait_agent recovery"));
+	assert.ok(prompt.includes("no wait_agent recovery"));
 });
 
 test("replacement and restarted sessions route audits to current parent identity", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	assert.ok(
-		f.messages[0].message.content.includes('toSessionId "main-session"'),
-	);
+	await f.tick();
+	assert.equal(f.calls.length, 1);
+	assert.ok(f.calls[0].params.prompt.includes('toSessionId "main-session"'));
+	f.finishAudit();
 	for (const [reason, sessionId] of [
 		["replacement", "replacement-main-session"],
 		["restart", "restarted-main-session"],
@@ -602,26 +446,27 @@ test("replacement and restarted sessions route audits to current parent identity
 		if (reason === "restart") f.emit("session_shutdown");
 		f.switchIdentity(sessionId);
 		f.emit("session_start", { reason });
-		f.tick();
-		const prompt = f.messages.at(-1).message.content;
+		await f.tick();
+		const prompt = f.calls.at(-1).params.prompt;
 		assert.ok(prompt.includes(`toSessionId "${sessionId}"`));
 		assert.ok(!prompt.includes('toSessionId "main-session"'));
+		f.finishAudit();
 	}
-	assert.equal(f.messages.length, 3);
+	assert.equal(f.calls.length, 3);
 });
 
 test("second Git project opts in without remote-agent mapping", async (t) => {
 	const f = await fixture(t);
 	f.ctx.cwd = f.secondProject;
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
+	await f.tick();
+	assert.equal(f.calls.length, 1);
 	assert.ok(
-		f.messages[0].message.content.includes(
+		f.calls[0].params.prompt.includes(
 			join(f.secondProject, "periodic-checks.md"),
 		),
 	);
-	assert.ok(!f.messages[0].message.content.includes(f.checklist));
+	assert.ok(!f.calls[0].params.prompt.includes(f.checklist));
 });
 
 test("nested cwd discovers checklist at Git project root", async (t) => {
@@ -633,13 +478,11 @@ test("nested cwd discovers checklist at Git project root", async (t) => {
 		"Not the project checklist",
 	);
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	assert.ok(f.messages[0].message.content.includes(f.checklist));
+	await f.tick();
+	assert.equal(f.calls.length, 1);
+	assert.ok(f.calls[0].params.prompt.includes(f.checklist));
 	assert.ok(
-		!f.messages[0].message.content.includes(
-			join(f.ctx.cwd, "periodic-checks.md"),
-		),
+		!f.calls[0].params.prompt.includes(join(f.ctx.cwd, "periodic-checks.md")),
 	);
 });
 
@@ -667,83 +510,36 @@ test("Git worktree uses its own checklist, not canonical checkout", async (t) =>
 	f.ctx.cwd = join(worktree, "src");
 	mkdirSync(f.ctx.cwd);
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
+	await f.tick();
+	assert.equal(f.calls.length, 1);
 	assert.ok(
-		f.messages[0].message.content.includes(
-			join(worktree, "periodic-checks.md"),
-		),
+		f.calls[0].params.prompt.includes(join(worktree, "periodic-checks.md")),
 	);
-	assert.ok(!f.messages[0].message.content.includes(f.checklist));
-});
-
-test("busy and queued input ticks are skipped, never dispatched on completion", async (t) => {
-	const f = await fixture(t);
-	f.emit("session_start");
-	f.busy(true);
-	f.tick();
-	f.busy(false);
-	f.emit("agent_end", { messages: [] });
-	assert.equal(f.messages.length, 0);
-	f.pending(true);
-	f.tick();
-	f.pending(false);
-	f.emit("agent_end", { messages: [] });
-	assert.equal(f.messages.length, 0);
-	f.tick();
-	assert.equal(f.messages.length, 1);
-});
-
-test("queued audit and live audit child suppress overlap until child terminal state", async (t) => {
-	const f = await fixture(t);
-	f.emit("session_start");
-	f.tick();
-	f.tick();
-	f.emit("agent_end", { messages: [] });
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	f.finishPrompt("cwd_relocation");
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	f.agents.push({
-		id: "audit-child",
-		displayName: "periodic-checks-audit",
-		lifecycle: "running",
-	});
-	f.finishPrompt();
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	f.agents[0].lifecycle = "waiting_for_input";
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	f.agents[0].lifecycle = "completed";
-	f.emit("agent_end", { messages: [] });
-	assert.equal(f.messages.length, 1, "no completion-triggered audit");
-	f.tick();
-	assert.equal(f.messages.length, 2);
+	assert.ok(!f.calls[0].params.prompt.includes(f.checklist));
 });
 
 test("every session_start rearms from zero; shutdown clears; stale identity cannot fire", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
-	f.tick(interval - 1);
+	await f.tick(interval - 1);
 	f.emit("session_start", { reason: "reload" });
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 	f.emit("session_shutdown");
-	f.tick(interval * 3);
-	assert.equal(f.messages.length, 1);
+	await f.tick(interval * 3);
+	assert.equal(f.calls.length, 1);
+	f.finishAudit();
 	f.emit("session_start", { reason: "resume" });
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 1);
-	f.tick(1);
-	assert.equal(f.messages.length, 2);
-	f.finishPrompt();
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 1);
+	await f.tick(1);
+	assert.equal(f.calls.length, 2);
+	f.finishAudit();
 	f.switchIdentity();
-	f.tick();
-	assert.equal(f.messages.length, 2);
+	await f.tick();
+	assert.equal(f.calls.length, 2);
 });
 
 test("only supported Pi main runtimes arm", async (t) => {
@@ -759,8 +555,8 @@ test("only supported Pi main runtimes arm", async (t) => {
 		await t.test(label, async (t) => {
 			const f = await fixture(t, overrides, tools);
 			f.emit("session_start");
-			f.tick(interval * 2);
-			assert.equal(f.messages.length, 0);
+			await f.tick(interval * 2);
+			assert.equal(f.calls.length, 0);
 		});
 	}
 });
@@ -769,28 +565,24 @@ test("absent checklist disables scheduling until restored and session_start fire
 	const f = await fixture(t);
 	f.removeChecklist();
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 0, "absent checklist must not arm a timer");
+	await f.tick();
+	assert.equal(f.calls.length, 0, "absent checklist must not arm a timer");
 	f.restoreChecklist();
-	f.tick(interval * 2);
-	assert.equal(
-		f.messages.length,
-		0,
-		"restoration must not start polling audits",
-	);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0, "restoration must not start polling audits");
 	f.emit("session_start");
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("removed checklist prevents the next armed audit", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
 	f.removeChecklist();
-	f.tick();
-	assert.equal(f.messages.length, 0, "removed checklist must not audit");
+	await f.tick();
+	assert.equal(f.calls.length, 0, "removed checklist must not audit");
 });
 
 test("removed checklist stops armed timer even while busy; restoration requires session_start", async (t) => {
@@ -798,30 +590,30 @@ test("removed checklist stops armed timer even while busy; restoration requires 
 	f.emit("session_start");
 	f.busy(true);
 	f.removeChecklist();
-	f.tick();
-	assert.equal(f.messages.length, 0, "removed checklist must not audit");
+	await f.tick();
+	assert.equal(f.calls.length, 0, "removed checklist must not audit");
 	f.restoreChecklist();
 	f.busy(false);
-	f.tick(interval * 2);
-	assert.equal(f.messages.length, 0, "removed checklist must stop the timer");
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0, "removed checklist must stop the timer");
 	f.emit("session_start");
-	f.tick(interval - 1);
-	assert.equal(f.messages.length, 0);
-	f.tick(1);
-	assert.equal(f.messages.length, 1);
+	await f.tick(interval - 1);
+	assert.equal(f.calls.length, 0);
+	await f.tick(1);
+	assert.equal(f.calls.length, 1);
 });
 
 test("ticks remain scoped to startup project after cwd changes", async (t) => {
 	const f = await fixture(t);
 	f.emit("session_start");
 	f.ctx.cwd = f.secondProject;
-	f.tick();
-	assert.equal(f.messages.length, 0);
+	await f.tick();
+	assert.equal(f.calls.length, 0);
 	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
+	await f.tick();
+	assert.equal(f.calls.length, 1);
 	assert.ok(
-		f.messages[0].message.content.includes(
+		f.calls[0].params.prompt.includes(
 			join(f.secondProject, "periodic-checks.md"),
 		),
 	);
@@ -832,22 +624,6 @@ test("non-Git directory with checklist cannot opt in", async (t) => {
 	f.ctx.cwd = f.home;
 	writeFileSync(join(f.home, "periodic-checks.md"), checklistContent);
 	f.emit("session_start");
-	f.tick(interval * 2);
-	assert.equal(f.messages.length, 0);
-});
-
-test("stale generation completion cannot clear current queued audit", async (t) => {
-	const f = await fixture(t);
-	f.emit("session_start");
-	f.tick();
-	assert.equal(f.messages.length, 1);
-	const stale = { role: "custom", ...f.messages[0].message };
-	f.emit("session_start");
-	f.tick();
-	f.emit("agent_end", { messages: [stale] });
-	f.tick();
-	assert.equal(f.messages.length, 2);
-	f.finishPrompt();
-	f.tick();
-	assert.equal(f.messages.length, 3);
+	await f.tick(interval * 2);
+	assert.equal(f.calls.length, 0);
 });
