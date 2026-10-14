@@ -2,10 +2,10 @@
 
 import json
 import os
-from pathlib import Path
 import stat
 import tempfile
 import unittest
+from pathlib import Path
 
 from test_remote_agent import isolate_home, load_worker
 
