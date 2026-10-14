@@ -377,12 +377,16 @@ def write_private(path, text):
         stream.write(text)
 
 
-def atomic_write(path, data):
+def atomic_write(path, data, *, mtime_ns=None):
+    if path.exists() and path.read_bytes() == data:
+        return
     temporary = path.with_name(path.name + ".tmp")
     temporary.unlink(missing_ok=True)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)
+    if mtime_ns is not None:
+        os.utime(temporary, ns=(mtime_ns, mtime_ns))
     temporary.replace(path)
 
 
@@ -439,19 +443,21 @@ class ClaudeAccounts:
                 )
             return None
         if self.active.exists():
-            atomic_write(self.profile_path(owner), self.active.read_bytes())
+            target = self.profile_path(owner)
+            active_mtime = self.active.stat().st_mtime_ns
+            if not target.exists() or active_mtime >= target.stat().st_mtime_ns:
+                atomic_write(target, self.active.read_bytes(), mtime_ns=active_mtime)
         return owner
 
     def use(self, name):
         target = self.profile_path(name)
-        owner = self.save_active()
-        if owner == name:
-            return
+        self.save_active()
         if not target.exists():
             raise ValueError(
                 f"profile not found: {name}; available: {self.listing()['profiles']}"
             )
-        atomic_write(self.active, target.read_bytes())
+        target_mtime = target.stat().st_mtime_ns
+        atomic_write(self.active, target.read_bytes(), mtime_ns=target_mtime)
         atomic_write(self.owner_file, name.encode())
 
     def name_current(self, name):

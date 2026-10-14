@@ -203,6 +203,31 @@ between hosts. `remote-agent pi-login PROVIDER --host HOST` starts Pi provider
 login over SSH. `remote-agent claude-account --login PROFILE --host HOST` starts
 Claude login; account switching is host-global and may affect running sessions.
 
+### Claude account freshness
+
+The active credentials are `~/.claude/.credentials.json`; `.active-profile`
+records their owner, and `<PROFILE>.credentials.json` stores each named account.
+Switching or releasing an account saves global credentials only when the named
+file is absent or its modification time is no newer than the global file.
+Equal timestamps prefer global credentials. A newer named refresh is never
+replaced by stale global credentials.
+
+Selecting the already-active profile still adopts newer named credentials.
+Credential copies use atomic private-file replacement and preserve the source's
+pre-copy modification time, rather than making a copied token look freshly
+refreshed. Byte-identical writes leave the destination inode and modification
+time unchanged. These rules select freshness by filesystem timestamps, not by
+OAuth token validation; account switching is not synchronized with running
+provider refreshes.
+
+Isolated OAuth-shaped fixtures in `tests/test_claude_account_freshness.py` cover
+stale-global protection, native global refresh persistence, same-profile adoption,
+unchanged saves, equal-time ties, release, and first save. Run only account tests:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_*.py' -k ClaudeAccount -v
+```
+
 ## Optional periodic checks
 
 Deployment installs `periodic-checks.ts` as a user-level Pi extension on both
