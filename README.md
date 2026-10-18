@@ -100,6 +100,8 @@ requires reachable Mosh UDP ports, and has no SSH fallback. Attachment retries
 dropped connections; the worker can resume a recorded conversation after its
 session is lost. This does not guarantee recovery of unsaved work or availability
 of the host, harness, or provider.
+Mosh uses `--no-init` for terminal-native scrollback, without guaranteeing complete
+output history.
 
 ### Another user's sessions
 

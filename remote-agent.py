@@ -407,7 +407,7 @@ def attach(name, host=DEFAULT_HOST, user=None):
     failures = 0
     while True:
         code = subprocess.call(
-            ["mosh", "--", *destination(host, user), "--attach", name]
+            ["mosh", "--no-init", "--", *destination(host, user), "--attach", name]
         )
         restore_terminal()
         if code == 0:

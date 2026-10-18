@@ -1559,7 +1559,7 @@ else:
             for line in (self.root / "mosh-calls").read_text().splitlines()
         ]
         self.assertEqual(len(mosh_calls), 1)
-        self.assertEqual(mosh_calls[0][:2], ["--", "agent-server"])
+        self.assertEqual(mosh_calls[0][:3], ["--no-init", "--", "agent-server"])
 
     def test_session_commands_route_directly_to_selected_worker(self):
         for action in ("status", "logs", "attach", "cancel"):
@@ -1780,6 +1780,7 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
         self.assertEqual(
             data["argv"],
             [
+                "--no-init",
                 "--",
                 "agent-server",
                 "python3",
@@ -1846,7 +1847,7 @@ sys.exit({list(codes)!r}[len(done)])
         self.assertEqual(code, 0)
         self.assertEqual(len(argvs), 3)
         for argv in argvs:
-            self.assertEqual(argv[0:2], ["--", "agent-server"])
+            self.assertEqual(argv[0:3], ["--no-init", "--", "agent-server"])
             self.assertNotIn("desktop", argv)
             self.assertNotIn("-t", argv)
             self.assertNotIn("-o", argv)
