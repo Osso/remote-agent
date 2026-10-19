@@ -13,7 +13,8 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [ ] Session state and sockets remain private to the owning account.
 - [ ] Logs fail explicitly for dtach because terminal output is not retained or replayed; existing tmux pane history remains available through the legacy path.
 - [ ] Mosh attachment retains `--no-init`; terminal-native scrollback is not a complete output-history guarantee.
-- [ ] Deployment preserves existing user tmux configuration, including the deployed legacy copy targeted by an existing user symlink, and does not reload tmux configuration.
+- [x] Deployment preserves existing user tmux configuration, including the deployed legacy copy targeted by an existing user symlink. Asserted by `DeployTests.test_deploy_preserves_existing_tmux_configuration`; deployment commit `6c09830` has saved GREEN proof (2 tests).
+- [ ] Deployment does not reload tmux configuration.
 
 ## How it works
 
@@ -27,7 +28,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 ## Tests asserting this spec
 
-- `tests/test_dtach.py` — real dtach process and PTY lifecycle, metadata, private state, explicit log errors, cancellation and failed startup. Source assertions alone do not establish PASS; new contract bullets remain unchecked until revision-scoped proof is available.
+- `tests/test_dtach.py` — real dtach process and PTY lifecycle, metadata, private state, explicit log errors, cancellation and failed startup. Source assertions alone do not establish PASS; dtach lifecycle bullets remain unchecked pending saved revision-scoped logs.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
 
