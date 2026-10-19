@@ -7,6 +7,10 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [x] New sessions explicitly record `backend: dtach`; missing dtach fails without creating session state or starting tmux instead.
 - [x] Existing records without a backend remain tmux sessions, including restart from their recorded conversation.
 - [x] Start preserves the selected harness, project, prompt, conversation and user environment. A configured resource scope uses the separate `remote-agent-NAME-dtach` unit, not the legacy session unit.
+- [ ] Normal attachment reopens a saved conversation without manual path, environment or session repair. Repeated restarts reuse the same scope, preserving retained jobs and resource limits. Real-systemd acceptance logs are pending.
+- [ ] Active delegated scopes accept only the new launcher; older active scopes receive one fixed runtime delegation override in place. Inactive scopes remove only that owned override before recreating the same delegated unit. No per-reopen unit names or override files, cap changes or retained-job termination. Real-systemd acceptance logs are pending.
+- [ ] Startup readiness follows successful scope creation or attachment; scope failures must surface explicitly. Current implementation includes this ordering; acceptance logs are pending.
+- [ ] Caller `COLORTERM` is forwarded on start and attach, persisted and refreshed before restart. Dtach launches set `TERM=xterm-256color`, advertising truecolor only for caller `truecolor`/`24bit`; no palette edit or running-process environment mutation. Current implementation audited; current verification logs are pending.
 - [x] Ctrl+backslash detaches without stopping the agent; reattachment uses `-r winch`, without injecting Ctrl+L. Restart resumes the recorded conversation without resending the initial prompt.
 - [x] List and status report dtach backend, attachment, liveness and recorded exit status from private runtime metadata and socket state. Locate finds saved records even after exit; list retains exited dtach records.
 - [x] Cancel terminates only the intended session and removes its private state; stale process identifiers must not target unrelated processes.
@@ -29,12 +33,14 @@ The worker manages new sessions with dtach while retaining existing tmux session
 ## Tests asserting this spec
 
 - `tests/test_dtach.py` — real dtach process and PTY lifecycle, metadata, private state, explicit log errors, cancellation and failed startup. The 14-case lifecycle suite passed at `068e5c4`; deployed-worker checks also passed after fixture isolation in `46635a7`.
+- `tests/test_dtach_scope.py` — real-systemd stable-scope reuse, retained jobs and limits, legacy delegation upgrade and startup failure boundaries. Results pending; test presence alone is not acceptance proof.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
 
 ## Known gaps (current cycle)
 
-- [ ] Full repository acceptance remains blocked by three unchanged periodic-runtime test cases (four subtests): expected audit deliveries are absent. Backend, legacy, harness and cross-user fixture cases passed in the 139-test integration run; corrected controller and dependency-configured Node cases passed separately.
+- [ ] Stable-scope real-systemd acceptance remains unchecked until actual test logs are available.
+- [ ] Full repository acceptance remains blocked by three unchanged periodic-runtime test cases (four subtests): expected audit deliveries are absent. Prior baseline reproduction is recorded at `/tmp/remote-agent-periodic-baseline-6cabad8-xbrl4sib`; this failure is outside the color/stable-scope fix. Backend, legacy, harness and cross-user fixture cases passed in the prior 139-test integration run; corrected controller and dependency-configured Node cases passed separately. Those earlier results do not verify the current scope changes.
 
 ## Out of scope
 
