@@ -141,17 +141,11 @@ running agent's environment. No palette or theme edit is required.
 
 Reopen a saved conversation with normal `remote-agent attach NAME`; no manual
 path, environment, or session repair is required. With resource scoping enabled,
-restarts reuse the same `remote-agent-NAME-dtach.scope`, preserving retained jobs
-and existing limits rather than killing jobs or changing caps. An active delegated
-scope receives only the new launcher through systemd's `AttachProcessesToUnit` API.
-An active older nondelegated scope is upgraded in place using `systemctl edit
---runtime --stdin` and a manager reload: one fixed
-`50-remote-agent-delegate.conf` drop-in, not a new name or file on every reopen.
-When the scope is inactive, the worker removes only that owned runtime override
-and recreates the same unit with delegation; other drop-ins remain untouched.
-Startup readiness is published only after scope creation or attachment succeeds;
-systemd failures are reported, not treated as a successful restart.
-See the [session backend contract](docs/specs/session-backends.md).
+both backends reuse their stable unit: `remote-agent-NAME.scope` for legacy tmux,
+`remote-agent-NAME-dtach.scope` for dtach. Retained detached jobs do not require
+manual scope cleanup before restart. See the
+[session backend contract](docs/specs/session-backends.md) for scope reuse,
+limits, delegation and startup guarantees.
 
 ### Another user's sessions
 

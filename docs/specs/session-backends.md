@@ -6,12 +6,12 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 - [x] New sessions explicitly record `backend: dtach`; missing dtach fails without creating session state or starting tmux instead.
 - [x] Existing records without a backend remain tmux sessions, including restart from their recorded conversation.
-- [x] Start preserves the selected harness, project, prompt, conversation and user environment. A configured resource scope uses the separate `remote-agent-NAME-dtach` unit, not the legacy session unit.
-- [x] Normal attachment reopens a saved conversation without manual path, environment or session repair. Both legacy tmux and dtach reuse their same stable scope across repeated restarts, preserving retained jobs, resource limits and the recorded backend.
-- [x] Active delegated scopes accept only the new launcher; older active scopes receive one fixed runtime delegation override in place. Inactive scopes remove only that owned override before recreating the same delegated unit. No per-reopen unit names or override files, cap changes or retained-job termination.
-- [x] Startup readiness follows successful scope creation or attachment; scope failures surface explicitly.
+- [x] Start preserves the selected harness, project, prompt, conversation and user environment. With resource scoping enabled, dtach uses `remote-agent-NAME-dtach.scope`; legacy tmux retains `remote-agent-NAME.scope`.
+- [x] Normal attachment reopens a saved conversation without manual path, environment or session repair. Both legacy tmux and dtach reuse their same stable scope across repeated restarts, preserving retained jobs, active-scope resource limits and the recorded backend.
+- [x] Active delegated scopes accept only the new launcher; older active scopes receive one fixed runtime delegation override in place. Inactive scopes remove only that owned override before recreating the same delegated unit with configured limits. No per-reopen unit names or override files, active-scope cap changes or retained-job termination.
+- [x] Dtach startup readiness follows successful scope creation or attachment; scope failures surface explicitly.
 - [x] Caller `COLORTERM` is forwarded on start and attach, persisted and refreshed before restart. Dtach launches set `TERM=xterm-256color`, advertising truecolor only for caller `truecolor`/`24bit`; no palette edit or running-process environment mutation.
-- [x] Ctrl+backslash detaches without stopping the agent; reattachment uses `-r winch`, without injecting Ctrl+L. Restart resumes the recorded conversation without resending the initial prompt.
+- [x] For dtach, Ctrl+backslash detaches without stopping the agent; reattachment uses `-r winch`, without injecting Ctrl+L. Restart resumes the recorded conversation without resending the initial prompt.
 - [x] List and status report dtach backend, attachment, liveness and recorded exit status from private runtime metadata and socket state. Locate finds saved records even after exit; list retains exited dtach records.
 - [x] Cancel terminates only the intended session and removes its private state; stale process identifiers must not target unrelated processes.
 - [x] Session state and sockets remain private to the owning account.
