@@ -129,6 +129,7 @@ class WorkerHistoryTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         self.assertEqual(
             self.snapshot(), before, "history changed managed state/source"

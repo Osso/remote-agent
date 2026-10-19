@@ -211,6 +211,7 @@ class Worker:
             cwd=cwd,
             env=environment,
             capture_output=True,
+            check=False,
         )
         if result.returncode:
             error = f"Pi history export exited {result.returncode}: {result.stderr.decode('utf-8', errors='replace').strip()}"
