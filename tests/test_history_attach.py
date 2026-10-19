@@ -151,6 +151,19 @@ if os.environ['MOSH_RETRY']=='1' and not any(x['action']=='mosh' for x in before
         self.assertIn(b"\x1b[48;2;40;50;40m", output)
         self.assertNotIn(b"\x1b[3J", output)
         self.assertIn("--no-init", events[1]["argv"])
+        terminal = subprocess.run(
+            ["node", str(ROOT / "tests/history_scrollback_fixture.cjs")],
+            input=json.dumps({"output": output.decode(), "columns": 80, "rows": 12}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(terminal.returncode, 0, terminal.stdout + terminal.stderr)
+        proof = json.loads(terminal.stdout)
+        self.assertEqual(proof["markerCount"], 200)
+        self.assertTrue(proof["ordered"])
+        self.assertLess(proof["lastHistoryRow"], proof["liveViewportStart"])
+        self.assertTrue(proof["liveViewPresent"])
 
     def test_reconnect_restores_history_again_before_live_connection(self):
         code, output, events = self.invoke(MOSH_RETRY="1")

@@ -28,6 +28,7 @@ FILES = (
     "tests/test_terminal_colors.py",
     "tests/test_history.py",
     "tests/test_history_attach.py",
+    "tests/history_scrollback_fixture.cjs",
     "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
     "tests/periodic_scheduler_dispatch.mjs",

@@ -418,6 +418,11 @@ If Pi's npm package is installed elsewhere, set `NODE_PATH` to its containing
 `NODE_PATH`. A compiled-only Pi executable is insufficient
 for these tests; they do not universally run with just `pi` installed.
 
+History-attachment tests additionally use `@xterm/headless` 5.5.0 to assert actual
+normal-buffer scrollback, not merely emitted bytes. It is a test-only dependency
+already present in the Pi checkout's development `node_modules`; expose that
+location through `NODE_PATH` when running those tests.
+
 ## License
 
 [MIT](LICENSE).
