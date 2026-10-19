@@ -6,11 +6,11 @@ import base64
 import io
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import subprocess
 import tarfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = Path.home() / ".config/remote-agent"
