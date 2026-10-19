@@ -40,13 +40,14 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
 - `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries; nine passing tests reported for the current worker.
-- `tests/test_history_attach.py` — four real-PTY controller cases for preload ordering, retry restoration and unavailable/error behavior. Together with two existing TTY cases, six tests passed at `e0dc6a5`; saved proof: `/tmp/remote-agent-history-attach-green.log`. SSH and Mosh are fixtures, not live transports.
+- `tests/test_history_attach.py` and `tests/history_scrollback_fixture.cjs` — four real-PTY controller cases, including headless normal-buffer assertions for all 200 ordered history markers above the live viewport, retry restoration and unavailable/error behavior. SSH and Mosh are fixtures in these regression tests.
+
+Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at 61×282: all 3,600 current-history rows matched exactly in the normal terminal buffer, above the live viewport. Independent replay confirmed both captures; this is terminal-buffer proof, not a Ghostty screenshot or proof of live-view repaint.
 
 ## Known gaps (current cycle)
 
-- [ ] Real-Mosh end-to-end acceptance of current-history preload remains unverified; controller PTY fixtures do not establish it.
-
-- [ ] Full repository acceptance remains blocked by three unchanged periodic-runtime test cases (four subtests): expected audit deliveries are absent. Prior baseline reproduction is recorded at `/tmp/remote-agent-periodic-baseline-6cabad8-xbrl4sib`; this failure is outside the color/stable-scope fix. Backend, legacy, harness and cross-user fixture cases passed in the prior 139-test integration run; corrected controller and dependency-configured Node cases passed separately. Those earlier results do not verify the current scope changes.
+- [ ] Same-size dtach attachment can leave the live viewport blank until Pi repaints. Current-history scrollback is restored independently; viewport repaint is not fixed here.
+- [ ] A prior full repository run recorded three periodic-runtime case failures (four subtests), reproduced on pre-change `6cabad8` under the same installed runtime. Scoped history tests pass; no whole-repository pass is claimed.
 
 ## Out of scope
 
