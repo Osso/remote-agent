@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import signal
@@ -98,7 +99,6 @@ class Worker:
         self.home = Path.home() if home is None else Path(home)
         self.tmux = ["tmux"] if tmux is None else tmux
         self.scope = scope
-        self.dtach_processes = {}
         self.jobs = HOSTS[host]["cargo_build_jobs"]
         self.build_host_scripts = HOSTS[host].get("build_host_scripts")
         self.state = self.home / ".local/state/remote-agent"
@@ -276,9 +276,6 @@ class Worker:
         # Freeze the master first so it cannot spawn a replacement PTY child.
         for identity in (runtime["master"], process):
             terminate_owned_tree(identity)
-        launched = self.dtach_processes.pop(session, None)
-        if launched is not None:
-            launched.wait(timeout=STARTUP_TIMEOUT)
 
     def launch_dtach(self, session, repo, agent, conversation, prompt_file):
         binary = self.find_dtach()
@@ -305,7 +302,7 @@ class Worker:
             environment["BUILD_HOST_SCRIPTS"] = self.build_host_scripts
         command = [
             binary,
-            "-N",
+            "-n",
             "dtach.sock",
             "-r",
             "winch",
@@ -331,19 +328,21 @@ class Worker:
                 stdout=errors,
                 stderr=errors,
             )
-            self.dtach_processes[session] = process
             identity = process_identity(process.pid)
             deadline = time.monotonic() + STARTUP_TIMEOUT
             while time.monotonic() < deadline:
-                if (directory / "runtime.json").exists():
+                result = process.poll()
+                # -n daemonizes: reap the launcher, not the detached master.
+                if result == 0 and (directory / "runtime.json").exists():
                     self.check_session_directory(directory)
                     return
-                if process.poll() is not None:
+                if result is not None and result != 0:
                     break
                 time.sleep(0.02)
             terminate_owned_tree(identity)
             process.wait(timeout=STARTUP_TIMEOUT)
-            self.dtach_processes.pop(session, None)
+            if (directory / "runtime.json").exists():
+                self.stop_dtach(session)
             errors.seek(0)
             message = errors.read().decode(errors="replace").strip()
             raise RuntimeError(
@@ -636,12 +635,26 @@ def terminate_owned_tree(identity):
                     continue
     finally:
         # Children first; pidfds cannot ever target a recycled PID.
-        for fd in reversed(pinned):
-            try:
-                signal.pidfd_send_signal(fd, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # Exit raced cancellation; no live process remains at this fd.
-            finally:
+        try:
+            for fd in reversed(pinned):
+                try:
+                    signal.pidfd_send_signal(fd, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Exit raced cancellation; no live process remains at this fd.
+            # Drain the old master before a restart can bind the same socket.
+            deadline = time.monotonic() + STARTUP_TIMEOUT
+            waiting = set(pinned)
+            while waiting:
+                ready, _, _ = select.select(
+                    list(waiting), [], [], max(0, deadline - time.monotonic())
+                )
+                if not ready:
+                    raise RuntimeError(
+                        "timed out waiting for cancelled dtach processes"
+                    )
+                waiting.difference_update(ready)
+        finally:
+            for fd in pinned:
                 os.close(fd)
 
 

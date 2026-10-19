@@ -1,5 +1,6 @@
 """Real dtach/PTY lifecycle; fixture agents never call providers."""
 
+import gc
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+import warnings
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -232,6 +234,53 @@ class DtachTests(unittest.TestCase):
         self.assertEqual(self.calls()[1]["argv"], ["--session", record["conversation"]])
         self.call("cancel")
         self.assertFalse(self.call("locate")["exists"])
+
+    def test_other_worker_cancellation_reaps_detached_launcher(self):
+        self.start()
+        wait_for(lambda: self.calls())
+        runtime = json.loads((self.directory() / "runtime.json").read_text())
+        owner = self.worker
+        self.worker = self.module.Worker(self.home, scope=[])
+        self.call("cancel")
+        wait_for(lambda: not alive(runtime["master"]["pid"]))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            del owner
+            gc.collect()
+        self.assertEqual(
+            [
+                str(item.message)
+                for item in caught
+                if issubclass(item.category, ResourceWarning)
+            ],
+            [],
+        )
+
+    def test_restart_drains_stopped_old_master_before_new_attachment(self):
+        self.start()
+        call = wait_for(lambda: self.calls())[0]
+        runtime = json.loads((self.directory() / "runtime.json").read_text())
+        old_master = runtime["master"]["pid"]
+        os.kill(old_master, signal.SIGSTOP)
+        os.kill(call["pid"], signal.SIGKILL)
+        os.kill(call["child"], signal.SIGKILL)
+        wait_for(lambda: self.call("status")["dead"])
+        other = self.module.Worker(self.home, scope=[])
+        other.restart(self.module.session_name("trial"))
+        self.assertFalse(alive(old_master))
+        wait_for(lambda: len(self.calls()) == 2)
+        attached, terminal = self.attach()
+        os.write(terminal, b"new-generation")
+        wait_for(
+            lambda: (
+                b"new-generation" in (self.home / "input").read_bytes()
+                if (self.home / "input").exists()
+                else False
+            )
+        )
+        os.write(terminal, b"\x1c")
+        self.assertEqual(attached.wait(timeout=3), 0)
+        other.dispatch({"action": "cancel", "name": "trial"})
 
     def test_logs_explicitly_unavailable(self):
         self.start()
