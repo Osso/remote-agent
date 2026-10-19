@@ -764,11 +764,17 @@ def exec_dtach_scope(scope_json, command_json):
         )
     # A collected legacy scope's drop-in otherwise prevents transient recreation.
     # Remove only our stable override, never other resource/admin drop-ins.
-    for name in shlex.split(properties["DropInPaths"]):
-        override = Path(name)
-        if override.name == SCOPE_DELEGATE_OVERRIDE:
-            override.unlink()
-            scope_systemctl(manager, "daemon-reload")
+    runtime_units = (
+        Path(os.environ["XDG_RUNTIME_DIR"]) / "systemd/user"
+        if manager == "--user"
+        else Path("/run/systemd/system")
+    )
+    override = runtime_units / (unit + ".d") / SCOPE_DELEGATE_OVERRIDE
+    if override.exists():
+        override.unlink()
+        if not any(override.parent.iterdir()):
+            override.parent.rmdir()
+        scope_systemctl(manager, "daemon-reload")
     os.execvp(scope[0], [*scope[:-1], "--property=Delegate=yes", "--", *command])
 
 

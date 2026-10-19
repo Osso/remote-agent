@@ -292,6 +292,14 @@ class DtachScopeTests(unittest.TestCase):
         conversation = self.worker.read_record(self.session)["conversation"]
         self.assertEqual(self.calls()[-1]["argv"], ["--session", conversation])
 
+    def test_03_scope_api_failure_is_reported_before_start_succeeds(self):
+        self.worker.scope = [*SCOPE, "--property=NoSuchRemoteAgentProperty=yes"]
+        with self.assertRaisesRegex(RuntimeError, "scope.*failed|scope.*exited"):
+            self.worker.dispatch(
+                {"action": "start", "name": self.name, "repo": "fixture", "agent": "pi"}
+            )
+        self.assertEqual(self.calls(), [])
+
     def exercise_reopens(self):
         self.worker.dispatch(
             {"action": "start", "name": self.name, "repo": "fixture", "agent": "pi"}
