@@ -182,8 +182,12 @@ inherited. Listing includes a `user` field. Attachment checks authorization and
 configuration before entering the Mosh reconnect loop and remains interactive,
 with the existing detach/recovery behavior. It does not discover standalone Pi
 processes or arbitrary tmux sessions outside the `remote-agent-*` namespace.
-Existing live cross-user acceptance covers tmux, not native dtach attachment;
-the identity helper is unchanged, but that is not proof of dtach cross-user support.
+Live cross-user acceptance includes one user-authorized SSH/Mosh/dtach Pi
+attach/detach at 48×200, returning exit 0. Process and health metadata confirmed
+the target working directory and selected conversation; the existing tmux client
+was preserved. Earlier disposable tmux acceptance separately proved same-named
+account isolation. This is not an exhaustive cross-user dtach isolation matrix
+or full-history pixel proof; see [acceptance scope](docs/specs/cross-user-attachment.md#tests-asserting-this-spec).
 
 ## File transfer
 

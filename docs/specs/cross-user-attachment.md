@@ -39,12 +39,19 @@ The controller and privileged helper implement the account boundary; see
 
 - `tests/test_cross_user.py` — real process boundaries with account/authorization fixtures.
 - `tests/test_remote_agent.py` — existing same-account controller and terminal behavior.
-- Live acceptance uses owned disposable tmux sessions; no real research session
-  is read, typed into, restarted or terminated.
+- Original live acceptance used owned disposable tmux sessions, proving
+  same-named account isolation and clean detach; that trial did not touch real
+  research sessions.
+- On 2026-10-19, one user-authorized actual research Pi session was attached
+  through cross-user SSH/Mosh/dtach at 48×200 and cleanly detached with exit 0.
+  Process and health metadata confirmed the target cwd and selected conversation.
+  The existing tmux client and unrelated research process identities were preserved.
+  This is bounded operational acceptance, not exhaustive cross-user dtach isolation
+  or full-history pixel proof.
 
 ## Known gaps (current cycle)
 
-- [ ] Native cross-user dtach attachment is not covered by the existing live tmux acceptance. The unchanged identity helper is not new backend acceptance proof; see [managed session backends](session-backends.md).
+- [ ] Exhaustive cross-user dtach isolation matrix and full-history pixel proof remain unproven. The single actual attachment above and earlier disposable tmux isolation trial provide distinct, bounded evidence; see [managed session backends](session-backends.md).
 
 ## Out of scope
 

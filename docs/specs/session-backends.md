@@ -55,4 +55,4 @@ Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at
 - Transparent transfer of a running tmux process: an existing conversation must exit gracefully before resuming under dtach.
 - Pi rendering changes: same-size reattachment may require a window resize for repaint.
 - Complete Ghostty backlog: `--no-init` cannot replay output dtach never retained.
-- Native cross-user dtach acceptance: existing identity-helper and live tmux evidence does not prove this backend's interactive account boundary; see [cross-user attachment](cross-user-attachment.md).
+- Exhaustive cross-user dtach isolation matrix and full-history pixel proof: one user-authorized SSH/Mosh/dtach Pi attach/detach at 48×200 returned exit 0, with target cwd and selected conversation confirmed through process and health metadata and the existing tmux client preserved. Earlier disposable tmux isolation evidence remains separate; see [cross-user attachment](cross-user-attachment.md#tests-asserting-this-spec).
