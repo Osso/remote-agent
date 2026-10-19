@@ -1,15 +1,25 @@
 const fs = require("node:fs");
 const { Terminal } = require("@xterm/headless");
 
+function indexHistoryRows(lines) {
+	const firstRows = new Map();
+	for (const [row, line] of lines.entries()) {
+		for (const match of line.matchAll(/HISTORY-\d{4}/g)) {
+			if (!firstRows.has(match[0])) firstRows.set(match[0], row);
+		}
+	}
+	return firstRows;
+}
+
 function inspectScrollback(terminal) {
 	const buffer = terminal.buffer.normal;
 	const lines = Array.from({ length: buffer.length }, (_, i) =>
 		buffer.getLine(i).translateToString(true),
 	);
-	const positions = Array.from({ length: 200 }, (_, i) =>
-		lines.findIndex((line) =>
-			line.includes(`HISTORY-${String(i + 1).padStart(4, "0")}`),
-		),
+	const firstRows = indexHistoryRows(lines);
+	const positions = Array.from(
+		{ length: 200 },
+		(_, i) => firstRows.get(`HISTORY-${String(i + 1).padStart(4, "0")}`) ?? -1,
 	);
 	return {
 		activeBuffer: terminal.buffer.active.type,
@@ -38,12 +48,11 @@ async function verifyScrollback() {
 	const result = inspectScrollback(terminal);
 	terminal.dispose();
 	console.log(JSON.stringify(result));
-	const complete =
-		result.activeBuffer === "normal" &&
-		result.ordered &&
-		result.liveViewPresent &&
-		result.lastHistoryRow < result.liveViewportStart;
-	if (!complete) process.exitCode = 1;
+	const hasNativeHistory = result.activeBuffer === "normal" && result.ordered;
+	const hasSeparateLiveView =
+		result.liveViewPresent && result.lastHistoryRow < result.liveViewportStart;
+	const isComplete = hasNativeHistory && hasSeparateLiveView;
+	if (!isComplete) process.exitCode = 1;
 }
 
 verifyScrollback().catch((error) => {
