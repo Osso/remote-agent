@@ -56,10 +56,24 @@ def validate_project(project, projects=None):
         raise ValueError("project must be one of: " + ", ".join(projects))
 
 
+def terminal_colorterm():
+    return (
+        "truecolor"
+        if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
+        else ""
+    )
+
+
+def request_with_terminal_colors(request):
+    if request["action"] == "start":
+        return {**request, "colorterm": terminal_colorterm()}
+    return request
+
+
 def query(host, request, user=None):
     result = run_read_only(
         ["ssh", *KEEPALIVE, *destination(host, user)],
-        input=json.dumps(request),
+        input=json.dumps(request_with_terminal_colors(request)),
         text=True,
         capture_output=True,
     )
@@ -279,7 +293,9 @@ def sync(args):
 
 def send(request, host=DEFAULT_HOST):
     return subprocess.run(
-        ["ssh", *destination(host)], input=json.dumps(request), text=True
+        ["ssh", *destination(host)],
+        input=json.dumps(request_with_terminal_colors(request)),
+        text=True,
     ).returncode
 
 
@@ -407,7 +423,15 @@ def attach(name, host=DEFAULT_HOST, user=None):
     failures = 0
     while True:
         code = subprocess.call(
-            ["mosh", "--no-init", "--", *destination(host, user), "--attach", name]
+            [
+                "mosh",
+                "--no-init",
+                "--",
+                *destination(host, user),
+                f"--colorterm={terminal_colorterm()}",
+                "--attach",
+                name,
+            ]
         )
         restore_terminal()
         if code == 0:
