@@ -414,6 +414,30 @@ def restore_terminal():
     subprocess.run(["stty", "sane"], check=True)
 
 
+def preload_session_history(name, host=DEFAULT_HOST, user=None):
+    if not sys.stdout.isatty():
+        return
+    columns, rows = os.get_terminal_size(sys.stdout.fileno())
+    snapshot = query(
+        host,
+        {
+            "action": "history",
+            "name": name,
+            "columns": columns,
+            "colorterm": terminal_colorterm(),
+        },
+        user,
+    )
+    if not snapshot["available"]:
+        print(f"remote-agent: {snapshot['reason']}", file=sys.stderr)
+        return
+    if snapshot["history"]:
+        sys.stdout.write(snapshot["history"])
+        # Keep the restored history above the viewport Mosh replaces on attach.
+        sys.stdout.write("\n" * rows)
+        sys.stdout.flush()
+
+
 def attach(name, host=DEFAULT_HOST, user=None):
     """Attach until a clean detach; reconnect after any dropped connection.
     The worker restarts (with resume) a session lost to a desktop restart."""
@@ -422,6 +446,7 @@ def attach(name, host=DEFAULT_HOST, user=None):
         query(host, {"action": "list"}, user)
     failures = 0
     while True:
+        preload_session_history(name, host, user)
         code = subprocess.call(
             [
                 "mosh",

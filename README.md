@@ -117,8 +117,17 @@ of the host, harness, or provider.
 Mosh retains `--no-init` for terminal-native scrollback. dtach attachment uses
 `-r winch`; press Ctrl+backslash to detach without stopping the agent. No Ctrl+L
 is injected. Same-size reattachment may need a window resize to repaint Pi.
-Detached output is not buffered or replayed; neither dtach nor `--no-init`
-guarantees complete Ghostty scrollback or restores another terminal's history.
+Before each terminal attachment, the controller retrieves Pi's saved current,
+compaction-aware history over SSH and prints it locally into scrollback. This
+avoids Mosh dropping intermediate screens during a large redraw. It preserves
+existing terminal scrollback; reconnecting in the same terminal can repeat a
+previously restored snapshot. Terminal capacity still limits retained history.
+
+This is Pi's loaded context with normal collapsed output, not the pre-compaction
+archive or a recording of detached terminal bytes. Unsupported harnesses and
+live sessions without saved history show an explicit notice; other export errors
+stop attachment rather than silently omitting history. Live output still uses
+Mosh and can lose intermediate screen states during fast output or network gaps.
 The controller forwards its `COLORTERM` capability on start and attach. Dtach
 launches use `TERM=xterm-256color`; truecolor is advertised only when the caller
 reports `truecolor` or `24bit`. Attachment saves the current capability for the

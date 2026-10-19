@@ -1,6 +1,7 @@
 """Behavioral tests: real detached workers, fixture agents, no model calls."""
 
 import base64
+import fcntl
 import importlib.util
 import io
 import json
@@ -9,12 +10,14 @@ import pty
 import select
 import signal
 import stat
+import struct
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import termios
 import time
 import unittest
 from unittest import mock
@@ -1410,6 +1413,8 @@ if request and request['action'] == 'locate':
     print(json.dumps({{'exists': name in names}}))
 elif request and request['action'] == 'list':
     print(json.dumps({{'sessions': [{{'name': 'job' if 'desktop' in argv else 'custom'}}]}}))
+elif request and request['action'] == 'history':
+    print(json.dumps({{'available': True, 'history': ''}}))
 else:
     print(json.dumps({{"argv": argv, "request": request}}))
 """)
@@ -1886,6 +1891,7 @@ sys.stdout.write("\\x1b[?1000h")  # tmux mouse mode left on by the dropped link
 sys.exit({list(codes)!r}[len(done)])
 """)
         master, slave = os.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         process = subprocess.Popen(
             [sys.executable, str(ROOT / "remote-agent.py"), "attach", "job"],
             env=self.env,

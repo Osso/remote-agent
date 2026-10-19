@@ -16,8 +16,9 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [x] Cancel terminates only the intended session and removes its private state; stale process identifiers must not target unrelated processes.
 - [x] Session state and sockets remain private to the owning account.
 - [x] Logs fail explicitly for dtach because terminal output is not retained or replayed; existing tmux pane history remains available through the legacy path.
-- [x] The read-only `history` request exports a Pi session's saved active branch through the installed Pi CLI, with caller width and color capability. It does not parse private transcript files or modify the running agent. Unsupported harnesses and a confirmed live session without saved history return explicit unavailability; other export failures remain errors.
+- [x] The read-only `history` request exports a Pi session's saved current, compaction-aware history through the installed Pi CLI, with caller width and color capability. It does not parse private transcript files or modify the running agent. Unsupported harnesses and a confirmed live session without saved history return explicit unavailability; other export failures remain errors.
 - [x] Mosh attachment retains `--no-init`; terminal-native scrollback is not a complete output-history guarantee.
+- [ ] Before each TTY attach and retry, the controller prints the current Pi history locally over the reliable SSH control path and moves it above the live viewport. It preserves previous terminal scrollback and does not route the snapshot through Mosh. Explicit unavailability permits attachment with a notice; export errors stop it.
 - [x] Deployment preserves existing user tmux configuration, including the deployed legacy copy targeted by an existing user symlink. Asserted by `DeployTests.test_deploy_preserves_existing_tmux_configuration`; deployment commit `6c09830` has saved GREEN proof (2 tests).
 - [ ] Deployment does not reload tmux configuration.
 
@@ -39,6 +40,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
 - `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries.
+- `tests/test_history_attach.py` — real-PTY controller preload ordering, retry restoration and unavailable/error behavior.
 
 ## Known gaps (current cycle)
 
@@ -46,7 +48,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 ## Out of scope
 
-- Terminal history replay: dtach does not retain detached output or restore a previous terminal's scrollback.
+- Raw terminal byte replay and pre-compaction archive restoration: the snapshot contains Pi's current saved context, not captured PTY output.
 - Transparent transfer of a running tmux process: an existing conversation must exit gracefully before resuming under dtach.
 - Pi rendering changes: same-size reattachment may require a window resize for repaint.
 - Complete Ghostty backlog: `--no-init` cannot replay output dtach never retained.
