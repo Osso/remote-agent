@@ -4,7 +4,6 @@ import gc
 import importlib.util
 import json
 import os
-from pathlib import Path
 import pty
 import select
 import shutil
@@ -15,6 +14,7 @@ import tempfile
 import time
 import unittest
 import warnings
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,16 +110,12 @@ class DtachTests(unittest.TestCase):
             for file in directory.iterdir():
                 if not file.is_symlink():
                     file.chmod(0o700 if file.is_socket() else 0o600)
-            try:
-                self.worker.dispatch(
-                    {
-                        "action": "cancel",
-                        "name": directory.name.removeprefix("remote-agent-"),
-                    }
-                )
-            except (ValueError, RuntimeError):
-                # Tampered metadata tests restore the actual identity before cleanup.
-                raise
+            self.worker.dispatch(
+                {
+                    "action": "cancel",
+                    "name": directory.name.removeprefix("remote-agent-"),
+                }
+            )
 
     def call(self, action, name="trial", **kwargs):
         return self.worker.dispatch({"action": action, "name": name, **kwargs})
@@ -332,15 +328,17 @@ class DtachTests(unittest.TestCase):
 
     def test_missing_binary_fails_without_state_or_tmux_fallback(self):
         original = self.module.shutil.which
-        with mock.patch.object(
-            self.module.shutil,
-            "which",
-            side_effect=lambda name, **kwargs: (
-                None if name == "dtach" else original(name, **kwargs)
+        with (
+            mock.patch.object(
+                self.module.shutil,
+                "which",
+                side_effect=lambda name, **kwargs: (
+                    None if name == "dtach" else original(name, **kwargs)
+                ),
             ),
+            self.assertRaisesRegex(FileNotFoundError, "dtach"),
         ):
-            with self.assertRaisesRegex(FileNotFoundError, "dtach"):
-                self.start()
+            self.start()
         self.assertFalse(self.directory().exists())
 
     def test_dead_agent_reports_failure_without_live_wrapper_success(self):
