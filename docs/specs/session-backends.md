@@ -35,7 +35,6 @@ The worker manages new sessions with dtach while retaining existing tmux session
 ## Known gaps (current cycle)
 
 - [ ] Full repository acceptance remains blocked by three unchanged periodic-runtime test cases (four subtests): expected audit deliveries are absent. Backend, legacy, harness and cross-user fixture cases passed in the 139-test integration run; corrected controller and dependency-configured Node cases passed separately.
-- [ ] Real world-of-osso migration needs an approved interruption of active child model turns; its production deployment has finished.
 
 ## Out of scope
 
