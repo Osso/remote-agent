@@ -2,11 +2,11 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COLOR_CASES = (
@@ -81,7 +81,7 @@ if transport == "ssh":
             else [sys.executable, str(ROOT / "remote-agent.py"), *args]
         )
         result = subprocess.run(
-            command, env=env, text=True, capture_output=True, timeout=10
+            command, env=env, text=True, capture_output=True, timeout=10, check=False
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         records = [json.loads(line) for line in self.capture.read_text().splitlines()]

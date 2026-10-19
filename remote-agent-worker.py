@@ -696,6 +696,7 @@ def scope_systemctl(manager, *arguments, input=None):
         input=input,
         text=True,
         capture_output=True,
+        check=False,
     )
     if result.returncode:
         raise RuntimeError(
@@ -763,6 +764,7 @@ def exec_dtach_scope(scope_json, command_json, startup_json):
             ],
             text=True,
             capture_output=True,
+            check=False,
         )
         if attached.returncode:
             raise RuntimeError(

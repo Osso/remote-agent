@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import pty
 import select
 import shutil
@@ -13,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +67,7 @@ class DtachScopeTests(unittest.TestCase):
             ["systemctl", "--user", "show", "--property=Version", "--value"],
             capture_output=True,
             text=True,
+            check=False,
         )
         if available.returncode:
             self.skipTest("user systemd unavailable: " + available.stderr)
@@ -117,17 +118,27 @@ class DtachScopeTests(unittest.TestCase):
                 if self.module.process_identity(identity["pid"]) == identity:
                     os.kill(identity["pid"], signal.SIGKILL)
             # This random fixture unit owns every override; never revert a real unit.
-            subprocess.run(
-                ["systemctl", "--user", "stop", self.unit], capture_output=True
+            stopped = subprocess.run(
+                ["systemctl", "--user", "stop", self.unit],
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if stopped.returncode and "not loaded" not in stopped.stderr:
+                raise RuntimeError(stopped.stderr)
             subprocess.run(
                 ["systemctl", "--user", "revert", self.unit],
                 capture_output=True,
                 check=True,
             )
-            subprocess.run(
-                ["systemctl", "--user", "reset-failed", self.unit], capture_output=True
+            reset = subprocess.run(
+                ["systemctl", "--user", "reset-failed", self.unit],
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if reset.returncode and "not loaded" not in reset.stderr:
+                raise RuntimeError(reset.stderr)
 
     def calls(self):
         path = self.home / "calls"
@@ -239,6 +250,11 @@ class DtachScopeTests(unittest.TestCase):
     def test_01_legacy_nondelegated_scope_attaches_real_new_children(self):
         self.memory_limit = "100663296"
         marker = self.home / "legacy-pid"
+        program = (
+            "import os; from pathlib import Path; "
+            f"Path({str(marker)!r}).write_text(str(os.getpid())); "
+            "os.execlp('sleep', 'sleep', '600')"
+        )
         launcher = subprocess.Popen(
             [
                 *SCOPE,
@@ -247,9 +263,7 @@ class DtachScopeTests(unittest.TestCase):
                 "--",
                 sys.executable,
                 "-c",
-                "import os; from pathlib import Path; "
-                f"Path({str(marker)!r}).write_text(str(os.getpid())); "
-                "os.execlp('sleep', 'sleep', '600')",
+                program,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -315,13 +329,15 @@ class DtachScopeTests(unittest.TestCase):
             "sys.exit(1)\n"
         )
         binary.chmod(0o700)
-        with mock.patch.dict(
-            os.environ, {"PATH": str(binary.parent) + ":" + os.environ["PATH"]}
-        ):
-            with self.assertRaisesRegex(
+        with (
+            mock.patch.dict(
+                os.environ, {"PATH": str(binary.parent) + ":" + os.environ["PATH"]}
+            ),
+            self.assertRaisesRegex(
                 RuntimeError, "AttachProcessesToUnit unsupported fixture"
-            ):
-                self.worker.restart(self.session)
+            ),
+        ):
+            self.worker.restart(self.session)
         self.assertEqual(len(self.calls()), 3)
         self.assertEqual(self.properties()["InvocationID"], before["InvocationID"])
         self.assertTrue(
@@ -346,6 +362,7 @@ class DtachScopeTests(unittest.TestCase):
             ["systemctl", "--user", "is-active", old_unit],
             capture_output=True,
             text=True,
+            check=True,
         )
         self.assertEqual(state.stdout.strip(), "active", state.stderr)
 
