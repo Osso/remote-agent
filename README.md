@@ -168,8 +168,10 @@ must already have `authsudo -u USER` authorization; this option grants no access
 and never changes policies or SSH keys. Wrapped/Windows hosts are unsupported.
 
 Deploy the updated helper for the configured SSH account with `./deploy.sh`.
-The target user must already have their own worker and host/project maps; the
-selected `--host` key must exist in their host map. No maps or credentials are
+To keep another user's worker current, configure the selected host's
+`deploy_users` as described under [Deploy](#deploy).
+The target user must already have their own host/project maps; the selected
+`--host` key must exist in their host map. No maps or credentials are
 copied by listing or attaching. The target home is resolved from the server's
 Unix account directory, not by changing the controller's configured `home`.
 
@@ -242,6 +244,19 @@ byte-for-byte into the remote user's private configuration directory, enforcing
 `0700`/`0600` permissions. All entries in those files are copied, not just the
 selected host. Maps are excluded from the code archive; old code-directory maps
 are not removed automatically.
+
+Optional host `deploy_users: ["researcher"]` updates explicitly listed existing
+Unix accounts after the default SSH account, in list order, using the same
+payload and revision through existing `authsudo -u USER` authorization. No
+accounts are discovered. Target homes come from the remote Unix account
+directory. Both target mapping files must already exist: deployment preserves
+their bytes and permissions rather than copying the operator's maps. Each target
+runs with an isolated environment including its own `HOME`, `USER`, `LOGNAME`,
+`XDG_RUNTIME_DIR` and `PI_CODING_AGENT_DIR`; operator credentials are not inherited.
+A failed target stops deployment with an explicit error; earlier account updates
+are not rolled back. Missing or empty `deploy_users` retains default-account-only
+behavior. Configured cross-user deployments reject wrapped/Windows hosts.
+Deployment does not restart services or sessions or modify saved conversations.
 
 Deployment preserves existing `~/.tmux.conf`, including a symlink to the deployed
 legacy `tmux.conf`: that target's existing contents are preserved too. It does not

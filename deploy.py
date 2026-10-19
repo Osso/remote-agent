@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import tarfile
@@ -43,14 +44,18 @@ home=pathlib.Path.home()
 if home!=pathlib.Path(request['home']):
  raise RuntimeError('Expected remote home '+request['home']+', got '+str(home))
 config=home/'.config/remote-agent'
-config.mkdir(parents=True,exist_ok=True,mode=0o700)
-config.chmod(0o700)
-for name in ('remote-hosts.json','remote-projects.json'):
- path=config/name
- content=base64.b64decode(request['config'][name])
- path.touch(mode=0o600,exist_ok=True)
- path.chmod(0o600)
- path.write_bytes(content)
+if request.get('preserve_config'):
+ for name in ('remote-hosts.json','remote-projects.json'):
+  (config/name).read_bytes()
+else:
+ config.mkdir(parents=True,exist_ok=True,mode=0o700)
+ config.chmod(0o700)
+ for name in ('remote-hosts.json','remote-projects.json'):
+  path=config/name
+  content=base64.b64decode(request['config'][name])
+  path.touch(mode=0o600,exist_ok=True)
+  path.chmod(0o600)
+  path.write_bytes(content)
 destination=home/'Projects/cli/remote-agent'
 destination.mkdir(parents=True,exist_ok=True)
 with tarfile.open(fileobj=io.BytesIO(base64.b64decode(request['archive'])),mode='r:') as archive:
@@ -86,6 +91,24 @@ revision_file.write_text(request['revision']+'\n')
 print('remote-agent deployed: '+request['revision'])
 """
 
+USER_DEPLOY_PROGRAM = r"""import json,os,pathlib,pwd,runpy,subprocess,sys
+request=json.load(sys.stdin)
+user=request.pop('user')
+try:
+ account=pwd.getpwnam(user)
+ helper=pathlib.Path(request['home'])/'Projects/cli/remote-agent/remote-agent-user.py'
+ environment=runpy.run_path(str(helper))['build_user_environment'](account,os.environ)
+ request['home']=account.pw_dir
+ program=request.pop('program')
+ command=['authsudo','-u',account.pw_name,'/usr/bin/env','-i',
+          *(name+'='+value for name,value in environment.items()),
+          '/usr/bin/python3','-c',program]
+ subprocess.run(command,input=json.dumps(request),text=True,check=True)
+except (KeyError,OSError,subprocess.CalledProcessError) as error:
+ print('remote-agent: deployment as '+user+' failed: '+str(error),file=sys.stderr)
+ sys.exit(1)
+"""
+
 
 def bundle_files():
     archive = io.BytesIO()
@@ -97,24 +120,53 @@ def bundle_files():
 
 def deploy_worker(host=DEFAULT_HOST):
     profile = HOSTS[host]
+    users = profile.get("deploy_users", [])
+    if not isinstance(users, list) or any(
+        not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]*\$?", user)
+        for user in users
+    ):
+        raise ValueError("deploy_users must be a list of Unix usernames")
+    if users and (profile["wrap"] or profile["windows_shell"]):
+        raise ValueError("deploy_users requires a native Linux host without wrapping")
     key = "REMOTE_AGENT_" + host.upper().replace("-", "_") + "_SSH"
     target = os.environ.get(key, profile["ssh"])
     revision = subprocess.check_output(
         ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
     ).strip()
-    request = json.dumps(
+    request = {
+        "archive": bundle_files(),
+        "revision": revision,
+        "home": profile["home"],
+        "host": host,
+    }
+    deploy_remote(
+        profile,
+        target,
+        REMOTE_PROGRAM,
         {
-            "archive": bundle_files(),
+            **request,
             "config": {
                 name: base64.b64encode((CONFIG / name).read_bytes()).decode()
                 for name in CONFIG_FILES
             },
-            "revision": revision,
-            "home": profile["home"],
-            "host": host,
-        }
+        },
     )
-    encoded = base64.b64encode(REMOTE_PROGRAM.encode()).decode()
+    for user in users:
+        deploy_remote(
+            profile,
+            target,
+            USER_DEPLOY_PROGRAM,
+            {
+                **request,
+                "user": user,
+                "preserve_config": True,
+                "program": REMOTE_PROGRAM,
+            },
+        )
+
+
+def deploy_remote(profile, target, program, request):
+    encoded = base64.b64encode(program.encode()).decode()
     argv = [
         *profile["wrap"],
         "python3",
@@ -126,7 +178,7 @@ def deploy_worker(host=DEFAULT_HOST):
     )
     subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, remote],
-        input=request,
+        input=json.dumps(request),
         text=True,
         check=True,
     )
