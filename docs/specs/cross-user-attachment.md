@@ -44,7 +44,7 @@ The controller and privileged helper implement the account boundary; see
 
 ## Known gaps (current cycle)
 
-None.
+- [ ] Native cross-user dtach attachment is not covered by the existing live tmux acceptance. The unchanged identity helper is not new backend acceptance proof; see [managed session backends](session-backends.md).
 
 ## Out of scope
 

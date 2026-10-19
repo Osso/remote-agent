@@ -90,18 +90,36 @@ remote-agent cancel demo
 `start PROJECT [NAME]` defaults the session name to the project. Select Claude
 with `--agent-harness claude`. Names use 1–64 letters, digits, underscores, or
 hyphens, starting with a letter or digit. Use the same `--host HOST` on subsequent
-commands when starting on a non-default host. Session inspection includes saved
-records when tmux sessions no longer exist. Cancel terminates the selected
-session; it is not a project cleanup command. Terminal logs may contain sensitive
-content; review them before sharing.
+commands when starting on a non-default host.
+
+New sessions use dtach and save an explicit `backend: dtach` record. The remote
+worker requires dtach; a missing executable fails instead of falling back to tmux.
+Existing records without a backend retain tmux behavior, including conversation
+restart. Installing the worker does not migrate running sessions.
+
+For dtach, `status` and `list` use private runtime metadata and socket state to
+report liveness, attachment and a recorded exit status when available. Saved dtach
+records remain listed after exit; `locate`/attachment can find them for recovery.
+`logs` fails explicitly: dtach retains no terminal output and provides no replay.
+Legacy tmux sessions retain their existing pane-history path; that output may
+contain sensitive content.
+
+Cancel kills the selected dtach master and owned process tree, then removes its
+private state. Process identities are checked to avoid signalling recycled PIDs;
+a live identity mismatch refuses cancellation. Legacy cancellation kills its
+tmux session and removes saved state. Neither route cleans up project files.
 
 Control requests use SSH. Interactive attachment uses Mosh with SSH bootstrap,
 requires reachable Mosh UDP ports, and has no SSH fallback. Attachment retries
 dropped connections; the worker can resume a recorded conversation after its
 session is lost. This does not guarantee recovery of unsaved work or availability
 of the host, harness, or provider.
-Mosh uses `--no-init` for terminal-native scrollback, without guaranteeing complete
-output history.
+Mosh retains `--no-init` for terminal-native scrollback. dtach attachment uses
+`-r winch`; press Ctrl+backslash to detach without stopping the agent. No Ctrl+L
+is injected. Same-size reattachment may need a window resize to repaint Pi.
+Detached output is not buffered or replayed; neither dtach nor `--no-init`
+guarantees complete Ghostty scrollback or restores another terminal's history.
+See the [session backend contract](docs/specs/session-backends.md).
 
 ### Another user's sessions
 
@@ -124,12 +142,14 @@ copied by listing or attaching. The target home is resolved from the server's
 Unix account directory, not by changing the controller's configured `home`.
 
 The SSH/Mosh transport remains authenticated as the configured administrator.
-The worker and tmux client run as the selected user with their HOME, runtime
+The worker and attachment client run as the selected user with their HOME, runtime
 and Pi config directory; administrator credentials and tmux environment are not
 inherited. Listing includes a `user` field. Attachment checks authorization and
 configuration before entering the Mosh reconnect loop and remains interactive,
 with the existing detach/recovery behavior. It does not discover standalone Pi
 processes or arbitrary tmux sessions outside the `remote-agent-*` namespace.
+Existing live cross-user acceptance covers tmux, not native dtach attachment;
+the identity helper is unchanged, but that is not proof of dtach cross-user support.
 
 ## File transfer
 
@@ -191,7 +211,10 @@ byte-for-byte into the remote user's private configuration directory, enforcing
 selected host. Maps are excluded from the code archive; old code-directory maps
 are not removed automatically.
 
-Deployment preserves existing tmux configuration and does not reload tmux.
+Deployment preserves existing `~/.tmux.conf`, including a symlink to the deployed
+legacy `tmux.conf`: that target's existing contents are preserved too. It does not
+reload tmux configuration or change running sessions. New dtach resource scopes
+use a separate `remote-agent-NAME-dtach` unit rather than the legacy session unit.
 It links `~/.local/bin/wl-paste` to the shipped worker, refusing to replace an
 unmanaged file or foreign symlink at that path.
 It preserves an existing system or user `agents.slice`; otherwise it installs
