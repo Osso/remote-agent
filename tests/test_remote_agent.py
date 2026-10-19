@@ -488,7 +488,11 @@ class WorkerTests(WorkerFixture):
         bindir = self.home / ".local/bin"
         systemctl = bindir / "systemctl"
         systemctl.write_text(
-            f'#!{sys.executable}\nimport os\nprint(os.environ.get("SYSTEM_SLICE", ""))\n'
+            f"#!{sys.executable}\nimport os,sys\n"
+            'if any(arg.endswith(".scope") for arg in sys.argv):\n'
+            '    print("ActiveState=inactive\\nDelegate=no\\nDropInPaths=")\n'
+            "else:\n"
+            '    print(os.environ.get("SYSTEM_SLICE", ""))\n'
         )
         systemctl.chmod(0o700)
         scope_runner = bindir / "systemd-run"
