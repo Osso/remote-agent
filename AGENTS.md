@@ -1,0 +1,7 @@
+# Operational gotchas
+
+- Controller changes can take effect through the local source symlink while remote workers remain stale. Deploy protocol changes to every configured account through `./deploy.sh` and `deploy_users`; preserve target users' maps. See [configuration](docs/specs/configuration.md).
+- Before attaching or migrating, reconcile Unix account, project cwd, recorded conversation/backend, saved Pi metadata, and live process identity. A matching tmux name can identify an unrelated shell. Duplicate conversation IDs in managed records do not make different projects equivalent; resolve ambiguous conversation selection with the user.
+- Updating workers does not migrate existing tmux sessions. Never cancel a session as a migration shortcut. Preserve shells/background jobs and archive replaced records before using the worker's start/resume lifecycle. See [backend constraints](docs/specs/session-backends.md).
+- Verify the exact normal command in a real TTY, including `--user`: non-TTY attachment skips history preload. Check intended account/project/conversation/backend, clean detach, and preservation of existing processes—not merely exit 0. Use the backend's detach key. See [cross-user acceptance](docs/specs/cross-user-attachment.md).
+- Prove history restoration through SSH preload followed by actual Mosh attachment; a local renderer test cannot establish transport behavior. Check scrollback and live viewport separately: restored history does not prove same-size dtach repaint works.
