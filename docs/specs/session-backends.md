@@ -18,7 +18,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [x] Logs fail explicitly for dtach because terminal output is not retained or replayed; existing tmux pane history remains available through the legacy path.
 - [x] The read-only `history` request exports a Pi session's saved current, compaction-aware history through the installed Pi CLI, with caller width and color capability. It does not parse private transcript files or modify the running agent. Unsupported harnesses and a confirmed live session without saved history return explicit unavailability; other export failures remain errors.
 - [x] Mosh attachment retains `--no-init`; terminal-native scrollback is not a complete output-history guarantee.
-- [ ] Before each TTY attach and retry, the controller prints the current Pi history locally over the reliable SSH control path and moves it above the live viewport. It preserves previous terminal scrollback and does not route the snapshot through Mosh. Explicit unavailability permits attachment with a notice; export errors stop it.
+- [x] Before each TTY attach and retry, the controller prints the current Pi history locally over the reliable SSH control path and moves it above the live viewport. It preserves previous terminal scrollback and does not route the snapshot through Mosh. Explicit unavailability permits attachment with a notice; export errors stop it.
 - [x] Deployment preserves existing user tmux configuration, including the deployed legacy copy targeted by an existing user symlink. Asserted by `DeployTests.test_deploy_preserves_existing_tmux_configuration`; deployment commit `6c09830` has saved GREEN proof (2 tests).
 - [ ] Deployment does not reload tmux configuration.
 
@@ -39,16 +39,18 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_terminal_colors.py` — start/attach capability forwarding, normalization and account routing: four tests with 32 subcases passed at `232a98c`.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
-- `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries.
-- `tests/test_history_attach.py` — real-PTY controller preload ordering, retry restoration and unavailable/error behavior.
+- `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries; nine passing tests reported for the current worker.
+- `tests/test_history_attach.py` — four real-PTY controller cases for preload ordering, retry restoration and unavailable/error behavior. Together with two existing TTY cases, six tests passed at `e0dc6a5`; saved proof: `/tmp/remote-agent-history-attach-green.log`. SSH and Mosh are fixtures, not live transports.
 
 ## Known gaps (current cycle)
+
+- [ ] Real-Mosh end-to-end acceptance of current-history preload remains unverified; controller PTY fixtures do not establish it.
 
 - [ ] Full repository acceptance remains blocked by three unchanged periodic-runtime test cases (four subtests): expected audit deliveries are absent. Prior baseline reproduction is recorded at `/tmp/remote-agent-periodic-baseline-6cabad8-xbrl4sib`; this failure is outside the color/stable-scope fix. Backend, legacy, harness and cross-user fixture cases passed in the prior 139-test integration run; corrected controller and dependency-configured Node cases passed separately. Those earlier results do not verify the current scope changes.
 
 ## Out of scope
 
-- Raw terminal byte replay and pre-compaction archive restoration: the snapshot contains Pi's current saved context, not captured PTY output.
+- Raw terminal byte replay, pre-compaction archive restoration, images and expanded tool output: the snapshot contains Pi's current saved context with normal collapsed output, not captured PTY output.
 - Transparent transfer of a running tmux process: an existing conversation must exit gracefully before resuming under dtach.
 - Pi rendering changes: same-size reattachment may require a window resize for repaint.
 - Complete Ghostty backlog: `--no-init` cannot replay output dtach never retained.
