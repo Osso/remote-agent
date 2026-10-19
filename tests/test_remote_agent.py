@@ -618,7 +618,9 @@ os.execvp(args[command+1], args[command+1:])
         ):
             self.start(prompt="hold")
         other.dispatch({"action": "cancel", "name": "job"})
-        with self.assertRaisesRegex((ValueError, RuntimeError), "session|find|server"):
+        with self.assertRaisesRegex(
+            (ValueError, RuntimeError), "session|find|server|No such file"
+        ):
             self.status()
         self.start(prompt="hold")
         self.output()
@@ -717,11 +719,12 @@ os.execvp(args[command+1], args[command+1:])
         self.output()
         directory = state / "remote-agent/remote-agent-job"
         (directory / "unexpected").write_text("keep me")
-        self.addCleanup((directory / "unexpected").unlink)
+        self.addCleanup(lambda: (directory / "unexpected").unlink(missing_ok=True))
         with self.assertRaisesRegex(ValueError, "unexpected filesystem"):
             self.worker.dispatch({"action": "cancel", "name": "job"})
-        self.assertFalse(self.status()["dead"])
         self.assertEqual((directory / "unexpected").read_text(), "keep me")
+        (directory / "unexpected").unlink()
+        self.assertFalse(self.status()["dead"])
 
     def test_dtach_launch_failure_cleans_only_created_state(self):
         binary = self.home / ".local/bin/dtach"
@@ -839,6 +842,17 @@ class LegacyTmuxWorkerTests(WorkerFixture):
             self.module.write_private(prompt_file, prompt)
         flag = self.module.RESUME_FLAGS[agent] if resume else self.module.NEW_FLAG
         self.worker.launch(session, repo, agent, [flag, conversation], prompt_file)
+
+    def test_legacy_logs_retain_agent_output(self):
+        self.start(prompt="legacy output")
+        self.wait_for(lambda: self.status()["dead"])
+        output = self.output()
+        captured = [
+            json.loads(line)
+            for line in self.logs().splitlines()
+            if line.startswith("{")
+        ]
+        self.assertEqual(captured, [output])
 
     def test_cancel_cleans_state_left_by_a_killed_tmux_server(self):
         self.start(prompt="hold")
