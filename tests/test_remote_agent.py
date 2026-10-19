@@ -1422,7 +1422,9 @@ else:
         )
         mosh.chmod(0o700)
         self.env = dict(
-            os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]
+            os.environ,
+            PATH=str(self.root) + os.pathsep + os.environ["PATH"],
+            COLORTERM="truecolor",
         )
 
     def invoke(self, *args, platform=None):
@@ -1469,6 +1471,7 @@ else:
                 "agent": "pi",
                 "name": "job",
                 "prompt": prompt.read_text(),
+                "colorterm": "truecolor",
             },
         )
         self.assertEqual(
@@ -1496,6 +1499,7 @@ else:
                 "name": "ui-demo",
                 "repo": "ui-demo",
                 "agent": "pi",
+                "colorterm": "truecolor",
             },
         )
         self.assertNotEqual(
@@ -1513,6 +1517,7 @@ else:
                 "repo": "engine",
                 "agent": "pi",
                 "resume": "4f18858a-d8a1",
+                "colorterm": "truecolor",
             },
         )
 
@@ -1847,6 +1852,7 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
                 "/home/fixture/Projects/cli/remote-agent/remote-agent-worker.py",
                 "--host",
                 "agent-server",
+                "--colorterm=truecolor",
                 "--attach",
                 "custom",
             ],
