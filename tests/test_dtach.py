@@ -293,6 +293,52 @@ class DtachTests(unittest.TestCase):
                 self.start()
         self.assertFalse(self.directory().exists())
 
+    def test_dead_agent_reports_failure_without_live_wrapper_success(self):
+        self.start()
+        call = wait_for(lambda: self.calls())[0]
+        os.kill(call["pid"], signal.SIGKILL)
+        try:
+            wait_for(lambda: self.call("status")["dead"])
+            status = self.call("status")
+            self.assertEqual(status["exit_status"], 137)
+        finally:
+            if alive(call["child"]):
+                os.kill(call["child"], signal.SIGKILL)
+
+    def test_missing_socket_is_dead_even_when_metadata_process_alive(self):
+        self.start()
+        wait_for(lambda: self.calls())
+        (self.directory() / "dtach.sock").unlink()
+        self.assertTrue(self.call("status")["dead"])
+        self.assertFalse(self.call("list")["sessions"][0]["attached"])
+
+    def test_stalled_startup_is_bounded_and_leaves_no_child(self):
+        fake = self.home / ".local/bin/dtach"
+        fake.write_text(
+            "#!/usr/bin/env python3\nimport os,time\nfrom pathlib import Path\nPath(os.environ['HOME'], 'launcher-pid').write_text(str(os.getpid()))\ntime.sleep(600)\n"
+        )
+        fake.chmod(0o700)
+        start = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            self.start()
+        self.assertLess(time.monotonic() - start, 7)
+        self.assertFalse(alive(int((self.home / "launcher-pid").read_text())))
+        self.assertFalse(self.directory().exists())
+
+    def test_runtime_and_socket_symlinks_rejected(self):
+        self.start()
+        for name in ("runtime.json", "dtach.sock"):
+            path = self.directory() / name
+            saved = path.with_name("saved")
+            path.rename(saved)
+            path.symlink_to(saved)
+            try:
+                with self.assertRaisesRegex(ValueError, "filesystem"):
+                    self.call("status")
+            finally:
+                path.unlink()
+                saved.rename(path)
+
     def test_startup_failure_bounded_and_explicit(self):
         fake = self.home / ".local/bin/dtach"
         fake.write_text(

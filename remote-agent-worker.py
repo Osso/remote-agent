@@ -127,7 +127,7 @@ class Worker:
             return self.start(session, request)
         record = self.read_record(session)
         if record is not None and record.get("backend", "tmux") == "dtach":
-            return self.dispatch_dtach(session, action, record)
+            return self.dispatch_dtach(session, action)
         if action == "locate":
             exists = (
                 self.run_tmux(
@@ -205,7 +205,7 @@ class Worker:
         path = directory / "session.json"
         return json.loads(path.read_text()) if path.exists() else None
 
-    def dispatch_dtach(self, session, action, record):
+    def dispatch_dtach(self, session, action):
         if action == "locate":
             return {"exists": True}
         if action == "status":
@@ -238,8 +238,8 @@ class Worker:
         path = directory / "runtime.json"
         runtime = json.loads(path.read_text()) if path.exists() else {}
         process = runtime.get("process")
-        dead = not identity_alive(process)
         socket = directory / "dtach.sock"
+        dead = not identity_alive(process) or not socket.exists()
         return {
             "session": session,
             "cwd": str(
