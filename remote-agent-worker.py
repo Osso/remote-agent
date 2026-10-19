@@ -348,11 +348,16 @@ class Worker:
             )
             identity = process_identity(process.pid)
             deadline = time.monotonic() + STARTUP_TIMEOUT
+            startup_error = None
             while time.monotonic() < deadline:
                 result = process.poll()
                 # -n daemonizes: reap the launcher, not the detached master.
                 if result == 0 and (directory / "runtime.json").exists():
                     self.check_session_directory(directory)
+                    runtime = json.loads((directory / "runtime.json").read_text())
+                    startup_error = runtime.get("startup_error")
+                    if startup_error:
+                        break
                     return
                 if result is not None and result != 0:
                     break
@@ -362,7 +367,7 @@ class Worker:
             if (directory / "runtime.json").exists():
                 self.stop_dtach(session)
             errors.seek(0)
-            message = errors.read().decode(errors="replace").strip()
+            message = startup_error or errors.read().decode(errors="replace").strip()
             raise RuntimeError(
                 "dtach startup failed: "
                 + (message or "timed out waiting for runtime metadata")
@@ -699,10 +704,16 @@ def scope_systemctl(manager, *arguments, input=None):
     return result.stdout
 
 
-def exec_dtach_scope(scope_json, command_json):
+def exec_dtach_ready(startup_json, command_json):
+    directory, runtime = json.loads(startup_json)
+    atomic_write(Path(directory) / "runtime.json", json.dumps(runtime).encode())
+    command = json.loads(command_json)
+    os.execvp(command[0], command)
+
+
+def exec_dtach_scope(scope_json, command_json, startup_json):
     """Move only this launcher into the stable scope, then exec the harness."""
     scope = json.loads(scope_json)
-    command = json.loads(command_json)
     manager = "--user" if "--user" in scope else "--system"
     unit = next(
         arg.removeprefix("--unit=") for arg in scope if arg.startswith("--unit=")
@@ -757,7 +768,7 @@ def exec_dtach_scope(scope_json, command_json):
             raise RuntimeError(
                 f"could not attach launcher to {unit}: {attached.stderr.strip()}"
             )
-        os.execvp(command[0], command)
+        exec_dtach_ready(startup_json, command_json)
     if properties["ActiveState"] != "inactive":
         raise RuntimeError(
             f"cannot launch {unit}: scope is {properties['ActiveState']}"
@@ -775,7 +786,19 @@ def exec_dtach_scope(scope_json, command_json):
         if not any(override.parent.iterdir()):
             override.parent.rmdir()
         scope_systemctl(manager, "daemon-reload")
-    os.execvp(scope[0], [*scope[:-1], "--property=Delegate=yes", "--", *command])
+    os.execvp(
+        scope[0],
+        [
+            *scope[:-1],
+            "--property=Delegate=yes",
+            "--",
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--dtach-ready",
+            startup_json,
+            command_json,
+        ],
+    )
 
 
 def run_dtach_agent(
@@ -799,17 +822,26 @@ def run_dtach_agent(
     ]
     if prompt_file is not None:
         command.append(prompt_file)
-    if json.loads(scope_json):
+    scoped = bool(json.loads(scope_json))
+    if scoped:
         command = [
             sys.executable,
             str(Path(__file__).resolve()),
             "--dtach-scope",
             scope_json,
             json.dumps(command),
+            json.dumps([str(directory), runtime]),
         ]
     child = subprocess.Popen(command)
-    atomic_write(directory / "runtime.json", json.dumps(runtime).encode())
+    if not scoped:
+        atomic_write(directory / "runtime.json", json.dumps(runtime).encode())
     status = child.wait()
+    if (directory / "runtime.json").exists():
+        runtime = json.loads((directory / "runtime.json").read_text())
+    else:
+        runtime["startup_error"] = (
+            f"scope launcher exited with status {status} before harness startup"
+        )
     runtime["exit_status"] = status if status >= 0 else 128 - status
     atomic_write(directory / "runtime.json", json.dumps(runtime).encode())
     return 0
@@ -998,7 +1030,8 @@ def main():
     mode.add_argument("--run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-agent", nargs="+", help=argparse.SUPPRESS)
-    mode.add_argument("--dtach-scope", nargs=2, help=argparse.SUPPRESS)
+    mode.add_argument("--dtach-scope", nargs=3, help=argparse.SUPPRESS)
+    mode.add_argument("--dtach-ready", nargs=2, help=argparse.SUPPRESS)
     mode.add_argument("--claude-login", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--pi-login", metavar="PROVIDER", help=argparse.SUPPRESS)
     parser.add_argument("--host", choices=HOSTS, default="desktop")
@@ -1019,6 +1052,8 @@ def main():
                 args.dtach_agent[4] if len(args.dtach_agent) == 5 else None,
                 tmux=False,
             )
+        if args.dtach_ready is not None:
+            exec_dtach_ready(*args.dtach_ready)
         if args.dtach_scope is not None:
             exec_dtach_scope(*args.dtach_scope)
         if args.dtach_run is not None:
@@ -1034,6 +1069,10 @@ def main():
         print(json.dumps(worker.dispatch(request)))
         return 0
     except (OSError, ValueError, RuntimeError, UnicodeError, KeyError) as error:
+        if args.dtach_scope is not None:
+            directory, runtime = json.loads(args.dtach_scope[2])
+            runtime["startup_error"] = str(error)
+            atomic_write(Path(directory) / "runtime.json", json.dumps(runtime).encode())
         if args.attach is not None:
             print(f"remote-agent: {error}", file=sys.stderr)
             return ATTACH_REFUSED
