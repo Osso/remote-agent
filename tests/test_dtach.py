@@ -99,7 +99,8 @@ class DtachTests(unittest.TestCase):
         )
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
-        self.worker = self.module.Worker(self.home, scope=[])
+        self.tmux = ["tmux", "-L", "dtach-test-" + self.home.name, "-f", "/dev/null"]
+        self.worker = self.module.Worker(self.home, self.tmux, scope=[])
         self.addCleanup(self.clean_sessions)
 
     def clean_sessions(self):
@@ -240,7 +241,7 @@ class DtachTests(unittest.TestCase):
         wait_for(lambda: self.calls())
         runtime = json.loads((self.directory() / "runtime.json").read_text())
         owner = self.worker
-        self.worker = self.module.Worker(self.home, scope=[])
+        self.worker = self.module.Worker(self.home, self.tmux, scope=[])
         self.call("cancel")
         wait_for(lambda: not alive(runtime["master"]["pid"]))
         with warnings.catch_warnings(record=True) as caught:
@@ -265,7 +266,7 @@ class DtachTests(unittest.TestCase):
         os.kill(call["pid"], signal.SIGKILL)
         os.kill(call["child"], signal.SIGKILL)
         wait_for(lambda: self.call("status")["dead"])
-        other = self.module.Worker(self.home, scope=[])
+        other = self.module.Worker(self.home, self.tmux, scope=[])
         other.restart(self.module.session_name("trial"))
         self.assertFalse(alive(old_master))
         wait_for(lambda: len(self.calls()) == 2)
