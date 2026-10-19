@@ -23,6 +23,7 @@ FILES = (
     "periodic-checks.ts",
     "agents.slice",
     "tests/test_remote_agent.py",
+    "tests/test_dtach.py",
     "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
     "tests/periodic_scheduler_dispatch.mjs",
