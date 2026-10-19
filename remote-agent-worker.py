@@ -635,9 +635,14 @@ class Worker:
         if prompt_file is not None:
             launch.append(str(prompt_file))
         configured_scope = resolve_scope() if self.scope is None else self.scope
-        scope = (
-            [*configured_scope, f"--unit={session}", "--"] if configured_scope else []
-        )
+        if configured_scope:
+            launch = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--scope",
+                json.dumps([*configured_scope, f"--unit={session}", "--"]),
+                json.dumps(launch),
+            ]
         runtime = f"/run/user/{os.getuid()}"
         build_environment = (
             ["-e", f"BUILD_HOST_SCRIPTS={self.build_host_scripts}"]
@@ -660,7 +665,6 @@ class Worker:
             "-e",
             f"CARGO_BUILD_JOBS={self.jobs}",
             *build_environment,
-            *scope,
             *launch,
         )
 
@@ -772,8 +776,20 @@ def exec_dtach_ready(startup_json, command_json):
 
 
 def exec_dtach_scope(scope_json, command_json, startup_json):
-    """Move only this launcher into the stable scope, then exec the harness."""
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--dtach-ready",
+        startup_json,
+        command_json,
+    ]
+    exec_scope(scope_json, json.dumps(command))
+
+
+def exec_scope(scope_json, command_json):
+    """Move only this launcher into the stable scope, then exec its command."""
     scope = json.loads(scope_json)
+    command = json.loads(command_json)
     manager = "--user" if "--user" in scope else "--system"
     unit = next(
         arg.removeprefix("--unit=") for arg in scope if arg.startswith("--unit=")
@@ -829,7 +845,7 @@ def exec_dtach_scope(scope_json, command_json, startup_json):
             raise RuntimeError(
                 f"could not attach launcher to {unit}: {attached.stderr.strip()}"
             )
-        exec_dtach_ready(startup_json, command_json)
+        os.execvp(command[0], command)
     if properties["ActiveState"] != "inactive":
         raise RuntimeError(
             f"cannot launch {unit}: scope is {properties['ActiveState']}"
@@ -853,11 +869,7 @@ def exec_dtach_scope(scope_json, command_json, startup_json):
             *scope[:-1],
             "--property=Delegate=yes",
             "--",
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--dtach-ready",
-            startup_json,
-            command_json,
+            *command,
         ],
     )
 
@@ -1091,6 +1103,7 @@ def main():
     mode.add_argument("--run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-agent", nargs="+", help=argparse.SUPPRESS)
+    mode.add_argument("--scope", nargs=2, help=argparse.SUPPRESS)
     mode.add_argument("--dtach-scope", nargs=3, help=argparse.SUPPRESS)
     mode.add_argument("--dtach-ready", nargs=2, help=argparse.SUPPRESS)
     mode.add_argument("--claude-login", action="store_true", help=argparse.SUPPRESS)
@@ -1115,6 +1128,8 @@ def main():
             )
         if args.dtach_ready is not None:
             exec_dtach_ready(*args.dtach_ready)
+        if args.scope is not None:
+            exec_scope(*args.scope)
         if args.dtach_scope is not None:
             exec_dtach_scope(*args.dtach_scope)
         if args.dtach_run is not None:

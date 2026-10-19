@@ -1,4 +1,4 @@
-"""Real user-systemd scope lifetime across ordinary dtach attachment/reopen."""
+"""Real user-systemd scope lifetime across ordinary backend attachment/reopen."""
 
 import importlib.util
 import json
@@ -39,7 +39,7 @@ child = subprocess.Popen(
 )
 home = Path(os.environ["HOME"])
 with (home / "calls").open("a") as stream:
-    stream.write(json.dumps({"argv": sys.argv[1:], "child": child.pid,
+    stream.write(json.dumps({"argv": sys.argv[1:], "pid": os.getpid(), "child": child.pid,
         "cgroup": Path("/proc/self/cgroup").read_text()}) + "\\n")
 while True:
     if b"Q" in os.read(0, 1024):
@@ -58,8 +58,8 @@ def wait_for(predicate, timeout=8):
 
 
 @unittest.skipUnless(
-    DTACH and shutil.which("systemd-run") and shutil.which("tmux"),
-    "real dtach, tmux and user systemd required",
+    shutil.which("systemd-run") and shutil.which("tmux"),
+    "real tmux and user systemd required",
 )
 class DtachScopeTests(unittest.TestCase):
     def setUp(self):
@@ -151,14 +151,15 @@ class DtachScopeTests(unittest.TestCase):
                 self.children.append(identity)
         return calls
 
-    def attach(self):
+    def attach(self, *, tmux=False):
         # The public attach action performs its normal dead-session restart and
-        # execs real dtach. Only the isolated fixture's scope configuration differs.
+        # execs the real backend. Only the isolated fixture's configuration differs.
         script = (
-            "import importlib.util; "
-            f"s=importlib.util.spec_from_file_location('worker', {str(ROOT / 'remote-agent-worker.py')!r}); "
+            "import importlib.util, fcntl, termios; "
+            + ("fcntl.ioctl(0, termios.TIOCSCTTY, 0); " if tmux else "")
+            + f"s=importlib.util.spec_from_file_location('worker', {str(ROOT / 'remote-agent-worker.py')!r}); "
             "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
-            f"m.Worker(scope={SCOPE!r}).dispatch({{'action':'attach','name':{self.name!r}}})"
+            f"m.Worker(tmux={self.worker.tmux!r}, scope={SCOPE!r}).dispatch({{'action':'attach','name':{self.name!r}}})"
         )
         master, slave = pty.openpty()
         try:
@@ -247,6 +248,7 @@ class DtachScopeTests(unittest.TestCase):
         self.assertEqual(attached.wait(timeout=8), 0)
         wait_for(lambda: self.worker.dtach_status(self.session)["dead"])
 
+    @unittest.skipUnless(DTACH, "real dtach required")
     def test_01_legacy_nondelegated_scope_attaches_real_new_children(self):
         self.memory_limit = "100663296"
         marker = self.home / "legacy-pid"
@@ -289,6 +291,7 @@ class DtachScopeTests(unittest.TestCase):
         self.recreate_collected_scope()
         self.assertEqual(self.properties()["DropInPaths"], "")
 
+    @unittest.skipUnless(DTACH, "real dtach required")
     def test_02_new_scope_collects_and_recreates_same_name(self):
         self.exercise_reopens()
         self.recreate_collected_scope()
@@ -311,6 +314,7 @@ class DtachScopeTests(unittest.TestCase):
         conversation = self.worker.read_record(self.session)["conversation"]
         self.assertEqual(self.calls()[-1]["argv"], ["--session", conversation])
 
+    @unittest.skipUnless(DTACH, "real dtach required")
     def test_03_scope_api_failure_is_reported_before_start_succeeds(self):
         self.worker.scope = [*SCOPE, "--property=NoSuchRemoteAgentProperty=yes"]
         with self.assertRaisesRegex(RuntimeError, "scope.*failed|scope.*exited"):
@@ -319,6 +323,7 @@ class DtachScopeTests(unittest.TestCase):
             )
         self.assertEqual(self.calls(), [])
 
+    @unittest.skipUnless(DTACH, "real dtach required")
     def test_04_unsupported_attach_api_reports_error_without_new_scope(self):
         self.exercise_reopens()
         before = self.properties()
@@ -343,6 +348,99 @@ class DtachScopeTests(unittest.TestCase):
         self.assertTrue(
             all(self.module.identity_alive(identity) for identity in self.children)
         )
+
+    def test_05_legacy_tmux_reopens_with_retained_child_in_same_scope(self):
+        self.unit = self.session + ".scope"
+        self.memory_limit = "100663296"
+        conversation = "selected-saved-conversation"
+        directory = self.worker.create_directory(self.session)
+        self.module.write_private(
+            directory / "session.json",
+            json.dumps(
+                {"repo": "fixture", "agent": "pi", "conversation": conversation}
+            ),
+        )
+        # Reproduce the old nondelegated launch, not the corrected launch helper.
+        self.worker.run_tmux(
+            "new-session",
+            "-d",
+            "-s",
+            self.session,
+            "-c",
+            str(self.home / "project"),
+            "-e",
+            "HOME=" + str(self.home),
+            *SCOPE,
+            "--property=MemoryMax=" + self.memory_limit,
+            "--unit=" + self.unit,
+            "--",
+            str(self.home / ".local/bin/pi"),
+            "--session",
+            conversation,
+        )
+        first = wait_for(self.calls)[0]
+        initial = self.properties()
+        self.assertEqual(initial["Delegate"], "no")
+        self.assert_limits(initial)
+        parent_cgroup = Path("/proc/self/cgroup").read_text()
+        self.worker.run_tmux("send-keys", "-t", "=" + self.session + ":", "Q")
+        wait_for(
+            lambda: (
+                self.worker.run_tmux(
+                    "has-session", "-t", "=" + self.session, check=False
+                ).returncode
+                != 0
+            )
+        )
+        self.assertIsNone(self.module.process_identity(first["pid"]))
+        self.assertTrue(self.module.identity_alive(self.children[0]))
+        self.assertEqual(self.properties()["ActiveState"], "active")
+
+        for count in (2, 3):
+            self.reopen_legacy_tmux(count, conversation)
+            current = self.properties()
+            self.assertEqual(current["InvocationID"], initial["InvocationID"])
+            self.assertEqual(current["ControlGroup"], initial["ControlGroup"])
+            self.assertEqual(current["Delegate"], "yes")
+            self.assertEqual(len(current["DropInPaths"].split()), 1)
+            self.assert_limits(current)
+            self.assertTrue(all(self.module.identity_alive(p) for p in self.children))
+            self.assertTrue(all(c["cgroup"] == first["cgroup"] for c in self.calls()))
+        self.assertEqual(Path("/proc/self/cgroup").read_text(), parent_cgroup)
+
+        for identity in self.children:
+            os.kill(identity["pid"], signal.SIGKILL)
+        wait_for(lambda: self.properties()["ActiveState"] == "inactive")
+        wait_for(lambda: not Path("/sys/fs/cgroup" + initial["ControlGroup"]).exists())
+        self.reopen_legacy_tmux(4, conversation)
+        recreated = self.properties()
+        self.assertNotEqual(recreated["InvocationID"], initial["InvocationID"])
+        self.assertEqual(recreated["ControlGroup"], initial["ControlGroup"])
+        self.assertEqual(recreated["DropInPaths"], "")
+        self.assertEqual(recreated["Delegate"], "yes")
+        self.memory_limit = "134217728"
+        self.assert_limits(recreated)
+        self.assertNotIn("backend", self.worker.read_record(self.session))
+
+    def reopen_legacy_tmux(self, count, conversation):
+        attached, terminal = self.attach(tmux=True)
+        wait_for(lambda: len(self.calls()) == count or attached.poll() is not None)
+        self.assertEqual(
+            len(self.calls()),
+            count,
+            "ordinary legacy attach failed with retained scope: "
+            + self.read_terminal(terminal),
+        )
+        self.assertEqual(self.calls()[-1]["argv"], ["--session", conversation])
+        self.assertFalse(
+            self.worker.dispatch({"action": "status", "name": self.name})["dead"]
+        )
+        os.write(terminal, b"Q")
+        wait_for(lambda: self.worker.status(self.session)["dead"])
+        self.assertIsNone(self.module.process_identity(self.calls()[-1]["pid"]))
+        # Close only the exited pane; retained detached jobs must survive.
+        self.worker.run_tmux("kill-session", "-t", "=" + self.session)
+        self.assertEqual(attached.wait(timeout=8), 0, self.read_terminal(terminal))
 
     def exercise_reopens(self):
         self.worker.dispatch(
