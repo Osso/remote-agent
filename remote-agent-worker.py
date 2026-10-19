@@ -682,6 +682,96 @@ def terminate_owned_tree(identity):
                 os.close(fd)
 
 
+SCOPE_DELEGATE_OVERRIDE = "50-remote-agent-delegate.conf"
+
+
+def scope_systemctl(manager, *arguments, input=None):
+    result = subprocess.run(
+        ["systemctl", manager, *arguments],
+        input=input,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"scope systemctl {' '.join(arguments)} failed: {result.stderr.strip()}"
+        )
+    return result.stdout
+
+
+def exec_dtach_scope(scope_json, command_json):
+    """Move only this launcher into the stable scope, then exec the harness."""
+    scope = json.loads(scope_json)
+    command = json.loads(command_json)
+    manager = "--user" if "--user" in scope else "--system"
+    unit = next(
+        arg.removeprefix("--unit=") for arg in scope if arg.startswith("--unit=")
+    )
+    if not unit.endswith(".scope"):
+        unit += ".scope"
+    properties = dict(
+        line.split("=", 1)
+        for line in scope_systemctl(
+            manager,
+            "show",
+            unit,
+            "-p",
+            "ActiveState",
+            "-p",
+            "Delegate",
+            "-p",
+            "DropInPaths",
+        ).splitlines()
+    )
+    if properties["ActiveState"] == "active":
+        if properties["Delegate"] != "yes":
+            scope_systemctl(
+                manager,
+                "edit",
+                "--runtime",
+                "--stdin",
+                f"--drop-in={SCOPE_DELEGATE_OVERRIDE}",
+                unit,
+                input="[Scope]\nDelegate=yes\n",
+            )
+            scope_systemctl(manager, "daemon-reload")
+        attached = subprocess.run(
+            [
+                "busctl",
+                manager,
+                "call",
+                "org.freedesktop.systemd1",
+                "/org/freedesktop/systemd1",
+                "org.freedesktop.systemd1.Manager",
+                "AttachProcessesToUnit",
+                "ssau",
+                unit,
+                "",
+                "1",
+                str(os.getpid()),
+            ],
+            text=True,
+            capture_output=True,
+        )
+        if attached.returncode:
+            raise RuntimeError(
+                f"could not attach launcher to {unit}: {attached.stderr.strip()}"
+            )
+        os.execvp(command[0], command)
+    if properties["ActiveState"] != "inactive":
+        raise RuntimeError(
+            f"cannot launch {unit}: scope is {properties['ActiveState']}"
+        )
+    # A collected legacy scope's drop-in otherwise prevents transient recreation.
+    # Remove only our stable override, never other resource/admin drop-ins.
+    for name in shlex.split(properties["DropInPaths"]):
+        override = Path(name)
+        if override.name == SCOPE_DELEGATE_OVERRIDE:
+            override.unlink()
+            scope_systemctl(manager, "daemon-reload")
+    os.execvp(scope[0], [*scope[:-1], "--property=Delegate=yes", "--", *command])
+
+
 def run_dtach_agent(
     directory, cwd, scope_json, agent, executable, path, home, prompt_file=None
 ):
@@ -693,7 +783,6 @@ def run_dtach_agent(
     }
     os.chdir(cwd)
     command = [
-        *json.loads(scope_json),
         sys.executable,
         str(Path(__file__).resolve()),
         "--dtach-agent",
@@ -704,6 +793,14 @@ def run_dtach_agent(
     ]
     if prompt_file is not None:
         command.append(prompt_file)
+    if json.loads(scope_json):
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--dtach-scope",
+            scope_json,
+            json.dumps(command),
+        ]
     child = subprocess.Popen(command)
     atomic_write(directory / "runtime.json", json.dumps(runtime).encode())
     status = child.wait()
@@ -895,6 +992,7 @@ def main():
     mode.add_argument("--run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-run", nargs="+", help=argparse.SUPPRESS)
     mode.add_argument("--dtach-agent", nargs="+", help=argparse.SUPPRESS)
+    mode.add_argument("--dtach-scope", nargs=2, help=argparse.SUPPRESS)
     mode.add_argument("--claude-login", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--pi-login", metavar="PROVIDER", help=argparse.SUPPRESS)
     parser.add_argument("--host", choices=HOSTS, default="desktop")
@@ -915,6 +1013,8 @@ def main():
                 args.dtach_agent[4] if len(args.dtach_agent) == 5 else None,
                 tmux=False,
             )
+        if args.dtach_scope is not None:
+            exec_dtach_scope(*args.dtach_scope)
         if args.dtach_run is not None:
             return run_dtach_agent(*args.dtach_run)
         worker = Worker(host=args.host)
