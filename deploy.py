@@ -26,6 +26,7 @@ FILES = (
     "tests/test_dtach.py",
     "tests/test_dtach_scope.py",
     "tests/test_terminal_colors.py",
+    "tests/test_history.py",
     "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
     "tests/periodic_scheduler_dispatch.mjs",

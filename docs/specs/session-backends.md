@@ -16,6 +16,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [x] Cancel terminates only the intended session and removes its private state; stale process identifiers must not target unrelated processes.
 - [x] Session state and sockets remain private to the owning account.
 - [x] Logs fail explicitly for dtach because terminal output is not retained or replayed; existing tmux pane history remains available through the legacy path.
+- [x] The read-only `history` request exports a Pi session's saved active branch through the installed Pi CLI, with caller width and color capability. It does not parse private transcript files or modify the running agent. Unsupported harnesses and a confirmed live session without saved history return explicit unavailability; other export failures remain errors.
 - [x] Mosh attachment retains `--no-init`; terminal-native scrollback is not a complete output-history guarantee.
 - [x] Deployment preserves existing user tmux configuration, including the deployed legacy copy targeted by an existing user symlink. Asserted by `DeployTests.test_deploy_preserves_existing_tmux_configuration`; deployment commit `6c09830` has saved GREEN proof (2 tests).
 - [ ] Deployment does not reload tmux configuration.
@@ -37,6 +38,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_terminal_colors.py` — start/attach capability forwarding, normalization and account routing: four tests with 32 subcases passed at `232a98c`.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
+- `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries.
 
 ## Known gaps (current cycle)
 
