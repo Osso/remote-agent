@@ -1557,7 +1557,7 @@ else:
                         argv = json.loads(result.stdout)["argv"]
                         self.assertIn(host, argv)
                         if action == "attach":
-                            self.assertEqual(argv[:2], ["--", host])
+                            self.assertEqual(argv[:3], ["--no-init", "--", host])
                             self.assertEqual(argv[-2:], ["--attach", "shared"])
                             self.assertNotIn("-t", argv)
                             self.assertNotIn("-o", argv)
