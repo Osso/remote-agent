@@ -119,6 +119,10 @@ Mosh retains `--no-init` for terminal-native scrollback. dtach attachment uses
 is injected. Same-size reattachment may need a window resize to repaint Pi.
 Detached output is not buffered or replayed; neither dtach nor `--no-init`
 guarantees complete Ghostty scrollback or restores another terminal's history.
+The controller forwards its `COLORTERM` capability on start and attach. Dtach
+launches use `TERM=xterm-256color`; truecolor is advertised only when the caller
+reports `truecolor` or `24bit`. Attachment saves the current capability for the
+next launch; it does not change a running agent's environment or theme.
 See the [session backend contract](docs/specs/session-backends.md).
 
 ### Another user's sessions

@@ -33,6 +33,7 @@ with (home / "calls").open("a") as f:
         "pi_dir": os.environ.get("PI_CODING_AGENT_DIR"),
         "runtime": os.environ.get("XDG_RUNTIME_DIR"),
         "bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS"),
+        "term": os.environ.get("TERM"), "colorterm": os.environ.get("COLORTERM"),
         "child": child.pid, "pid": os.getpid()}) + "\\n")
 signal.signal(signal.SIGWINCH, lambda *_: os.write(1, b"WINCH\\r\\n"))
 while True:
@@ -134,10 +135,17 @@ class DtachTests(unittest.TestCase):
             else []
         )
 
-    def attach(self, name="trial"):
+    def attach(self, name="trial", colorterm=None):
         master, slave = pty.openpty()
+        color_args = [] if colorterm is None else [f"--colorterm={colorterm}"]
         process = subprocess.Popen(
-            [sys.executable, str(ROOT / "remote-agent-worker.py"), "--attach", name],
+            [
+                sys.executable,
+                str(ROOT / "remote-agent-worker.py"),
+                *color_args,
+                "--attach",
+                name,
+            ],
             env=self.env,
             stdin=slave,
             stdout=slave,
@@ -169,6 +177,39 @@ class DtachTests(unittest.TestCase):
                 break
             output += data
         return output
+
+    def test_launch_uses_requested_truecolor_with_mosh_terminal(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("TERM", None)
+            os.environ.pop("COLORTERM", None)
+            self.start(colorterm="truecolor")
+        call = wait_for(lambda: self.calls())[0]
+        self.assertEqual(call["term"], "xterm-256color")
+        self.assertEqual(call["colorterm"], "truecolor")
+
+    def test_launch_without_truecolor_does_not_inherit_server_hint(self):
+        with mock.patch.dict(os.environ, {"COLORTERM": "truecolor"}):
+            self.start(colorterm="")
+        call = wait_for(lambda: self.calls())[0]
+        self.assertIsNone(call["colorterm"])
+
+    def test_invalid_color_hint_fails_before_creating_session(self):
+        with self.assertRaisesRegex(ValueError, "colorterm"):
+            self.start(colorterm="arbitrary-environment")
+        self.assertFalse(self.directory().exists())
+
+    def test_attach_refreshes_color_hint_for_saved_conversation_restart(self):
+        self.start(colorterm="")
+        wait_for(lambda: self.calls())
+        record = json.loads((self.directory() / "session.json").read_text())
+        client, terminal = self.attach(colorterm="truecolor")
+        os.write(terminal, b"Q")
+        client.wait(timeout=3)
+        wait_for(lambda: self.call("status")["dead"])
+        self.worker.restart(self.module.session_name("trial"))
+        wait_for(lambda: len(self.calls()) == 2)
+        self.assertEqual(self.calls()[1]["colorterm"], "truecolor")
+        self.assertEqual(self.calls()[1]["argv"], ["--session", record["conversation"]])
 
     def test_default_start_status_list_locate_and_private_long_socket(self):
         name = "a" * 64

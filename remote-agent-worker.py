@@ -34,6 +34,12 @@ def session_name(name):
     return "remote-agent-" + name
 
 
+def validate_colorterm(value):
+    if value not in ("", "truecolor", "24bit"):
+        raise ValueError("colorterm must be empty, truecolor or 24bit")
+    return "truecolor" if value else ""
+
+
 def check_private(path, directory):
     info = path.lstat()
     expected = stat.S_ISDIR if directory else stat.S_ISREG
@@ -84,6 +90,7 @@ NEW_FLAG = "--session-id"
 STATE_FILES = (
     "prompt.txt",
     "session.json",
+    "session.json.tmp",
     "runtime.json",
     "runtime.json.tmp",
     "dtach.sock",
@@ -127,6 +134,11 @@ class Worker:
             return self.start(session, request)
         record = self.read_record(session)
         if record is not None and record.get("backend", "tmux") == "dtach":
+            if action == "attach" and "colorterm" in request:
+                record["colorterm"] = validate_colorterm(request["colorterm"])
+                atomic_write(
+                    self.state / session / "session.json", json.dumps(record).encode()
+                )
             return self.dispatch_dtach(session, action)
         if action == "locate":
             exists = (
@@ -298,6 +310,12 @@ class Worker:
             CONVERSATION_ENV: json.dumps(conversation),
             "CARGO_BUILD_JOBS": self.jobs,
         }
+        environment["TERM"] = "xterm-256color"
+        colorterm = validate_colorterm(self.read_record(session).get("colorterm", ""))
+        if colorterm:
+            environment["COLORTERM"] = colorterm
+        else:
+            environment.pop("COLORTERM", None)
         if self.build_host_scripts is not None:
             environment["BUILD_HOST_SCRIPTS"] = self.build_host_scripts
         command = [
@@ -479,9 +497,15 @@ class Worker:
         ):
             raise ValueError(f"session already exists: {session}")
         self.find_dtach()
+        colorterm = validate_colorterm(request.get("colorterm", ""))
         directory = self.create_directory(session)
         try:
-            record = {"repo": repo, "agent": agent, "backend": "dtach"}
+            record = {
+                "repo": repo,
+                "agent": agent,
+                "backend": "dtach",
+                "colorterm": colorterm,
+            }
             if resume:
                 record["conversation"] = resume
                 conversation = [RESUME_FLAGS[agent], resume]
@@ -874,6 +898,7 @@ def main():
     mode.add_argument("--claude-login", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--pi-login", metavar="PROVIDER", help=argparse.SUPPRESS)
     parser.add_argument("--host", choices=HOSTS, default="desktop")
+    parser.add_argument("--colorterm", choices=("", "truecolor", "24bit"))
     args = parser.parse_args()
     try:
         if args.claude_login:
@@ -898,6 +923,8 @@ def main():
             if args.attach is not None
             else json.load(sys.stdin)
         )
+        if args.attach is not None and args.colorterm is not None:
+            request["colorterm"] = args.colorterm
         print(json.dumps(worker.dispatch(request)))
         return 0
     except (OSError, ValueError, RuntimeError, UnicodeError, KeyError) as error:
