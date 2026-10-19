@@ -103,6 +103,7 @@ class DtachScopeTests(unittest.TestCase):
             scope=SCOPE,
         )
         self.unit = self.session + "-dtach.scope"
+        self.memory_limit = "134217728"
         self.children = []
         self.addCleanup(self.clean_fixture)
 
@@ -214,7 +215,7 @@ class DtachScopeTests(unittest.TestCase):
 
     def assert_limits(self, properties):
         self.assertEqual(properties["Slice"], "app.slice")
-        self.assertEqual(properties["MemoryMax"], "134217728")
+        self.assertEqual(properties["MemoryMax"], self.memory_limit)
         self.assertEqual(properties["TasksMax"], "32")
         self.assertEqual(properties["CPUQuotaPerSecUSec"], "500ms")
 
@@ -236,10 +237,12 @@ class DtachScopeTests(unittest.TestCase):
         wait_for(lambda: self.worker.dtach_status(self.session)["dead"])
 
     def test_01_legacy_nondelegated_scope_attaches_real_new_children(self):
+        self.memory_limit = "100663296"
         marker = self.home / "legacy-pid"
         launcher = subprocess.Popen(
             [
                 *SCOPE,
+                "--property=MemoryMax=" + self.memory_limit,
                 "--unit=" + self.unit,
                 "--",
                 sys.executable,
@@ -288,6 +291,8 @@ class DtachScopeTests(unittest.TestCase):
         self.assertNotEqual(after["InvocationID"], before["InvocationID"])
         self.assertEqual(after["ControlGroup"], before["ControlGroup"])
         self.assertEqual(after["Delegate"], "yes")
+        # Recreation takes configured limits; reuse above retained the old limits.
+        self.memory_limit = "134217728"
         self.assert_limits(after)
         conversation = self.worker.read_record(self.session)["conversation"]
         self.assertEqual(self.calls()[-1]["argv"], ["--session", conversation])
@@ -299,6 +304,29 @@ class DtachScopeTests(unittest.TestCase):
                 {"action": "start", "name": self.name, "repo": "fixture", "agent": "pi"}
             )
         self.assertEqual(self.calls(), [])
+
+    def test_04_unsupported_attach_api_reports_error_without_new_scope(self):
+        self.exercise_reopens()
+        before = self.properties()
+        binary = self.home / ".local/bin/busctl"
+        binary.write_text(
+            "#!/usr/bin/env python3\nimport sys\n"
+            "print('AttachProcessesToUnit unsupported fixture', file=sys.stderr)\n"
+            "sys.exit(1)\n"
+        )
+        binary.chmod(0o700)
+        with mock.patch.dict(
+            os.environ, {"PATH": str(binary.parent) + ":" + os.environ["PATH"]}
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "AttachProcessesToUnit unsupported fixture"
+            ):
+                self.worker.restart(self.session)
+        self.assertEqual(len(self.calls()), 3)
+        self.assertEqual(self.properties()["InvocationID"], before["InvocationID"])
+        self.assertTrue(
+            all(self.module.identity_alive(identity) for identity in self.children)
+        )
 
     def exercise_reopens(self):
         self.worker.dispatch(
