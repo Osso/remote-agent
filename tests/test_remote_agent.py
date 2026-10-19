@@ -1,4 +1,4 @@
-"""Behavioral tests: real isolated tmux, fixture agents, no model calls."""
+"""Behavioral tests: real detached workers, fixture agents, no model calls."""
 
 import base64
 import importlib.util
@@ -167,7 +167,7 @@ class PeriodicSchedulerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
-class WorkerTests(unittest.TestCase):
+class WorkerFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -175,7 +175,7 @@ class WorkerTests(unittest.TestCase):
         isolate_home(self, self.home)
         self.module = load_worker()
         os.environ.pop("BUILD_HOST_SCRIPTS", None)
-        self.assertIsNotNone(self.module, "remote tmux worker is not implemented")
+        self.assertIsNotNone(self.module, "remote worker is not implemented")
         self.tmux = [
             shutil.which("tmux"),
             "-L",
@@ -187,6 +187,8 @@ class WorkerTests(unittest.TestCase):
             lambda: subprocess.run(self.tmux + ["kill-server"], capture_output=True)
         )
         self.worker = self.module.Worker(self.home, self.tmux, scope=[])
+        self.addCleanup(self.cancel_sessions)
+        self.observation = self.home / "observation.json"
         self.engine = self.home / "Projects/sample-game/game-engine"
         self.ui = self.home / "Projects/demo/ui-demo"
         self.engine.mkdir(parents=True)
@@ -208,7 +210,9 @@ if args[:1] == ['--']:
 prompt = None
 if args:
     prompt = pathlib.Path(args[0][1:]).read_text() if args[0].startswith('@') else args[0]
-print(json.dumps({{"argv": args, "extensions": extensions, "executable": pathlib.Path(sys.argv[0]).name, "conversation": conversation, "prompt": prompt, "cwd": os.getcwd(), "path": os.environ["PATH"], "scripts": os.environ.get("BUILD_HOST_SCRIPTS"), "pi_dir": os.environ.get("PI_CODING_AGENT_DIR"), "runtime_dir": os.environ.get("XDG_RUNTIME_DIR"), "cargo_jobs": os.environ.get("CARGO_BUILD_JOBS"), "cgroup": pathlib.Path("/proc/self/cgroup").read_text()}}), flush=True)
+observation = json.dumps({{"argv": args, "extensions": extensions, "executable": pathlib.Path(sys.argv[0]).name, "conversation": conversation, "prompt": prompt, "cwd": os.getcwd(), "path": os.environ["PATH"], "scripts": os.environ.get("BUILD_HOST_SCRIPTS"), "pi_dir": os.environ.get("PI_CODING_AGENT_DIR"), "runtime_dir": os.environ.get("XDG_RUNTIME_DIR"), "cargo_jobs": os.environ.get("CARGO_BUILD_JOBS"), "cgroup": pathlib.Path("/proc/self/cgroup").read_text()}})
+pathlib.Path({str(self.observation)!r}).write_text(observation)
+print(observation, flush=True)
 if prompt == "hold":
     while True:
         time.sleep(0.05)
@@ -219,7 +223,23 @@ sys.exit(7)
             executable.write_text(fixture)
             executable.chmod(0o700)
 
+    def cancel_sessions(self):
+        if self.worker.state.is_dir():
+            for directory in self.worker.state.iterdir():
+                if directory.is_dir() and directory.name.startswith("remote-agent-"):
+                    self.worker.dispatch(
+                        {
+                            "action": "cancel",
+                            "name": directory.name.removeprefix("remote-agent-"),
+                        }
+                    )
+
+    def restart(self, worker=None):
+        self.observation.unlink(missing_ok=True)
+        (worker or self.worker).restart("remote-agent-job")
+
     def start(self, name="job", repo="engine", agent="pi", prompt=None):
+        self.observation.unlink(missing_ok=True)
         request = {"action": "start", "name": name, "repo": repo, "agent": agent}
         if prompt is not None:
             request["prompt"] = prompt
@@ -232,7 +252,7 @@ sys.exit(7)
             if result:
                 return result
             time.sleep(0.03)
-        self.fail("tmux fixture did not reach expected state")
+        self.fail("worker fixture did not reach expected state")
 
     def status(self, name="job"):
         return self.worker.dispatch({"action": "status", "name": name})
@@ -242,14 +262,15 @@ sys.exit(7)
 
     def output(self):
         def read():
-            for line in self.logs().splitlines():
-                try:
-                    return json.loads(line)
-                except json.JSONDecodeError:
-                    pass
+            try:
+                return json.loads(self.observation.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):
+                return None
 
         return self.wait_for(read)
 
+
+class WorkerTests(WorkerFixture):
     def test_build_scripts_absent_without_caller_value(self):
         self.start()
         self.wait_for(lambda: self.status()["dead"])
@@ -278,8 +299,7 @@ sys.exit(7)
                 self.assertEqual(
                     self.output()["scripts"], hosts[host]["build_host_scripts"]
                 )
-                self.worker.run_tmux("kill-server")
-                self.worker.restart("remote-agent-job")
+                self.restart()
                 self.wait_for(lambda: self.status()["dead"])
                 self.assertEqual(
                     self.output()["scripts"], hosts[host]["build_host_scripts"]
@@ -336,8 +356,7 @@ sys.exit(7)
                 self.start(repo=repo, agent=agent, prompt="literal task")
                 self.wait_for(lambda: self.status()["dead"])
                 first = self.output()
-                self.worker.run_tmux("kill-session", "-t", "=remote-agent-job")
-                self.worker.restart("remote-agent-job")
+                self.restart()
                 self.wait_for(lambda: self.status()["dead"])
                 resumed = self.output()
                 self.worker.dispatch({"action": "cancel", "name": "job"})
@@ -423,19 +442,10 @@ sys.exit(7)
         worker.dispatch(
             {"action": "start", "name": "capped", "repo": "engine", "agent": "pi"}
         )
-        output = self.wait_for(
-            lambda: next(
-                (
-                    json.loads(line)
-                    for line in worker.dispatch({"action": "logs", "name": "capped"})[
-                        "logs"
-                    ].splitlines()
-                    if line.startswith("{")
-                ),
-                None,
-            )
+        output = self.output()
+        self.assertIn(
+            f"/{slice_name}/remote-agent-capped-dtach.scope", output["cgroup"]
         )
-        self.assertIn(f"/{slice_name}/remote-agent-capped.scope", output["cgroup"])
         self.assertEqual(output["cargo_jobs"], "6")
 
     def test_worker_cli_reports_slice_probe_failure_as_json(self):
@@ -513,6 +523,7 @@ os.execvp(args[command+1], args[command+1:])
             scope = json.loads((self.home / "scope.json").read_text())
             self.assertEqual("--user" in scope, user)
             self.assertIn("--slice=agents.slice", scope)
+            self.assertIn("--unit=remote-agent-job-dtach", scope)
             worker.dispatch({"action": "cancel", "name": "job"})
 
     def test_native_profile_build_jobs_survive_restart(self):
@@ -522,11 +533,10 @@ os.execvp(args[command+1], args[command+1:])
         )
         self.wait_for(lambda: self.status()["dead"])
         self.assertEqual(self.output()["cargo_jobs"], "20")
-        self.worker.run_tmux("kill-session", "-t", "=remote-agent-job")
         self.assertEqual(
             worker.dispatch({"action": "locate", "name": "job"}), {"exists": True}
         )
-        worker.restart("remote-agent-job")
+        self.restart(worker)
         self.wait_for(lambda: self.status()["dead"])
         self.assertEqual(self.output()["cargo_jobs"], "20")
         self.assertEqual(
@@ -603,7 +613,9 @@ os.execvp(args[command+1], args[command+1:])
         self.output()
         other = self.module.Worker(self.home, self.tmux, scope=[])
         self.assertFalse(other.dispatch({"action": "status", "name": "job"})["dead"])
-        with self.assertRaisesRegex((ValueError, RuntimeError), "exist"):
+        with self.assertRaisesRegex(
+            (ValueError, RuntimeError, FileExistsError), "exist"
+        ):
             self.start(prompt="hold")
         other.dispatch({"action": "cancel", "name": "job"})
         with self.assertRaisesRegex((ValueError, RuntimeError), "session|find|server"):
@@ -642,25 +654,9 @@ os.execvp(args[command+1], args[command+1:])
             subprocess.run(self.tmux + ["has-session", "-t", "=foreign"]).returncode, 0
         )
 
-    def test_cancel_cleans_state_left_by_a_killed_tmux_server(self):
-        self.start(prompt="hold")
-        self.output()
-        subprocess.run(self.tmux + ["kill-server"], check=True)  # e.g. WSL shutdown
-        self.assertEqual(
-            self.worker.dispatch({"action": "cancel", "name": "job"}),
-            {"session": "remote-agent-job", "cancelled": True},
-        )
-        self.start(prompt="hold")
-        self.output()
-        with self.assertRaises((ValueError, RuntimeError)):
-            self.worker.dispatch({"action": "cancel", "name": "never-started"})
-
     def test_unexpected_session_directory_is_rejected(self):
         self.start()
         self.wait_for(lambda: self.status()["dead"])
-        subprocess.run(
-            self.tmux + ["kill-session", "-t", "=remote-agent-job"], check=True
-        )
         with self.assertRaisesRegex(
             (ValueError, RuntimeError, FileExistsError), "exist"
         ):
@@ -689,68 +685,6 @@ os.execvp(args[command+1], args[command+1:])
         (self.home / ".local/bin/i").unlink()
         with self.assertRaisesRegex((ValueError, FileNotFoundError), "executable|i"):
             self.start(agent="claude")
-
-    def test_attach_real_terminal_then_detach_preserves_agent(self):
-        self.start(prompt="hold")
-        self.output()
-        self.attach_and_detach()
-        self.assertFalse(self.status()["dead"])
-
-    def attach_and_detach(self, name="job"):
-        """Attach on a real terminal, wait for the agent's output line, detach."""
-        pid, terminal = pty.fork()
-        if pid == 0:
-            os.environ["TERM"] = "xterm"
-            self.worker.dispatch({"action": "attach", "name": name})
-            os._exit(1)
-        try:
-            content = b""
-            deadline = time.monotonic() + 5
-            while b'{"argv"' not in content and time.monotonic() < deadline:
-                if select.select([terminal], [], [], 0.1)[0]:
-                    content += os.read(terminal, 65536)
-            self.assertIn(b'{"argv"', content)
-            os.write(terminal, b"\x02d")
-            result = self.wait_for(
-                lambda: value if (value := os.waitpid(pid, os.WNOHANG))[0] else None
-            )
-            self.assertEqual(result, (pid, 0))
-            pid = None
-        finally:
-            if pid is not None:
-                os.kill(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
-            os.close(terminal)
-
-    def test_attach_after_server_death_resumes_recorded_conversation(self):
-        for agent, flag in (("claude", "--resume"), ("pi", "--session")):
-            self.start(agent=agent, prompt="hold")
-            created = self.output()
-            self.assertEqual(created["conversation"][0], "--session-id")
-            conversation = created["conversation"][1]
-            subprocess.run(self.tmux + ["kill-server"], check=True)  # WSL restart
-            self.attach_and_detach()
-            resumed = self.output()
-            self.assertEqual(resumed["executable"], "i" if agent == "claude" else "pi")
-            self.assertEqual(resumed["conversation"], [flag, conversation])
-            self.assertIsNone(resumed["prompt"])  # task prompt is not resent
-            self.worker.dispatch({"action": "cancel", "name": "job"})
-
-    def test_attach_after_server_death_resumes_explicit_resume_id(self):
-        self.worker.dispatch(
-            {
-                "action": "start",
-                "name": "job",
-                "repo": "engine",
-                "agent": "claude",
-                "resume": "f86e1850-973d",
-            }
-        )
-        self.wait_for(lambda: self.status()["dead"])
-        subprocess.run(self.tmux + ["kill-server"], check=True)
-        self.worker.restart("remote-agent-job")
-        self.wait_for(lambda: self.status()["dead"])
-        self.assertEqual(self.output()["conversation"], ["--resume", "f86e1850-973d"])
 
     def test_worker_attach_to_unknown_session_exits_refused(self):
         env = dict(os.environ, HOME=str(self.home))
@@ -783,17 +717,18 @@ os.execvp(args[command+1], args[command+1:])
         self.output()
         directory = state / "remote-agent/remote-agent-job"
         (directory / "unexpected").write_text("keep me")
+        self.addCleanup((directory / "unexpected").unlink)
         with self.assertRaisesRegex(ValueError, "unexpected filesystem"):
             self.worker.dispatch({"action": "cancel", "name": "job"})
         self.assertFalse(self.status()["dead"])
         self.assertEqual((directory / "unexpected").read_text(), "keep me")
 
-    def test_tmux_launch_failure_cleans_only_created_state(self):
-        broken = self.module.Worker(
-            self.home, [*self.tmux, "--invalid-option"], scope=[]
-        )
-        with self.assertRaises(RuntimeError):
-            broken.dispatch(
+    def test_dtach_launch_failure_cleans_only_created_state(self):
+        binary = self.home / ".local/bin/dtach"
+        binary.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(1)\n")
+        binary.chmod(0o700)
+        with self.assertRaisesRegex(RuntimeError, "dtach startup failed"):
+            self.worker.dispatch(
                 {
                     "action": "start",
                     "name": "job",
@@ -805,6 +740,7 @@ os.execvp(args[command+1], args[command+1:])
         self.assertFalse(
             (self.home / ".local/state/remote-agent/remote-agent-job").exists()
         )
+        binary.unlink()
         self.start()
         self.wait_for(lambda: self.status()["dead"])
 
@@ -858,6 +794,7 @@ os.execvp(args[command+1], args[command+1:])
                     "name": "eng",
                     "project": "engine",
                     "harness": "pi",
+                    "backend": "dtach",
                     "attached": False,
                     "dead": False,
                     "exit_status": None,
@@ -866,6 +803,7 @@ os.execvp(args[command+1], args[command+1:])
                     "name": "ui",
                     "project": "ui-demo",
                     "harness": "claude",
+                    "backend": "dtach",
                     "attached": False,
                     "dead": True,
                     "exit_status": 7,
@@ -882,6 +820,93 @@ os.execvp(args[command+1], args[command+1:])
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("error", json.loads(result.stdout))
+
+
+class LegacyTmuxWorkerTests(WorkerFixture):
+    def start(self, name="job", repo="engine", agent="pi", prompt=None, resume=None):
+        """Recreate an old-format record and launch its original tmux session."""
+        self.observation.unlink(missing_ok=True)
+        session = "remote-agent-" + name
+        directory = self.worker.create_directory(session)
+        conversation = resume or "legacy-conversation"
+        self.module.write_private(
+            directory / "session.json",
+            json.dumps({"repo": repo, "agent": agent, "conversation": conversation}),
+        )
+        prompt_file = None
+        if prompt is not None:
+            prompt_file = directory / "prompt.txt"
+            self.module.write_private(prompt_file, prompt)
+        flag = self.module.RESUME_FLAGS[agent] if resume else self.module.NEW_FLAG
+        self.worker.launch(session, repo, agent, [flag, conversation], prompt_file)
+
+    def test_cancel_cleans_state_left_by_a_killed_tmux_server(self):
+        self.start(prompt="hold")
+        self.output()
+        subprocess.run(self.tmux + ["kill-server"], check=True)  # e.g. WSL shutdown
+        self.assertEqual(
+            self.worker.dispatch({"action": "cancel", "name": "job"}),
+            {"session": "remote-agent-job", "cancelled": True},
+        )
+        self.start(prompt="hold")
+        self.output()
+        with self.assertRaises((ValueError, RuntimeError)):
+            self.worker.dispatch({"action": "cancel", "name": "never-started"})
+
+    def test_attach_real_terminal_then_detach_preserves_agent(self):
+        self.start(prompt="hold")
+        self.output()
+        self.attach_and_detach()
+        self.assertFalse(self.status()["dead"])
+
+    def attach_and_detach(self, name="job"):
+        """Attach on a real terminal, wait for the agent's output line, detach."""
+        pid, terminal = pty.fork()
+        if pid == 0:
+            os.environ["TERM"] = "xterm"
+            self.worker.dispatch({"action": "attach", "name": name})
+            os._exit(1)
+        try:
+            content = b""
+            deadline = time.monotonic() + 5
+            while b'{"argv"' not in content and time.monotonic() < deadline:
+                if select.select([terminal], [], [], 0.1)[0]:
+                    content += os.read(terminal, 65536)
+            self.assertIn(b'{"argv"', content)
+            os.write(terminal, b"\x02d")
+            result = self.wait_for(
+                lambda: value if (value := os.waitpid(pid, os.WNOHANG))[0] else None
+            )
+            self.assertEqual(result, (pid, 0))
+            pid = None
+        finally:
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(terminal)
+
+    def test_attach_after_server_death_resumes_recorded_conversation(self):
+        for agent, flag in (("claude", "--resume"), ("pi", "--session")):
+            self.start(agent=agent, prompt="hold")
+            created = self.output()
+            self.assertEqual(created["conversation"][0], "--session-id")
+            conversation = created["conversation"][1]
+            subprocess.run(self.tmux + ["kill-server"], check=True)  # WSL restart
+            self.observation.unlink()
+            self.attach_and_detach()
+            resumed = self.output()
+            self.assertEqual(resumed["executable"], "i" if agent == "claude" else "pi")
+            self.assertEqual(resumed["conversation"], [flag, conversation])
+            self.assertIsNone(resumed["prompt"])  # task prompt is not resent
+            self.worker.dispatch({"action": "cancel", "name": "job"})
+
+    def test_attach_after_server_death_resumes_explicit_resume_id(self):
+        self.start(agent="claude", resume="f86e1850-973d")
+        self.wait_for(lambda: self.status()["dead"])
+        subprocess.run(self.tmux + ["kill-server"], check=True)
+        self.restart()
+        self.wait_for(lambda: self.status()["dead"])
+        self.assertEqual(self.output()["conversation"], ["--resume", "f86e1850-973d"])
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
