@@ -133,6 +133,8 @@ class Worker:
         if action == "start":
             return self.start(session, request)
         record = self.read_record(session)
+        if action == "history":
+            return self.history(session, record, request)
         if record is not None and record.get("backend", "tmux") == "dtach":
             if action == "attach" and "colorterm" in request:
                 record["colorterm"] = validate_colorterm(request["colorterm"])
@@ -174,6 +176,62 @@ class Worker:
             }
         if action == "attach":
             os.execvp(self.tmux[0], [*self.tmux, "attach-session", "-t", "=" + session])
+
+    def history(self, session, record, request):
+        columns = request.get("columns")
+        if type(columns) is not int or columns <= 0:
+            raise ValueError("columns must be a positive integer")
+        colorterm = validate_colorterm(request.get("colorterm", ""))
+        if record is None:
+            return {"available": False, "reason": "No session record exists."}
+        if record.get("agent") != "pi":
+            return {"available": False, "reason": "History export requires Pi."}
+        conversation = record.get("conversation")
+        if not conversation:
+            return {"available": False, "reason": "No conversation recorded."}
+        cwd, path, executable = self.agent_launch(record["repo"], record["agent"])
+        environment = {
+            **os.environ,
+            "HOME": str(self.home),
+            "PI_CODING_AGENT_DIR": str(self.home / ".config/pi/agent"),
+            "PATH": path,
+            "TERM": "xterm-256color",
+        }
+        environment.pop("COLORTERM", None)
+        if colorterm:
+            environment["COLORTERM"] = colorterm
+        result = subprocess.run(
+            [
+                executable,
+                "--export-terminal",
+                conversation,
+                "--export-columns",
+                str(columns),
+            ],
+            cwd=cwd,
+            env=environment,
+            capture_output=True,
+        )
+        if result.returncode:
+            error = f"Pi history export exited {result.returncode}: {result.stderr.decode('utf-8', errors='replace').strip()}"
+            if result.returncode == 4:
+                try:
+                    status = (
+                        self.dtach_status(session)
+                        if record.get("backend", "tmux") == "dtach"
+                        else self.status(session)
+                    )
+                except (OSError, ValueError, RuntimeError, KeyError) as status_error:
+                    raise RuntimeError(
+                        f"{error}; could not confirm live agent: {status_error}"
+                    ) from status_error
+                if not status["dead"]:
+                    return {
+                        "available": False,
+                        "reason": "No saved conversation history yet.",
+                    }
+            raise RuntimeError(error)
+        return {"available": True, "history": result.stdout.decode("utf-8")}
 
     def cancel(self, session, exists):
         """Stop the session and remove its state. A session whose tmux server
