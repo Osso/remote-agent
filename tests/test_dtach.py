@@ -1,0 +1,310 @@
+"""Real dtach/PTY lifecycle; fixture agents never call providers."""
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+import pty
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+DTACH = shutil.which("dtach")
+
+FIXTURE = """#!/usr/bin/env python3
+import json, os, signal, subprocess, sys, termios, tty
+from pathlib import Path
+home = Path(os.environ["HOME"])
+tty.setraw(0)
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+with (home / "calls").open("a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(),
+        "jobs": os.environ.get("CARGO_BUILD_JOBS"),
+        "scripts": os.environ.get("BUILD_HOST_SCRIPTS"),
+        "pi_dir": os.environ.get("PI_CODING_AGENT_DIR"),
+        "runtime": os.environ.get("XDG_RUNTIME_DIR"),
+        "bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS"),
+        "child": child.pid, "pid": os.getpid()}) + "\\n")
+signal.signal(signal.SIGWINCH, lambda *_: os.write(1, b"WINCH\\r\\n"))
+while True:
+    data = os.read(0, 1024)
+    with (home / "input").open("ab") as f:
+        f.write(data)
+    os.write(1, b"ECHO:" + data)
+    if b"Q" in data:
+        child.terminate()
+        child.wait()
+        sys.exit(7)
+"""
+
+
+def wait_for(predicate, timeout=5):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        result = predicate()
+        if result:
+            return result
+        time.sleep(0.02)
+    raise AssertionError("bounded wait expired")
+
+
+def alive(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+@unittest.skipUnless(DTACH, "real dtach executable required on PATH")
+class DtachTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="ra-dtach-")
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        config = self.home / ".config/remote-agent"
+        config.mkdir(parents=True)
+        (config / "remote-hosts.json").write_text(
+            json.dumps(
+                {
+                    "desktop": {
+                        "cargo_build_jobs": "3",
+                        "build_host_scripts": "/fixture/build",
+                    }
+                }
+            )
+        )
+        (config / "remote-projects.json").write_text(
+            json.dumps({"fixture": {"remote": "project"}})
+        )
+        (self.home / "project").mkdir()
+        binaries = self.home / ".local/bin"
+        binaries.mkdir(parents=True)
+        (binaries / "pi").write_text(FIXTURE)
+        (binaries / "pi").chmod(0o700)
+        self.env = {**os.environ, "HOME": str(self.home), "TERM": "xterm-256color"}
+        self.patch = mock.patch.dict(os.environ, self.env)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        spec = importlib.util.spec_from_file_location(
+            "dtach_worker", ROOT / "remote-agent-worker.py"
+        )
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.worker = self.module.Worker(self.home, scope=[])
+        self.addCleanup(self.clean_sessions)
+
+    def clean_sessions(self):
+        if not self.worker.state.exists():
+            return
+        for directory in self.worker.state.iterdir():
+            for file in directory.iterdir():
+                if not file.is_symlink():
+                    file.chmod(0o700 if file.is_socket() else 0o600)
+            try:
+                self.worker.dispatch(
+                    {
+                        "action": "cancel",
+                        "name": directory.name.removeprefix("remote-agent-"),
+                    }
+                )
+            except (ValueError, RuntimeError):
+                # Tampered metadata tests restore the actual identity before cleanup.
+                raise
+
+    def call(self, action, name="trial", **kwargs):
+        return self.worker.dispatch({"action": action, "name": name, **kwargs})
+
+    def start(self, name="trial", **kwargs):
+        return self.call("start", name, repo="fixture", agent="pi", **kwargs)
+
+    def directory(self, name="trial"):
+        return self.worker.state / self.module.session_name(name)
+
+    def calls(self):
+        path = self.home / "calls"
+        return (
+            [json.loads(line) for line in path.read_text().splitlines()]
+            if path.exists()
+            else []
+        )
+
+    def attach(self, name="trial"):
+        master, slave = pty.openpty()
+        process = subprocess.Popen(
+            [sys.executable, str(ROOT / "remote-agent-worker.py"), "--attach", name],
+            env=self.env,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            start_new_session=True,
+        )
+        os.close(slave)
+        self.addCleanup(os.close, master)
+        self.addCleanup(process.wait, timeout=3)
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        wait_for(
+            lambda: (
+                self.call("list")["sessions"][0]["attached"]
+                or process.poll() is not None
+            )
+        )
+        self.assertIsNone(process.poll(), self.read(master))
+        return process, master
+
+    @staticmethod
+    def read(fd, timeout=0.15):
+        output = b""
+        while select.select([fd], [], [], timeout)[0]:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            output += data
+        return output
+
+    def test_default_start_status_list_locate_and_private_long_socket(self):
+        name = "a" * 64
+        self.start(name, prompt="one prompt")
+        call = wait_for(lambda: self.calls())[0]
+        record = json.loads((self.directory(name) / "session.json").read_text())
+        self.assertEqual(record["backend"], "dtach")
+        self.assertEqual(
+            call["argv"],
+            [
+                "--session-id",
+                record["conversation"],
+                "@" + str(self.directory(name) / "prompt.txt"),
+            ],
+        )
+        self.assertEqual(call["cwd"], str(self.home / "project"))
+        self.assertEqual((call["jobs"], call["scripts"]), ("3", "/fixture/build"))
+        self.assertEqual(call["pi_dir"], str(self.home / ".config/pi/agent"))
+        self.assertEqual(call["runtime"], f"/run/user/{os.getuid()}")
+        self.assertEqual(call["bus"], f"unix:path=/run/user/{os.getuid()}/bus")
+        self.assertFalse(self.call("status", name)["dead"])
+        self.assertTrue(self.call("locate", name)["exists"])
+        listing = self.call("list")["sessions"]
+        self.assertEqual(len(listing), 1)
+        self.assertEqual(
+            (listing[0]["name"], listing[0]["project"], listing[0]["harness"]),
+            (name, "fixture", "pi"),
+        )
+        self.assertFalse(listing[0]["attached"])
+        for file in self.directory(name).iterdir():
+            self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+
+    def test_detach_reattach_no_ctrl_l_then_exit_and_resume_without_prompt(self):
+        self.start(prompt="once")
+        wait_for(lambda: self.calls())
+        record = json.loads((self.directory() / "session.json").read_text())
+        first, terminal = self.attach()
+        os.write(terminal, b"hello")
+        wait_for(
+            lambda: (
+                b"hello" in (self.home / "input").read_bytes()
+                if (self.home / "input").exists()
+                else False
+            )
+        )
+        os.write(terminal, b"\x1c")
+        self.assertEqual(first.wait(timeout=3), 0)
+        self.assertFalse(self.call("status")["dead"])
+        second, terminal2 = self.attach()
+        os.write(terminal2, b"again")
+        wait_for(lambda: b"again" in (self.home / "input").read_bytes())
+        self.assertNotIn(b"\x0c", (self.home / "input").read_bytes())
+        os.write(terminal2, b"Q")
+        second.wait(timeout=3)
+        wait_for(lambda: self.call("status")["dead"])
+        self.assertEqual(self.call("status")["exit_status"], 7)
+        self.assertTrue(self.call("list")["sessions"][0]["dead"])
+        self.worker.restart(self.module.session_name("trial"))
+        wait_for(lambda: len(self.calls()) == 2)
+        self.assertEqual(self.calls()[1]["argv"], ["--session", record["conversation"]])
+        self.call("cancel")
+        self.assertFalse(self.call("locate")["exists"])
+
+    def test_logs_explicitly_unavailable(self):
+        self.start()
+        with self.assertRaisesRegex(
+            RuntimeError, "unavailable.*dtach|dtach.*unavailable"
+        ):
+            self.call("logs")
+
+    def test_cancel_kills_owned_children_not_unrelated_process(self):
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(600)"]
+        )
+        try:
+            self.start()
+            call = wait_for(lambda: self.calls())[0]
+            self.call("cancel")
+            wait_for(lambda: not alive(call["pid"]) and not alive(call["child"]))
+            self.assertIsNone(unrelated.poll())
+            self.assertFalse(self.directory().exists())
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=3)
+
+    def test_reused_identity_never_signalled(self):
+        self.start()
+        wait_for(lambda: self.calls())
+        path = self.directory() / "runtime.json"
+        original = path.read_bytes()
+        runtime = json.loads(original)
+        runtime["process"]["start"] = "not-the-same-process"
+        path.write_text(json.dumps(runtime))
+        try:
+            self.assertTrue(self.call("status")["dead"])
+            with self.assertRaisesRegex(RuntimeError, "identity"):
+                self.call("cancel")
+            self.assertTrue(alive(self.calls()[0]["pid"]))
+        finally:
+            path.write_bytes(original)
+
+    def test_socket_and_runtime_modes_rejected(self):
+        self.start()
+        for name in ("runtime.json", "dtach.sock"):
+            path = self.directory() / name
+            path.chmod(0o666)
+            with self.assertRaisesRegex(ValueError, "filesystem"):
+                self.call("status")
+            path.chmod(0o600)
+
+    def test_missing_binary_fails_without_state_or_tmux_fallback(self):
+        original = self.module.shutil.which
+        with mock.patch.object(
+            self.module.shutil,
+            "which",
+            side_effect=lambda name, **kwargs: (
+                None if name == "dtach" else original(name, **kwargs)
+            ),
+        ):
+            with self.assertRaisesRegex(FileNotFoundError, "dtach"):
+                self.start()
+        self.assertFalse(self.directory().exists())
+
+    def test_startup_failure_bounded_and_explicit(self):
+        fake = self.home / ".local/bin/dtach"
+        fake.write_text(
+            "#!/usr/bin/env python3\nimport sys; print('fixture startup failed', file=sys.stderr); sys.exit(23)\n"
+        )
+        fake.chmod(0o700)
+        start = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "fixture startup failed"):
+            self.start()
+        self.assertLess(time.monotonic() - start, 6)
+        self.assertFalse(self.directory().exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
