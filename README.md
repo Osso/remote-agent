@@ -191,10 +191,9 @@ byte-for-byte into the remote user's private configuration directory, enforcing
 selected host. Maps are excluded from the code archive; old code-directory maps
 are not removed automatically.
 
-Deployment links remote `~/.tmux.conf` and `~/.local/bin/wl-paste` to shipped
-files and refuses to replace unmanaged files or foreign symlinks at those paths.
-Tmux mouse handling is disabled: use terminal selection and copy shortcuts without
-Shift. Mouse scrolling through tmux history and clicking panes are disabled.
+Deployment preserves existing tmux configuration and does not reload tmux.
+It links `~/.local/bin/wl-paste` to the shipped worker, refusing to replace an
+unmanaged file or foreign symlink at that path.
 It preserves an existing system or user `agents.slice`; otherwise it installs
 the bundled user slice and reloads the user manager. Review its limits for your
 host. System-scope authorization, SSH configuration, Mosh networking, harness

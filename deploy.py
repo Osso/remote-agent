@@ -22,7 +22,6 @@ FILES = (
     "remote-agent-user.py",
     "periodic-checks.ts",
     "agents.slice",
-    "tmux.conf",
     "tests/test_remote_agent.py",
     "tests/test_cross_user.py",
     "tests/test_periodic_scheduler.mjs",
@@ -61,10 +60,6 @@ agent_dir=pathlib.Path(os.environ['PI_CODING_AGENT_DIR']).expanduser() if os.env
 extension=agent_dir/'extensions/periodic-checks.ts'
 extension.parent.mkdir(parents=True,exist_ok=True)
 link(extension,destination/'periodic-checks.ts')
-tmux_conf=home/'.tmux.conf'
-link(tmux_conf,destination/'tmux.conf')
-if subprocess.run(['tmux','has-session'],capture_output=True).returncode==0:
- subprocess.run(['tmux','source-file',str(tmux_conf)],check=True)
 (home/'.local/bin').mkdir(parents=True,exist_ok=True)
 link(home/'.local/bin/wl-paste',destination/'remote-agent-worker.py')
 def slice_fragment(user):

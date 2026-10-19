@@ -1246,6 +1246,27 @@ if 'show' in sys.argv:
                     self.install_extension(route)
                 self.assertEqual(link.readlink(), foreign)
 
+    def test_deploy_preserves_existing_tmux_configuration(self):
+        installed = self.home / "Projects/cli/remote-agent"
+        installed.mkdir(parents=True)
+        target = installed / "tmux.conf"
+        config = self.home / ".tmux.conf"
+        content = "set -g mouse off\nset -ga terminal-overrides ',*:smcup@:rmcup@'\n"
+        for symlink in (True, False):
+            with self.subTest(symlink=symlink):
+                config.unlink(missing_ok=True)
+                target.write_text(content)
+                if symlink:
+                    config.symlink_to(target)
+                else:
+                    config.write_text(content)
+                result = self.deploy()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(config.read_text(), content)
+                self.assertEqual(target.read_text(), content)
+                self.assertEqual(config.is_symlink(), symlink)
+                config.unlink()
+
     def test_preserve_user_slice_and_install_native_worker(self):
         unit = self.home / ".config/systemd/user/agents.slice"
         unit.parent.mkdir(parents=True)
@@ -1268,7 +1289,7 @@ if 'show' in sys.argv:
             (self.home / "data/remote-agents/controller-revision.txt").read_text(),
             "fixture-revision\n",
         )
-        self.assertTrue((self.home / ".tmux.conf").is_symlink())
+        self.assertFalse((self.home / ".tmux.conf").exists())
 
     def test_deploy_cli_defaults_to_native_and_preserves_desktop_override(self):
         ssh = self.bin / "ssh"
