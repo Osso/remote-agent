@@ -117,6 +117,12 @@ of the host, harness, or provider.
 Mosh retains `--no-init` for terminal-native scrollback. dtach attachment uses
 `-r winch`; press Ctrl+backslash to detach without stopping the agent. No Ctrl+L
 is injected. Same-size reattachment may need a window resize to repaint Pi.
+After deploying the bracketed-paste repair, detach an existing dtach attachment
+with Ctrl+backslash and reconnect using the same `remote-agent attach NAME`
+command (including `--user` when applicable); no agent restart is needed.
+Keep paste safety warnings enabled; this repair enables bracketed paste rather
+than disabling warnings. Current regression evidence covers local dtach/PTY
+fixture attachments, not actual Pi/Claude or SSH/Mosh multiline-paste acceptance.
 Before each TTY attachment and every retry, the controller retrieves Pi's saved
 current, compaction-aware history over SSH, prints it locally into scrollback,
 and adds viewport-height padding before starting Mosh. Non-TTY output skips
