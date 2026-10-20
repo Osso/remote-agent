@@ -203,7 +203,8 @@ class DtachTests(unittest.TestCase):
                 or process.poll() is not None
             )
         )
-        self.assertIsNone(process.poll(), self.read(master))
+        if process.poll() is not None:
+            self.fail(self.read(master))
         return process, master
 
     @staticmethod
