@@ -121,8 +121,8 @@ After deploying the bracketed-paste repair, detach an existing dtach attachment
 with Ctrl+backslash and reconnect using the same `remote-agent attach NAME`
 command (including `--user` when applicable); no agent restart is needed.
 Keep paste safety warnings enabled; this repair enables bracketed paste rather
-than disabling warnings. Current regression evidence covers local dtach/PTY
-fixture attachments, not actual Pi/Claude or SSH/Mosh multiline-paste acceptance.
+than disabling warnings. See [paste acceptance](docs/specs/session-backends.md#tests-asserting-this-spec)
+for regression and installed SSH/Mosh/Pi evidence.
 Before each TTY attachment and every retry, the controller retrieves Pi's saved
 current, compaction-aware history over SSH, prints it locally into scrollback,
 and adds viewport-height padding before starting Mosh. Non-TTY output skips

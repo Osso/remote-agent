@@ -338,10 +338,10 @@ class DtachTests(unittest.TestCase):
             os.write(terminal, payload)
             received += len(payload)
             state = wait_for(
-                lambda: (
+                lambda expected_received=received: (
                     snapshot
                     if (snapshot := json.loads(state_path.read_text()))["received"]
-                    == received
+                    == expected_received
                     else None
                 )
             )

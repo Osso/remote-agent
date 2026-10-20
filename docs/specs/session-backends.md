@@ -44,6 +44,8 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries; nine passing tests reported for the current worker.
 - `tests/test_history_attach.py` and `tests/history_scrollback_fixture.cjs` — four real-PTY controller cases, including headless normal-buffer assertions for all 200 ordered history markers above the live viewport, retry restoration and unavailable/error behavior. SSH and Mosh are fixtures in these regression tests.
 
+On 2026-10-20, installed SSH/Mosh/dtach/Pi acceptance exercised first attachment and reattachment for both the default account and `--user allison`. Each TTY received bracketed-paste enablement, displayed both pasted lines without submitting conversation history, and detached cleanly with the agent alive. Disposable sessions were removed; existing session inventories were unchanged. Local real-dtach fixtures additionally assert exact paste contents and zero submissions. This does not claim native desktop clipboard-dialog or Claude acceptance.
+
 Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at 61×282: all 3,600 current-history rows matched exactly in the normal terminal buffer, above the live viewport. Independent replay confirmed both captures; this is terminal-buffer proof, not a Ghostty screenshot or proof of live-view repaint.
 
 ## Known gaps (current cycle)
