@@ -300,6 +300,9 @@ class Worker:
             os.chdir(self.state / session)
             # No Ctrl-L: in Pi that opens the model selector. Same-size WINCH
             # may not redraw Pi; dtach supplies neither screen history nor replay.
+            # Detached startup output cannot enable paste mode on a later client.
+            if sys.stdout.isatty():
+                print("\x1b[?2004h", end="", flush=True)
             os.execv(binary, [binary, "-a", "dtach.sock", "-r", "winch"])
         raise ValueError("unknown action")
 

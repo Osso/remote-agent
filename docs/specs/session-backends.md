@@ -12,6 +12,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - [x] Dtach startup readiness follows successful scope creation or attachment; scope failures surface explicitly.
 - [x] Caller `COLORTERM` is forwarded on start and attach, persisted and refreshed before restart. Dtach launches set `TERM=xterm-256color`, advertising truecolor only for caller `truecolor`/`24bit`; no palette edit or running-process environment mutation.
 - [x] For dtach, Ctrl+backslash detaches without stopping the agent; reattachment uses `-r winch`, without injecting Ctrl+L. Restart resumes the recorded conversation without resending the initial prompt.
+- [ ] Each TTY dtach attachment enables bracketed paste for the managed Pi and Claude TUIs, including reattachment after detached startup. Multiline paste remains one paste without bare-CR submissions; non-TTY output receives no mode sequence. Detach preserves the running process.
 - [x] List and status report dtach backend, attachment, liveness and recorded exit status from private runtime metadata and socket state. Locate finds saved records even after exit; list retains exited dtach records.
 - [x] Cancel terminates only the intended session and removes its private state; stale process identifiers must not target unrelated processes.
 - [x] Session state and sockets remain private to the owning account.
@@ -35,6 +36,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 ## Tests asserting this spec
 
 - `tests/test_dtach.py` — real dtach process and PTY lifecycle, metadata, private state, explicit log errors, cancellation and failed startup. The 14-case lifecycle suite passed at `068e5c4`; deployed-worker checks also passed after fixture isolation in `46635a7`.
+- `tests/test_dtach.py::DtachTests.test_bracketed_multiline_paste_on_first_and_repeat_attach` — real dtach/PTY attachments to a fixture TUI that enables paste once before attachment: terminal enable sequence, exact multiline paste content, no submissions, retained process and clean detach on first and repeat attachment. Local transport proof only; not SSH/Mosh or actual-harness acceptance.
 - `tests/test_dtach_scope.py` — real-systemd stable-scope reuse, retained jobs and limits, legacy delegation upgrade and startup failure boundaries. Legacy tmux regression exercises main exit with a retained detached child, ordinary attach twice with the selected saved conversation, then inactive same-name recreation.
 - `tests/test_terminal_colors.py` — start/attach capability forwarding, normalization and account routing: four tests with 32 subcases passed at `232a98c`.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.

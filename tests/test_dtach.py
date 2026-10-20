@@ -48,6 +48,45 @@ while True:
 """
 
 
+PASTE_FIXTURE = r"""#!/usr/bin/env python3
+import json, os, tty
+from pathlib import Path
+
+home = Path(os.environ["HOME"])
+tty.setraw(0)
+state = {"pid": os.getpid(), "pastes": [], "submissions": [], "received": 0}
+pending = b""
+pasting = False
+
+def save():
+    temporary = home / "paste-state.tmp"
+    temporary.write_text(json.dumps(state))
+    temporary.replace(home / "paste-state.json")
+
+# Emit once, while detached; SIGWINCH deliberately does not re-enable it.
+os.write(1, b"\x1b[?2004hSTARTUP-ONLY\r\n")
+save()
+while True:
+    data = os.read(0, 1)
+    if data == b"\x1b":
+        while len(data) < 6:
+            data += os.read(0, 6 - len(data))
+    state["received"] += len(data)
+    if data == b"\x1b[200~":
+        pasting = True
+    elif data == b"\x1b[201~":
+        state["pastes"].append(pending.decode())
+        pending = b""
+        pasting = False
+    elif data == b"\r" and not pasting:
+        state["submissions"].append(pending.decode())
+        pending = b""
+    else:
+        pending += data
+    save()
+"""
+
+
 def wait_for(predicate, timeout=5):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -135,7 +174,7 @@ class DtachTests(unittest.TestCase):
             else []
         )
 
-    def attach(self, name="trial", colorterm=None):
+    def attach(self, name="trial", colorterm=None, tty_output=True):
         master, slave = pty.openpty()
         color_args = [] if colorterm is None else [f"--colorterm={colorterm}"]
         process = subprocess.Popen(
@@ -148,11 +187,13 @@ class DtachTests(unittest.TestCase):
             ],
             env=self.env,
             stdin=slave,
-            stdout=slave,
+            stdout=slave if tty_output else subprocess.PIPE,
             stderr=slave,
             start_new_session=True,
         )
         os.close(slave)
+        if process.stdout is not None:
+            self.addCleanup(process.stdout.close)
         self.addCleanup(os.close, master)
         self.addCleanup(process.wait, timeout=3)
         self.addCleanup(lambda: process.poll() is None and process.kill())
@@ -272,6 +313,70 @@ class DtachTests(unittest.TestCase):
         self.assertEqual(self.calls()[1]["argv"], ["--session", record["conversation"]])
         self.call("cancel")
         self.assertFalse(self.call("locate")["exists"])
+
+    def test_bracketed_multiline_paste_on_first_and_repeat_attach(self):
+        (self.home / ".local/bin/pi").write_text(PASTE_FIXTURE)
+        self.start()
+        state_path = self.home / "paste-state.json"
+        initial = wait_for(
+            lambda: json.loads(state_path.read_text()) if state_path.exists() else None
+        )
+        pid = initial["pid"]
+        expected_pastes = []
+        received = 0
+        for attachment in (1, 2):
+            client, terminal = self.attach()
+            output = self.read(terminal)
+            self.assertNotIn(b"STARTUP-ONLY", output)
+            enabled = b"\x1b[?2004h" in output
+            content = f"paste {attachment}\rsecond line\rthird line"
+            # Model a terminal paste using only modes observed on this PTY.
+            payload = content.encode()
+            if enabled:
+                payload = b"\x1b[200~" + payload + b"\x1b[201~"
+            os.write(terminal, payload)
+            received += len(payload)
+            state = wait_for(
+                lambda: (
+                    snapshot
+                    if (snapshot := json.loads(state_path.read_text()))["received"]
+                    == received
+                    else None
+                )
+            )
+            expected_pastes.append(content)
+            with self.subTest(attachment=attachment, behavior="terminal mode"):
+                self.assertTrue(enabled, f"attachment output: {output!r}")
+            with self.subTest(attachment=attachment, behavior="single paste"):
+                self.assertEqual(state["pastes"], expected_pastes)
+            with self.subTest(attachment=attachment, behavior="no submissions"):
+                self.assertEqual(state["submissions"], [])
+            self.assertEqual(state["pid"], pid)
+            self.assertTrue(alive(pid))
+            os.write(terminal, b"\x1c")
+            self.assertEqual(client.wait(timeout=3), 0)
+            self.assertFalse(self.call("list")["sessions"][0]["attached"])
+            self.assertFalse(self.call("status")["dead"])
+            self.assertTrue(alive(pid))
+
+    def test_non_tty_attach_does_not_emit_bracketed_paste_mode(self):
+        self.start()
+        call = wait_for(lambda: self.calls())[0]
+        client, terminal = self.attach(tty_output=False)
+        os.write(terminal, b"pipe-input")
+        wait_for(
+            lambda: (
+                b"pipe-input" in (self.home / "input").read_bytes()
+                if (self.home / "input").exists()
+                else False
+            )
+        )
+        os.write(terminal, b"\x1c")
+        self.assertEqual(client.wait(timeout=3), 0)
+        output = client.stdout.read()
+        self.assertIn(b"ECHO:pipe-input", output)
+        self.assertNotIn(b"\x1b[?2004h", output)
+        self.assertTrue(alive(call["pid"]))
 
     def test_other_worker_cancellation_reaps_detached_launcher(self):
         self.start()
