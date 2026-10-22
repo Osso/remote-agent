@@ -177,6 +177,15 @@ class WorkerFixture(unittest.TestCase):
         self.home = Path(self.temp.name)
         isolate_home(self, self.home)
         self.module = load_worker()
+        account = self.home / ".config/pi-claude-bridge/profiles/fixture"
+        account.mkdir(parents=True, mode=0o700)
+        self.module.write_private(account / ".credential-owner", "shared-v1\n")
+        self.module.write_private(
+            account / ".credentials.json",
+            json.dumps({"claudeAiOauth": {"accessToken": "fixture-native-account"}}),
+        )
+        (self.home / ".claude").mkdir(mode=0o700)
+        self.module.write_private(self.home / ".claude/.active-profile", "fixture")
         os.environ.pop("BUILD_HOST_SCRIPTS", None)
         self.assertIsNotNone(self.module, "remote worker is not implemented")
         self.tmux = [
