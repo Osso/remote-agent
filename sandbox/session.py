@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -236,9 +237,25 @@ def run_session(config, arguments, conversation):
     )
     copy_prompts(name, prompts)
     checked_command(["systemctl", "is-active", "--quiet", config["firewall_service"]])
-    return subprocess.run(
-        ["docker", "start", "--attach", "--interactive", name]
-    ).returncode
+
+    def forward_winch(signum, frame):
+        try:
+            # Docker may still be starting, or may have exited before detach.
+            if inspect_owned_container(name, conversation) == "running":
+                checked_command(["docker", "kill", "--signal", "WINCH", name])
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            print(
+                f"sandbox session: SIGWINCH forwarding to {name}: {error}",
+                file=sys.stderr,
+            )
+
+    previous = signal.signal(signal.SIGWINCH, forward_winch)
+    try:
+        return subprocess.run(
+            ["docker", "start", "--attach", "--interactive", name]
+        ).returncode
+    finally:
+        signal.signal(signal.SIGWINCH, previous)
 
 
 def main(arguments=None):

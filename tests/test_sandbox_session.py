@@ -1,20 +1,24 @@
 """Local executable-boundary tests; no Docker daemon or remote host required."""
 
 import hashlib
+import importlib.util
 import json
 import os
 import pty
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "sandbox" / "session.py"
 
 FIXTURE = r"""#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, signal, sys, time
 state_path = pathlib.Path(os.environ['FIXTURE_STATE'])
 state = json.loads(state_path.read_text())
 args = sys.argv[1:]
@@ -24,6 +28,17 @@ def finish(code=0, message=''):
     state_path.write_text(json.dumps(state))
     if message: print(message, file=sys.stderr)
     sys.exit(code)
+def pause(stage):
+    global state
+    if not state.get('block_attach'): return
+    state_path.write_text(json.dumps(state))
+    ready = state_path.with_suffix('.'+stage)
+    ready.touch()
+    deadline = time.monotonic() + 8
+    while not state_path.with_suffix('.release-'+stage).exists():
+        if time.monotonic() >= deadline: sys.exit(98)
+        time.sleep(0.01)
+    state = json.loads(state_path.read_text())
 if tool == 'systemctl':
     finish(0 if state.get('firewall', True) else 3, '' if state.get('firewall', True) else 'inactive')
 if state.get('fail') == args[0]: finish(42, 'fixture Docker failure')
@@ -46,6 +61,7 @@ if args[0] in ('create', 'run'):
     if args[0] == 'run':
         state['transient'] = {'image': image, 'args': forwarded}
         print(json.dumps(forwarded))
+        pause('running')
         finish(state.get('exit_code', 0))
     name = args[args.index('--name')+1]
     if name in state['containers']: finish(1, 'name conflict')
@@ -60,10 +76,16 @@ if args[0] == 'cp':
     p = pathlib.Path(src)
     state['containers'][name]['files'][target] = {'text': p.read_text(), 'mode': p.stat().st_mode & 0o777}
     finish()
+if args[0] == 'kill':
+    if state['containers'][args[-1]]['status'] != 'running':
+        finish(1, 'container is not running')
+    finish()
 if args[0] == 'start':
+    pause('created')
     c = state['containers'][args[-1]]
     c['status'] = 'running' if state.get('keep_running') else 'exited'
     print(json.dumps({'args': c['args'], 'files': c['files']}))
+    pause('running')
     finish(state.get('exit_code', 0))
 finish(2, 'unexpected fixture command: '+repr(args))
 """
@@ -132,6 +154,120 @@ class SandboxSessionTests(unittest.TestCase):
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def wait_for(self, predicate):
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.01)
+        self.fail("fixture did not reach expected state")
+
+    def start_blocked(self, *arguments, **settings):
+        self.save({**self.state(), "block_attach": True, **settings})
+        process = subprocess.Popen(
+            [sys.executable, str(WRAPPER), "--config", str(self.config), *arguments],
+            env=self.env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        def cleanup():
+            for stage in ("created", "running"):
+                self.state_file.with_suffix(".release-" + stage).touch()
+            try:
+                process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+
+        self.addCleanup(cleanup)
+        return process
+
+    def release(self, stage):
+        self.state_file.with_suffix(".release-" + stage).touch()
+
+    def kill_commands(self):
+        return [c for c in self.state()["commands"] if c[:2] == ["docker", "kill"]]
+
+    def test_winch_forwards_only_running_named_container_while_attach_waits(self):
+        foreign = container_name("foreign")
+        self.save(
+            {
+                "containers": {foreign: {"label": "foreign", "status": "running"}},
+                "commands": [],
+            }
+        )
+        process = self.start_blocked("--session", "selected", keep_running=True)
+        self.wait_for(lambda: self.state_file.with_suffix(".created").exists())
+        before = len(self.state()["commands"])
+        os.kill(process.pid, signal.SIGWINCH)
+        self.wait_for(lambda: len(self.state()["commands"]) > before)
+        self.assertEqual(self.kill_commands(), [])
+        self.release("created")
+        self.wait_for(lambda: self.state_file.with_suffix(".running").exists())
+        os.kill(process.pid, signal.SIGWINCH)
+        self.wait_for(lambda: bool(self.kill_commands()))
+        self.assertIsNone(process.poll())
+        self.assertEqual(
+            self.kill_commands(),
+            [["docker", "kill", "--signal", "WINCH", container_name("selected")]],
+        )
+        self.assertEqual(self.state()["containers"][foreign]["status"], "running")
+        self.release("running")
+        _, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stderr)
+
+    def test_winch_docker_failure_is_reported_without_ending_attach(self):
+        process = self.start_blocked(
+            "--session", "selected", keep_running=True, fail="kill"
+        )
+        self.wait_for(lambda: self.state_file.with_suffix(".created").exists())
+        self.release("created")
+        self.wait_for(lambda: self.state_file.with_suffix(".running").exists())
+        os.kill(process.pid, signal.SIGWINCH)
+        self.wait_for(lambda: bool(self.kill_commands()))
+        self.assertIsNone(process.poll())
+        self.release("running")
+        _, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertIn("fixture Docker failure", stderr)
+        self.assertIn(container_name("selected"), stderr)
+
+    def test_winch_transient_has_no_container_signal_target(self):
+        process = self.start_blocked("--help")
+        self.wait_for(lambda: self.state_file.with_suffix(".running").exists())
+        os.kill(process.pid, signal.SIGWINCH)
+        self.release("running")
+        _, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(self.kill_commands(), [])
+
+    def test_run_session_restores_previous_winch_handler_on_exit(self):
+        spec = importlib.util.spec_from_file_location("sandbox_session", WRAPPER)
+        session = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(session)
+        observed = []
+        previous = signal.signal(
+            signal.SIGWINCH, lambda signum, frame: observed.append(signum)
+        )
+        self.addCleanup(signal.signal, signal.SIGWINCH, previous)
+        with patch.dict(os.environ, self.env):
+            for fail in (None, "start"):
+                with self.subTest(fail=fail):
+                    self.save({"containers": {}, "commands": [], "fail": fail})
+                    expected = signal.getsignal(signal.SIGWINCH)
+                    self.assertEqual(
+                        session.run_session(
+                            self.settings, ["--session", "direct"], "direct"
+                        ),
+                        42 if fail else 0,
+                    )
+                    self.assertIs(signal.getsignal(signal.SIGWINCH), expected)
+                    os.kill(os.getpid(), signal.SIGWINCH)
+        self.assertEqual(observed, [signal.SIGWINCH, signal.SIGWINCH])
 
     def test_two_conversations_cancel_only_selected_and_repeat_is_idempotent(self):
         state = self.state()
