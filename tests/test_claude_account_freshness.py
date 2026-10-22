@@ -119,7 +119,7 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
             timeout=5,
         )
 
-    def test_canonical_switch_and_release_never_copy_credentials(self):
+    def test_canonical_switch_never_copies_credentials(self):
         named = self.canonical("named", "fixture-canonical")
         other = self.canonical("other", "fixture-other")
         self.selection.write_text("named")
@@ -142,8 +142,6 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
                 "profiles": ["named", "other"],
             },
         )
-        self.assert_success(self.account(release=True))
-        self.assertFalse(self.selection.exists())
         for path, original in before.items():
             self.assertEqual(
                 (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns),
@@ -187,7 +185,6 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
     def test_unnamed_global_import_moves_once_and_refuses_overwrite(self):
         global_path = self.legacy / ".credentials.json"
         global_path.write_bytes(self.credentials("fixture-unnamed"))
-        self.assertNotEqual(self.account(release=True).returncode, 0)
         self.assert_success(self.account(name_current="named"))
         path = self.credential_path("named")
         self.assertEqual(path.read_bytes(), self.credentials("fixture-unnamed"))
@@ -195,7 +192,7 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
         self.assertEqual((path.parent / ".credential-owner").read_text(), "shared-v1\n")
         self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-        self.assert_success(self.account(release=True))
+        self.selection.unlink()
         path.unlink()
         global_path.write_bytes(self.credentials("fixture-new-unnamed"))
         self.assertNotEqual(self.account(name_current="named").returncode, 0)
@@ -222,14 +219,19 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
                 self.assertNotEqual(self.account(use=name).returncode, 0)
                 self.assertEqual(self.selection.read_text(), "other")
 
-    def test_release_does_not_delete_unowned_staging_or_selection(self):
+    def test_release_request_cannot_unselect_account_onto_legacy_global(self):
+        path = self.canonical("named", "fixture-selected")
+        self.selection.write_text("named")
         global_path = self.legacy / ".credentials.json"
-        global_path.write_bytes(self.credentials("fixture-unowned"))
-        self.selection.write_text("legacy")
-        result = self.account(release=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(global_path.read_bytes(), self.credentials("fixture-unowned"))
-        self.assertEqual(self.selection.read_text(), "legacy")
+        global_path.write_bytes(self.credentials("fixture-stale-global"))
+        self.account(release=True)
+        self.assertEqual(self.selection.read_text(), "named")
+        self.assertEqual(
+            global_path.read_bytes(), self.credentials("fixture-stale-global")
+        )
+        self.assert_success(self.launch("claude"))
+        capture = json.loads(self.capture.read_text())
+        self.assertEqual(capture["env"]["CLAUDE_CONFIG_DIR"], str(path.parent))
 
     def test_native_claude_launch_uses_selected_account_and_clears_stale_env(self):
         path = self.canonical("named", "fixture-selected")

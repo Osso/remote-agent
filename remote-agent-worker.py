@@ -968,8 +968,6 @@ class ClaudeAccounts:
             self.prepare_login(request["prepare_login"])
         elif "name_current" in request:
             self.name_current(request["name_current"])
-        elif request.get("release"):
-            self.release()
         return self.listing()
 
     def listing(self):
@@ -1070,17 +1068,6 @@ class ClaudeAccounts:
             self.active.chmod(0o600)
             self.active.replace(directory / ".credentials.json")
         atomic_write(self.owner_file, name.encode())
-
-    def release(self):
-        """Clear only the selection of an owned account, never its grant or staging."""
-        owner = self.owner()
-        if owner is not None:
-            self.require_owned(owner)
-            self.owner_file.unlink()
-        elif self.active.exists():
-            raise ValueError(
-                "unnamed credentials preserved; use `remote-agent claude-account --name-current NAME`"
-            )
 
 
 def set_claude_environment(config_dir):

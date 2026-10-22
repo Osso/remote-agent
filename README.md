@@ -302,12 +302,12 @@ exclusive `.credential-migration` directory lock; existing locks are not removed
 
 `--name-current PROFILE` can move an unnamed global login into a previously
 absent canonical account once. It validates a nonempty OAuth access token and
-refuses existing accounts, including cleared ones. Release clears only an owned
-account's selection, never its canonical grant or unrelated global staging.
+refuses existing accounts, including cleared ones. No action clears the
+selection, so retained legacy global grants never become launch credentials.
 There is no routine copying, freshness comparison, or writeback.
 
 Local synthetic subprocess fixtures in `tests/test_claude_account_freshness.py`
-cover switching/release, cleared grants, import, launcher environment, named
+cover switching, cleared grants, import, launcher environment, named
 login, failed login, and migration-lock refusal without network/auth calls.
 Run only account tests:
 
