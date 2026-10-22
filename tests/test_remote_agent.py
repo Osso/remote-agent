@@ -309,6 +309,125 @@ class ProjectPiExecutableTests(WorkerFixture):
             prompt_file,
         )
 
+    def test_pi_cancel_hook_runs_after_tmux_stop_with_recorded_conversation(self):
+        from pi_cancel_fixture import configure_hook, hook_calls
+
+        self.start(prompt="hold", resume="selected-conversation")
+        self.output()
+        pid = int(
+            self.worker.run_tmux(
+                "display-message", "-p", "-t", "=remote-agent-job:", "#{pane_pid}"
+            ).stdout
+        )
+        directory = self.worker.state / "remote-agent-job"
+        configure_hook(self.worker, "engine", self.home, directory, [pid])
+        self.worker.dispatch({"action": "cancel", "name": "job"})
+        calls = hook_calls(self.home)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["argv"], ["selected-conversation"])
+        self.assertEqual(calls[0]["record"]["conversation"], "selected-conversation")
+        self.assertEqual(calls[0]["alive"], [False])
+        self.assertFalse(directory.exists())
+
+    def test_pi_cancel_hook_failure_preserves_state_and_retries_without_tmux(self):
+        from pi_cancel_fixture import configure_hook, hook_calls
+
+        self.start(prompt="hold")
+        self.output()
+        directory = self.worker.state / "remote-agent-job"
+        configure_hook(self.worker, "engine", self.home, directory)
+        before = {p.name: p.read_bytes() for p in directory.iterdir()}
+        failure = self.home / "cancel-fail"
+        failure.touch()
+        self.addCleanup(failure.unlink, missing_ok=True)
+        with self.assertRaisesRegex(
+            RuntimeError, "pi_cancel_executable.*9.*fixture cleanup refused"
+        ):
+            self.worker.dispatch({"action": "cancel", "name": "job"})
+        self.assertEqual({p.name: p.read_bytes() for p in directory.iterdir()}, before)
+        self.assertNotEqual(
+            self.worker.run_tmux(
+                "has-session", "-t", "=remote-agent-job", check=False
+            ).returncode,
+            0,
+        )
+        failure.unlink()
+        self.worker.dispatch({"action": "cancel", "name": "job"})
+        self.assertEqual(
+            [c["argv"] for c in hook_calls(self.home)], [["fixture-conversation"]] * 2
+        )
+        self.assertFalse(directory.exists())
+
+    def test_pi_cancel_validates_hook_and_recorded_conversation(self):
+        self.start()
+        self.output()
+        directory = self.worker.state / "remote-agent-job"
+        record_file = directory / "session.json"
+        original = record_file.read_bytes()
+        nonexecutable = self.home / "not-executable"
+        nonexecutable.touch()
+        self.addCleanup(
+            self.worker.projects["engine"].pop, "pi_cancel_executable", None
+        )
+        self.addCleanup(
+            lambda: record_file.exists() and record_file.write_bytes(original)
+        )
+        for value in (
+            None,
+            "",
+            "   ",
+            7,
+            False,
+            [],
+            {},
+            "relative/pi",
+            str(self.home / "missing"),
+            str(self.home),
+            str(nonexecutable),
+            "bad\0path",
+        ):
+            self.worker.projects["engine"]["pi_cancel_executable"] = value
+            with self.assertRaisesRegex(
+                ValueError, "pi_cancel_executable", msg=repr(value)
+            ):
+                self.worker.dispatch({"action": "cancel", "name": "job"})
+            self.assertEqual(record_file.read_bytes(), original)
+        self.worker.projects["engine"]["pi_cancel_executable"] = str(
+            self.home / ".local/bin/pi"
+        )
+        for value in (
+            None,
+            "",
+            7,
+            "-option",
+            "../other",
+            "bad;touch marker",
+            "x" * 129,
+        ):
+            with self.subTest(conversation=value):
+                record = json.loads(original)
+                record["conversation"] = value
+                record_file.write_text(json.dumps(record))
+                with self.assertRaisesRegex(ValueError, "conversation"):
+                    self.worker.dispatch({"action": "cancel", "name": "job"})
+                self.assertTrue(record_file.exists())
+        record = json.loads(original)
+        del record["conversation"]
+        record_file.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, "conversation"):
+            self.worker.dispatch({"action": "cancel", "name": "job"})
+
+    def test_claude_cancel_ignores_pi_cancel_hook(self):
+        from pi_cancel_fixture import configure_hook
+
+        self.start(agent="claude", prompt="hold")
+        self.output()
+        directory = self.worker.state / "remote-agent-job"
+        configure_hook(self.worker, "engine", self.home, directory)
+        self.worker.dispatch({"action": "cancel", "name": "job"})
+        self.assertFalse((self.home / "cancel-calls").exists())
+        self.assertFalse(directory.exists())
+
     def test_project_pi_executable_routes_new_resume_and_restart(self):
         wrapper = self.home / "host wrappers/project-pi"
         wrapper.parent.mkdir()

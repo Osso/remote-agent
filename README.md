@@ -63,6 +63,20 @@ directory, PATH, and environment. A host wrapper may forward argv to `docker exe
 it must support Pi's launch/resume and `--export-terminal` arguments. This setting
 does not provision containers or provide isolation.
 
+Optional project `pi_cancel_executable`, for example
+`"pi_cancel_executable": "/home/developer/bin/sample-pi-cancel"`, uses the same
+absolute existing executable regular-file validation. On cancellation of a
+recorded Pi session, the worker invokes `[path, conversation_id]` without a shell,
+after host tmux/dtach shutdown and before deleting saved state. The recorded
+conversation ID must satisfy the same validation as request resume IDs. The hook
+also runs when the host session is already dead: stopping a Docker client does
+not prove its container process stopped. For one container per conversation,
+the hook must remove the container identified by that conversation's deterministic
+name and succeed if it is already absent. Nonzero exit fails cancellation
+explicitly and preserves saved state for retry, without fallback. Process identity
+mismatch in dtach refuses cancellation before running the hook. Restart never
+runs it. Without this setting, cancellation is unchanged; Claude ignores it.
+
 Host-targeting commands default to the `agent-server` key. Pass `--host HOST`
 to select another configured key; no automatic rerouting or aggregate listing
 occurs. `remote-agent projects` displays the local project map, not remote

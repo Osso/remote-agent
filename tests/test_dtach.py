@@ -396,7 +396,9 @@ class DtachTests(unittest.TestCase):
             ready = select.select(list(open_terminals), [], [], 0.05)[0]
             for terminal in ready:
                 try:
-                    data = os.read(terminal, 1024 if terminal == current_terminal else 65536)
+                    data = os.read(
+                        terminal, 1024 if terminal == current_terminal else 65536
+                    )
                 except OSError:
                     data = b""
                 if not data:
@@ -408,7 +410,9 @@ class DtachTests(unittest.TestCase):
             time.sleep(0.002)
         received = [
             int(number)
-            for number in re.findall(rb"LINE_(\d{6})_x{60}\r", streams[current_terminal])
+            for number in re.findall(
+                rb"LINE_(\d{6})_x{60}\r", streams[current_terminal]
+            )
         ]
         missing = sorted(set(range(STREAM_LINES)) - set(received))
         self.assertEqual(missing, [], f"{len(missing)} of {STREAM_LINES} lines lost")
@@ -455,7 +459,10 @@ class DtachTests(unittest.TestCase):
         )
 
     def test_restart_drains_stopped_old_master_before_new_attachment(self):
+        from pi_cancel_fixture import configure_hook
+
         self.start()
+        configure_hook(self.worker, "fixture", self.home, self.directory())
         call = wait_for(lambda: self.calls())[0]
         runtime = json.loads((self.directory() / "runtime.json").read_text())
         old_master = runtime["master"]["pid"]
@@ -464,7 +471,9 @@ class DtachTests(unittest.TestCase):
         os.kill(call["child"], signal.SIGKILL)
         wait_for(lambda: self.call("status")["dead"])
         other = self.module.Worker(self.home, self.tmux, scope=[])
+        other.projects["fixture"] = self.worker.projects["fixture"]
         other.restart(self.module.session_name("trial"))
+        self.assertFalse((self.home / "cancel-calls").exists())
         self.assertFalse(alive(old_master))
         wait_for(lambda: len(self.calls()) == 2)
         attached, terminal = self.attach()
@@ -487,6 +496,52 @@ class DtachTests(unittest.TestCase):
         ):
             self.call("logs")
 
+    def test_pi_cancel_hook_runs_after_owned_tree_stops(self):
+        from pi_cancel_fixture import configure_hook, hook_calls
+
+        self.start(resume="selected-conversation")
+        call = wait_for(lambda: self.calls())[0]
+        runtime = json.loads((self.directory() / "runtime.json").read_text())
+        configure_hook(
+            self.worker,
+            "fixture",
+            self.home,
+            self.directory(),
+            [runtime["master"]["pid"], call["pid"], call["child"]],
+        )
+        self.call("cancel")
+        calls = hook_calls(self.home)
+        self.assertEqual(len(calls), 1)
+        observed = calls[0]
+        self.assertEqual(observed["argv"], ["selected-conversation"])
+        self.assertEqual(observed["record"]["conversation"], "selected-conversation")
+        self.assertEqual(observed["alive"], [False, False, False])
+        self.assertFalse(self.directory().exists())
+
+    def test_pi_cancel_hook_failure_preserves_state_and_retries_dead_session(self):
+        from pi_cancel_fixture import configure_hook, hook_calls
+
+        self.start()
+        wait_for(lambda: self.calls())
+        configure_hook(self.worker, "fixture", self.home, self.directory())
+        record = (self.directory() / "session.json").read_bytes()
+        failure = self.home / "cancel-fail"
+        failure.touch()
+        self.addCleanup(failure.unlink, missing_ok=True)
+        with self.assertRaisesRegex(
+            RuntimeError, "pi_cancel_executable.*9.*fixture cleanup refused"
+        ):
+            self.call("cancel")
+        self.assertEqual((self.directory() / "session.json").read_bytes(), record)
+        self.assertTrue(self.call("status")["dead"])
+        failure.unlink()
+        self.call("cancel")
+        conversation = json.loads(record)["conversation"]
+        self.assertEqual(
+            [c["argv"] for c in hook_calls(self.home)], [[conversation]] * 2
+        )
+        self.assertFalse(self.directory().exists())
+
     def test_cancel_kills_owned_children_not_unrelated_process(self):
         unrelated = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(600)"]
@@ -503,7 +558,10 @@ class DtachTests(unittest.TestCase):
             unrelated.wait(timeout=3)
 
     def test_reused_identity_never_signalled(self):
+        from pi_cancel_fixture import configure_hook
+
         self.start()
+        configure_hook(self.worker, "fixture", self.home, self.directory())
         wait_for(lambda: self.calls())
         path = self.directory() / "runtime.json"
         original = path.read_bytes()
@@ -515,6 +573,7 @@ class DtachTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "identity"):
                 self.call("cancel")
             self.assertTrue(alive(self.calls()[0]["pid"]))
+            self.assertFalse((self.home / "cancel-calls").exists())
         finally:
             path.write_bytes(original)
 

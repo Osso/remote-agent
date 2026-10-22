@@ -248,11 +248,34 @@ class Worker:
             self.check_session_directory(directory)
         if exists:
             self.run_tmux("kill-session", "-t", "=" + session)
+        self.cancel_pi_environment(session)
         if directory.exists():
             for file in directory.iterdir():
                 file.unlink()
             directory.rmdir()
         return {"session": session, "cancelled": True}
+
+    def cancel_pi_environment(self, session):
+        record = self.read_record(session)
+        if record is None or record.get("agent") != "pi":
+            return
+        repo = record["repo"]
+        if "pi_cancel_executable" not in self.projects[repo]:
+            return
+        executable = self.project_executable(repo, "pi_cancel_executable")
+        conversation = record.get("conversation")
+        if not isinstance(conversation, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", conversation
+        ):
+            raise ValueError("Pi cancellation requires a recorded conversation id")
+        result = subprocess.run(
+            [executable, conversation], text=True, capture_output=True, check=False
+        )
+        if result.returncode:
+            raise RuntimeError(
+                f"project {repo} pi_cancel_executable exited {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
 
     def check_session_directory(self, directory):
         check_private(self.state, True)
@@ -290,6 +313,7 @@ class Worker:
             )
         if action == "cancel":
             self.stop_dtach(session)
+            self.cancel_pi_environment(session)
             directory = self.state / session
             for file in directory.iterdir():
                 file.unlink()
@@ -616,6 +640,22 @@ class Worker:
         else:
             self.launch(session, record["repo"], agent, conversation, None)
 
+    def project_executable(self, repo, field):
+        executable = self.projects[repo][field]
+        if (
+            not isinstance(executable, str)
+            or not executable
+            or "\0" in executable
+            or not Path(executable).is_absolute()
+            or not Path(executable).is_file()
+            or not os.access(executable, os.X_OK)
+        ):
+            raise ValueError(
+                f"project {repo} {field} must be an absolute path "
+                f"to an existing executable regular file: {executable!r}"
+            )
+        return executable
+
     def agent_launch(self, repo, agent):
         """Working directory, PATH and executable for an agent in a project."""
         cwd = self.home / self.projects[repo]["remote"]
@@ -623,19 +663,7 @@ class Worker:
             raise ValueError(f"repo directory does not exist: {cwd}")
         path = f"{self.home}/.local/bin:{self.home}/.cargo/bin:{os.environ.get('PATH', '')}"
         if agent == "pi" and "pi_executable" in self.projects[repo]:
-            executable = self.projects[repo]["pi_executable"]
-            if (
-                not isinstance(executable, str)
-                or not executable
-                or "\0" in executable
-                or not Path(executable).is_absolute()
-                or not Path(executable).is_file()
-                or not os.access(executable, os.X_OK)
-            ):
-                raise ValueError(
-                    f"project {repo} pi_executable must be an absolute path "
-                    f"to an existing executable regular file: {executable!r}"
-                )
+            executable = self.project_executable(repo, "pi_executable")
         else:
             executable = shutil.which(AGENTS[agent], path=path)
             if executable is None:
