@@ -61,7 +61,7 @@ def parse_arguments(arguments):
     i = 0
     while i < len(args) and args[i] != "--":
         flag, separator, value = args[i].partition("=")
-        if flag in ("--session", "--resume"):
+        if flag in ("--session-id", "--session", "--resume"):
             if not separator:
                 i += 1
                 value = args[i] if i < len(args) else ""

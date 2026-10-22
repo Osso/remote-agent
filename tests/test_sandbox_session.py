@@ -148,6 +148,26 @@ class SandboxSessionTests(unittest.TestCase):
         removals = [c for c in self.state()["commands"] if c[:2] == ["docker", "rm"]]
         self.assertEqual(removals, [["docker", "rm", "--force", first]])
 
+    def test_session_id_creates_named_labeled_container_on_configured_network(self):
+        conversation = "d50a3efb-4be5-41b5-a88b-70295b1c7b57"
+        args = ["--session-id", conversation, "hello"]
+        self.assert_success(self.invoke(*args))
+        state = self.state()
+        name = container_name(conversation)
+        self.assertEqual(set(state["containers"]), {name})
+        self.assertEqual(state["containers"][name]["label"], conversation)
+        self.assertEqual(state["containers"][name]["args"], args)
+        create = next(c for c in state["commands"] if c[:2] == ["docker", "create"])
+        self.assertEqual(create[create.index("--name") + 1], name)
+        self.assertEqual(
+            create[create.index("--network") + 1], self.settings["network"]
+        )
+        self.assertEqual(
+            state["commands"][-1],
+            ["docker", "start", "--attach", "--interactive", name],
+        )
+        self.assertNotIn("transient", state)
+
     def test_foreign_label_refuses_launch_and_cancel(self):
         name = container_name("one")
         original = {"label": "someone-else", "status": "exited"}
