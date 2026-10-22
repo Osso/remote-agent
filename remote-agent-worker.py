@@ -622,9 +622,24 @@ class Worker:
         if not cwd.is_dir():
             raise ValueError(f"repo directory does not exist: {cwd}")
         path = f"{self.home}/.local/bin:{self.home}/.cargo/bin:{os.environ.get('PATH', '')}"
-        executable = shutil.which(AGENTS[agent], path=path)
-        if executable is None:
-            raise FileNotFoundError(f"agent executable not found: {AGENTS[agent]}")
+        if agent == "pi" and "pi_executable" in self.projects[repo]:
+            executable = self.projects[repo]["pi_executable"]
+            if (
+                not isinstance(executable, str)
+                or not executable
+                or "\0" in executable
+                or not Path(executable).is_absolute()
+                or not Path(executable).is_file()
+                or not os.access(executable, os.X_OK)
+            ):
+                raise ValueError(
+                    f"project {repo} pi_executable must be an absolute path "
+                    f"to an existing executable regular file: {executable!r}"
+                )
+        else:
+            executable = shutil.which(AGENTS[agent], path=path)
+            if executable is None:
+                raise FileNotFoundError(f"agent executable not found: {AGENTS[agent]}")
         return cwd, path, executable
 
     def launch(self, session, repo, agent, conversation, prompt_file):

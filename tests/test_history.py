@@ -180,6 +180,41 @@ class WorkerHistoryTests(unittest.TestCase):
                 )
         self.assertEqual(len(self.calls()), 3)
 
+    def test_project_pi_executable_routes_history_with_unchanged_context(self):
+        code, response = self.invoke()
+        self.assertEqual(code, 0)
+        default_call = self.calls()[-1]
+        wrapper = self.home / "host wrappers/pi"
+        wrapper.parent.mkdir()
+        wrapper.write_text(FIXTURE)
+        wrapper.chmod(0o700)
+        projects = self.home / ".config/remote-agent/remote-projects.json"
+        projects.write_text(
+            json.dumps(
+                {"fixture": {"remote": "project", "pi_executable": str(wrapper)}}
+            )
+        )
+        code, configured_response = self.invoke()
+        self.assertEqual((code, configured_response), (0, response))
+        self.assertEqual(self.calls()[-1], {**default_call, "executable": str(wrapper)})
+
+    def test_invalid_project_pi_executable_history_fails_without_default_export(self):
+        projects = self.home / ".config/remote-agent/remote-projects.json"
+        projects.write_text(
+            json.dumps(
+                {
+                    "fixture": {
+                        "remote": "project",
+                        "pi_executable": str(self.home / "missing"),
+                    }
+                }
+            )
+        )
+        code, response = self.invoke()
+        self.assertNotEqual(code, 0)
+        self.assertIn("pi_executable", response["error"])
+        self.assertEqual(self.calls(), [])
+
     def test_omitted_color_does_not_inherit_worker_or_record_truecolor(self):
         code, response = self.invoke()
         self.assertEqual(

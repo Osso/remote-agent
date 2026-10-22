@@ -282,6 +282,111 @@ sys.exit(7)
         return self.wait_for(read)
 
 
+class ProjectPiExecutableTests(WorkerFixture):
+    def start(self, name="job", repo="engine", agent="pi", prompt=None, resume=None):
+        # Exercise real legacy tmux launches without requiring a host detach install.
+        self.worker.agent_launch(repo, agent)
+        self.observation.unlink(missing_ok=True)
+        session = "remote-agent-" + name
+        directory = self.worker.create_directory(session)
+        conversation = resume or "fixture-conversation"
+        self.module.write_private(
+            directory / "session.json",
+            json.dumps({"repo": repo, "agent": agent, "conversation": conversation}),
+        )
+        prompt_file = None
+        if prompt is not None:
+            prompt_file = directory / "prompt.txt"
+            self.module.write_private(prompt_file, prompt)
+        self.worker.launch(
+            session,
+            repo,
+            agent,
+            [
+                self.module.RESUME_FLAGS[agent] if resume else "--session-id",
+                conversation,
+            ],
+            prompt_file,
+        )
+
+    def test_project_pi_executable_routes_new_resume_and_restart(self):
+        wrapper = self.home / "host wrappers/project-pi"
+        wrapper.parent.mkdir()
+        shutil.copy(self.home / ".local/bin/pi", wrapper)
+        self.worker.projects["engine"]["pi_executable"] = str(wrapper)
+        self.start(prompt="literal task")
+        self.wait_for(lambda: self.status()["dead"])
+        first = self.output()
+        self.assertEqual(first["executable"], "project-pi")
+        self.assertEqual(first["conversation"][0], "--session-id")
+        self.assertEqual(first["prompt"], "literal task")
+        self.assertEqual(first["cwd"], str(self.engine))
+        self.assertTrue(
+            first["path"].startswith(f"{self.home}/.local/bin:{self.home}/.cargo/bin:")
+        )
+        self.assertEqual(first["pi_dir"], str(self.home / ".config/pi/agent"))
+
+        replacement = wrapper.with_name("replacement-pi")
+        shutil.copy(wrapper, replacement)
+        self.worker.projects["engine"]["pi_executable"] = str(replacement)
+        self.worker.run_tmux("kill-session", "-t", "=remote-agent-job")
+        self.restart()
+        self.wait_for(lambda: self.status()["dead"])
+        resumed = self.output()
+        self.assertEqual(resumed["executable"], "replacement-pi")
+        self.assertEqual(
+            resumed["conversation"], ["--session", first["conversation"][1]]
+        )
+        self.assertIsNone(resumed["prompt"])
+        for key in ("cwd", "path", "pi_dir", "cargo_jobs", "runtime_dir"):
+            self.assertEqual(resumed[key], first[key])
+        self.worker.dispatch({"action": "cancel", "name": "job"})
+        self.observation.unlink()
+        self.start(resume="saved-conversation")
+        self.wait_for(lambda: self.status()["dead"])
+        self.assertEqual(self.output()["executable"], "replacement-pi")
+        self.assertEqual(
+            self.output()["conversation"], ["--session", "saved-conversation"]
+        )
+
+    def test_invalid_project_pi_executable_fails_without_starting_default(self):
+        nonexecutable = self.home / "not-executable"
+        nonexecutable.write_text("not executable")
+        for value in (
+            None,
+            "",
+            "   ",
+            7,
+            False,
+            [],
+            {},
+            "relative/pi",
+            str(self.home / "missing"),
+            str(self.home),
+            str(nonexecutable),
+            str(self.home / "bad\0path"),
+        ):
+            with self.subTest(value=value):
+                self.worker.projects["engine"]["pi_executable"] = value
+                with self.assertRaisesRegex(ValueError, "pi_executable"):
+                    self.worker.agent_launch("engine", "pi")
+                self.assertFalse(self.observation.exists())
+                self.assertFalse((self.worker.state / "remote-agent-job").exists())
+
+    def test_project_pi_executable_absent_keeps_default_and_claude_ignores_it(self):
+        for agent, configured, executable in (
+            ("pi", False, "pi"),
+            ("claude", True, "i"),
+        ):
+            with self.subTest(agent=agent):
+                if configured:
+                    self.worker.projects["engine"]["pi_executable"] = None
+                self.start(agent=agent)
+                self.wait_for(lambda: self.status()["dead"])
+                self.assertEqual(self.output()["executable"], executable)
+                self.worker.dispatch({"action": "cancel", "name": "job"})
+
+
 class WorkerTests(WorkerFixture):
     def test_build_scripts_absent_without_caller_value(self):
         self.start()

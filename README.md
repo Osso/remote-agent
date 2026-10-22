@@ -52,6 +52,17 @@ own controller and remote user.
 user's home. Mappings are per-user configuration, not repository files. Missing
 maps fail explicitly; code-directory copies are not consulted.
 
+Optional project `pi_executable` selects an absolute **host** executable path for
+Pi only, for example `"pi_executable": "/home/developer/bin/sample-pi"`.
+The path must be a nonempty string naming an existing executable regular file;
+invalid configured values fail explicitly without falling back to `pi` on PATH.
+When absent, Pi resolution is unchanged; Claude ignores this setting. New Pi
+sessions, explicit resumes, saved-conversation restarts, and terminal-history
+exports all use the project's current setting, preserving the mapped working
+directory, PATH, and environment. A host wrapper may forward argv to `docker exec`;
+it must support Pi's launch/resume and `--export-terminal` arguments. This setting
+does not provision containers or provide isolation.
+
 Host-targeting commands default to the `agent-server` key. Pass `--host HOST`
 to select another configured key; no automatic rerouting or aggregate listing
 occurs. `remote-agent projects` displays the local project map, not remote
