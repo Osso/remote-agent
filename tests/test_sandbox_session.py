@@ -558,6 +558,26 @@ class SandboxSessionTests(unittest.TestCase):
         self.save({"containers": {}, "commands": [], "exit_code": 17})
         self.assertEqual(self.invoke("--session", "one").returncode, 17)
 
+    def test_non_object_config_raises_type_error_and_cli_reports_it(self):
+        spec = importlib.util.spec_from_file_location("sandbox_session", WRAPPER)
+        session = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(session)
+        for config in (None, [], "invalid", 123):
+            with self.subTest(config=config):
+                self.config.write_text(json.dumps(config))
+                with self.assertRaisesRegex(
+                    TypeError, "runtime config must be a JSON object"
+                ):
+                    session.load_config(self.config)
+                result = self.invoke("--session", "one")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    "sandbox session: runtime config must be a JSON object\n",
+                )
+                self.assertEqual(self.state()["commands"], [])
+
     def test_invalid_config_and_ambiguous_identity_fail_explicitly(self):
         for key, bad in (
             ("secret_file", "relative"),
