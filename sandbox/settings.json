@@ -1,0 +1,6 @@
+{
+  "defaultProvider": "openrouter",
+  "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
+  "defaultProjectTrust": "never",
+  "enabledModels": ["openrouter/deepseek/deepseek-v4.1-flash-1017"]
+}
