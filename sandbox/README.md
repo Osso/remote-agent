@@ -24,7 +24,7 @@ From the remote-agent repository:
 sandbox/deploy.sh --host agent-server --key-file /private/path/openrouter.key
 ```
 
-Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes.
+Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes. For a host-wrapper-only change, `sandbox/deploy.sh --wrappers-only` updates routing without rebuilding td/Pi or touching credentials.
 
 ## Use
 

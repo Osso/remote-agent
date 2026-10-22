@@ -129,7 +129,12 @@ def update_controller_map():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="agent-server")
-    parser.add_argument("--key-file", type=Path, required=True)
+    parser.add_argument("--key-file", type=Path)
+    parser.add_argument(
+        "--wrappers-only",
+        action="store_true",
+        help="update host session routing without rebuilding the image",
+    )
     parser.add_argument(
         "--clank-source", type=Path, default=Path.home() / "Repos/clank-together"
     )
@@ -137,6 +142,41 @@ def main():
         "--pi-install", type=Path, default=Path.home() / ".local/share/pi"
     )
     args = parser.parse_args()
+    if args.wrappers_only:
+        target = remote(
+            args.host,
+            [
+                "python3",
+                "-c",
+                "import pathlib; print(pathlib.Path.home()/'.local/share/clank-sandbox/session.py')",
+            ],
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "scp",
+                *SSH_OPTIONS,
+                str(HERE / "session.py"),
+                f"{args.host}:{target}.new",
+            ],
+            check=True,
+        )
+        remote(
+            args.host,
+            [
+                "python3",
+                "-c",
+                "import pathlib,sys; p=pathlib.Path(sys.argv[1]); n=p.with_name(p.name+'.new'); n.chmod(0o700); n.replace(p)",
+                target,
+            ],
+        )
+        print(
+            "Host session wrapper updated; image and credentials unchanged.", flush=True
+        )
+        return
+    if args.key_file is None:
+        parser.error("--key-file is required for full deployment")
     # Validate secret ownership without reading it into logs or build context.
     if stat.S_IMODE(args.key_file.stat().st_mode) & 0o077:
         raise ValueError("key file must be owner-only")
