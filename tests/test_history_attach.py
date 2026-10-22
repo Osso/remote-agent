@@ -51,6 +51,9 @@ class HistoryAttachTests(unittest.TestCase):
             "EVENTS": str(self.events),
             "HISTORY_MODE": "available",
             "MOSH_RETRY": "0",
+            "PROJECT": "actual-project",
+            "MOSH_INTERRUPT": "0",
+            "STATUS_ERROR": "0",
         }
         ssh = self.bin / "ssh"
         ssh.write_text(
@@ -66,11 +69,14 @@ if request['action']=='history':
         print('export failed: unreadable saved conversation',file=sys.stderr)
         sys.exit(1)
     if mode=='unavailable':
-        print(json.dumps({'available':False,'reason':'No saved conversation history yet.'}))
+        print(json.dumps({'available':False,'reason':'No saved conversation history yet.','project':os.environ['PROJECT'] or None}))
     else:
         history=''.join(f'\x1b[48;2;40;50;40mHISTORY-{i:04d}\x1b[0m\n' for i in range(1,201))
-        print(json.dumps({'available':True,'history':history}))
+        print(json.dumps({'available':True,'history':history,'project':os.environ['PROJECT'] or None}))
 else:
+    if os.environ['STATUS_ERROR']=='1':
+        print('status fixture failure',file=sys.stderr)
+        sys.exit(1)
     print(json.dumps({'session':'remote-agent-demo','dead':False}))
 """
         )
@@ -79,7 +85,7 @@ else:
         mosh.write_text(
             f"#!{sys.executable}\n"
             + r"""
-import json,os,sys
+import json,os,signal,sys
 before=[]
 if os.path.exists(os.environ['EVENTS']):
     with open(os.environ['EVENTS']) as f:
@@ -88,6 +94,8 @@ with open(os.environ['EVENTS'],'a') as f:
     f.write(json.dumps({'action':'mosh','argv':sys.argv[1:]})+'\n')
 sys.stdout.write('\x1b[H\x1b[2JLIVE-VIEW\r\n')
 sys.stdout.flush()
+if os.environ['MOSH_INTERRUPT']=='1':
+    os.kill(os.getppid(), signal.SIGINT)
 if os.environ['MOSH_RETRY']=='1' and not any(x['action']=='mosh' for x in before):
     sys.exit(5)
 """
@@ -129,6 +137,87 @@ if os.environ['MOSH_RETRY']=='1' and not any(x['action']=='mosh' for x in before
             if process.poll() is None:
                 process.send_signal(signal.SIGTERM)
                 process.wait(timeout=3)
+
+    def assert_title_lifecycle(self, output, attempts=1, project=b"actual-project"):
+        push = b"\x1b[22;2t"
+        pop = b"\x1b[23;2t"
+        title = b"\x1b]2;" + project + b"\x07"
+        self.assertEqual(output.count(push), 1, output)
+        self.assertEqual(output.count(pop), 1, output)
+        self.assertEqual(output.count(title), attempts, output)
+        self.assertNotIn(b"\x1b]2;demo\x07", output)
+        self.assertLess(output.index(push), output.index(title))
+        titles = [i for i in range(len(output)) if output.startswith(title, i)]
+        views = [i for i in range(len(output)) if output.startswith(b"LIVE-VIEW", i)]
+        self.assertEqual(len(views), attempts)
+        for title_at, view_at in zip(titles, views):
+            self.assertLess(title_at, view_at)
+        self.assertGreater(output.index(pop), views[-1])
+        self.assertNotIn(b"\x1b[?1049l", output[output.index(pop) :])
+        terminal = subprocess.run(
+            ["node", str(ROOT / "tests/history_scrollback_fixture.cjs")],
+            input=json.dumps({"output": output.decode(), "columns": 80, "rows": 12}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(terminal.stderr, "")
+        titles = json.loads(terminal.stdout)["titles"]
+        self.assertEqual(
+            titles,
+            ["previous-title", *([project.decode()] * attempts), "previous-title"],
+        )
+
+    def test_title_is_project_not_session_and_restored_on_detach(self):
+        code, output, _ = self.invoke()
+        self.assertEqual(code, 0, output)
+        self.assert_title_lifecycle(output)
+
+    def test_title_reapplied_on_retry_with_one_saved_title(self):
+        code, output, _ = self.invoke(MOSH_RETRY="1")
+        self.assertEqual(code, 0, output)
+        self.assert_title_lifecycle(output, attempts=2)
+
+    def test_title_available_without_history(self):
+        code, output, _ = self.invoke(HISTORY_MODE="unavailable")
+        self.assertEqual(code, 0, output)
+        self.assert_title_lifecycle(output)
+
+    def test_absent_project_does_not_invent_title(self):
+        code, output, _ = self.invoke(HISTORY_MODE="unavailable", PROJECT="")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn(b"\x1b]2;", output)
+        self.assertNotIn(b"\x1b[22;2t", output)
+        self.assertNotIn(b"\x1b[23;2t", output)
+
+    def test_project_controls_cannot_inject_terminal_sequences(self):
+        code, output, _ = self.invoke(PROJECT="safe\x1b]0;bad\x07\r\n\t\x7f\u009cname")
+        self.assertEqual(code, 0, output)
+        self.assert_title_lifecycle(output, project=b"safe]0;badname")
+
+    def test_title_restored_after_status_failure(self):
+        code, output, _ = self.invoke(STATUS_ERROR="1")
+        self.assertNotEqual(code, 0, output)
+        self.assert_title_lifecycle(output)
+
+    def test_title_restored_after_keyboard_interrupt(self):
+        code, output, _ = self.invoke(MOSH_INTERRUPT="1")
+        self.assertNotEqual(code, 0, output)
+        self.assert_title_lifecycle(output)
+
+    def test_non_tty_skips_history_lookup_and_title_sequences(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "remote-agent.py"), "attach", "demo"],
+            env=self.env,
+            capture_output=True,
+            timeout=8,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = [json.loads(line) for line in self.events.read_text().splitlines()]
+        self.assertEqual([e["action"] for e in events], ["mosh", "status"])
+        self.assertNotIn(b"\x1b]2;", result.stdout)
+        self.assertNotIn(b"\x1b[22;2t", result.stdout)
+        self.assertNotIn(b"\x1b[23;2t", result.stdout)
 
     def test_restores_complete_history_before_live_attachment(self):
         code, output, events = self.invoke()

@@ -130,7 +130,10 @@ for regression and installed SSH/Mosh/Pi evidence.
 Before each TTY attachment and every retry, the controller retrieves Pi's saved
 current, compaction-aware history over SSH, prints it locally into scrollback,
 and adds viewport-height padding before starting Mosh. Non-TTY output skips
-preloading. The worker invokes the installed `pi --export-terminal ID
+preloading. On terminals supporting the xterm title stack, TTY attachment sets
+the window title to the saved project name and restores the previous window title
+on detach or failure. The icon title is unchanged. Each retry reapplies the project title; the attached TUI may override it.
+No title is invented for a missing session record. The worker invokes the installed `pi --export-terminal ID
 --export-columns WIDTH`; it does not parse transcripts itself. This
 avoids Mosh dropping intermediate screens during a large redraw. It preserves
 existing terminal scrollback; reconnecting in the same terminal can repeat a

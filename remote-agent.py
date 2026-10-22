@@ -431,12 +431,13 @@ def preload_session_history(name, host=DEFAULT_HOST, user=None):
     )
     if not snapshot["available"]:
         print(f"remote-agent: {snapshot['reason']}", file=sys.stderr)
-        return
+        return snapshot["project"]
     if snapshot["history"]:
         sys.stdout.write(snapshot["history"])
         # Keep the restored history above the viewport Mosh replaces on attach.
         sys.stdout.write("\n" * rows)
         sys.stdout.flush()
+    return snapshot["project"]
 
 
 def attach(name, host=DEFAULT_HOST, user=None):
@@ -446,33 +447,48 @@ def attach(name, host=DEFAULT_HOST, user=None):
         # Authorization/configuration failures must not enter the reconnect loop.
         query(host, {"action": "list"}, user)
     failures = 0
-    while True:
-        preload_session_history(name, host, user)
-        code = subprocess.call(
-            [
-                "mosh",
-                "--no-init",
-                "--",
-                *destination(host, user),
-                f"--colorterm={terminal_colorterm()}",
-                "--attach",
-                name,
-            ]
-        )
-        restore_terminal()
-        if code == 0:
-            # Mosh does not propagate the worker's refused-attach exit status.
-            # Verify the session survived rather than silently accepting refusal.
-            query(host, {"action": "status", "name": name}, user)
-            return 0
-        delay = min(2**failures, RECONNECT_MAX_DELAY) * (0.5 + random.random() / 2)
-        failures += 1
-        print(
-            f"remote-agent: connection lost (exit {code}); reconnecting in "
-            f"{delay:.1f}s, Ctrl-C to stop",
-            file=sys.stderr,
-        )
-        time.sleep(delay)
+    title_saved = False
+    try:
+        while True:
+            project = preload_session_history(name, host, user)
+            if project is not None:
+                title = "".join(
+                    c for c in project if c >= " " and not "\x7f" <= c <= "\x9f"
+                )
+                if not title_saved:
+                    title_saved = True
+                    sys.stdout.write("\x1b[22;2t")
+                sys.stdout.write(f"\x1b]2;{title}\x07")
+                sys.stdout.flush()
+            code = subprocess.call(
+                [
+                    "mosh",
+                    "--no-init",
+                    "--",
+                    *destination(host, user),
+                    f"--colorterm={terminal_colorterm()}",
+                    "--attach",
+                    name,
+                ]
+            )
+            restore_terminal()
+            if code == 0:
+                # Mosh does not propagate the worker's refused-attach exit status.
+                # Verify the session survived rather than silently accepting refusal.
+                query(host, {"action": "status", "name": name}, user)
+                return 0
+            delay = min(2**failures, RECONNECT_MAX_DELAY) * (0.5 + random.random() / 2)
+            failures += 1
+            print(
+                f"remote-agent: connection lost (exit {code}); reconnecting in "
+                f"{delay:.1f}s, Ctrl-C to stop",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    finally:
+        if title_saved:
+            sys.stdout.write("\x1b[23;2t")
+            sys.stdout.flush()
 
 
 def project_containing(path, projects, host=DEFAULT_HOST):

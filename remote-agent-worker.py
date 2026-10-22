@@ -135,7 +135,9 @@ class Worker:
             return self.start(session, request)
         record = self.read_record(session)
         if action == "history":
-            return self.history(session, record, request)
+            snapshot = self.history(session, record, request)
+            snapshot["project"] = record["repo"] if record is not None else None
+            return snapshot
         if record is not None and record.get("backend", "tmux") == "dtach":
             if action == "attach" and "colorterm" in request:
                 record["colorterm"] = validate_colorterm(request["colorterm"])

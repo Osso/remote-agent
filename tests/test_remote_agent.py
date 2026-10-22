@@ -1341,7 +1341,7 @@ if request and request['action'] == 'locate':
 elif request and request['action'] == 'list':
     print(json.dumps({{'sessions': [{{'name': 'job' if 'desktop' in argv else 'custom'}}]}}))
 elif request and request['action'] == 'history':
-    print(json.dumps({{'available': True, 'history': ''}}))
+    print(json.dumps({{'available': True, 'history': '', 'project': 'fixture'}}))
 else:
     print(json.dumps({{"argv": argv, "request": request}}))
 """)

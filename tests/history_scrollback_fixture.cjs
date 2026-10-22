@@ -43,9 +43,14 @@ async function verifyScrollback() {
 		rows: request.rows,
 		scrollback: 2000,
 		allowProposedApi: true,
+		windowOptions: { pushTitle: true, popTitle: true },
 	});
-	await new Promise((resolve) => terminal.write(request.output, resolve));
-	const result = inspectScrollback(terminal);
+	const titles = [];
+	terminal.onTitleChange((title) => titles.push(title));
+	await new Promise((resolve) =>
+		terminal.write("\x1b]2;previous-title\x07" + request.output, resolve),
+	);
+	const result = { ...inspectScrollback(terminal), titles };
 	terminal.dispose();
 	console.log(JSON.stringify(result));
 	const hasNativeHistory = result.activeBuffer === "normal" && result.ordered;

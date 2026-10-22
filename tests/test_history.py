@@ -155,7 +155,8 @@ class WorkerHistoryTests(unittest.TestCase):
                 self.write_record(backend=backend, conversation=conversation)
                 code, response = self.invoke(columns=columns, colorterm=colorterm)
                 self.assertEqual(
-                    (code, response), (0, {"available": True, "history": HISTORY})
+                    (code, response),
+                    (0, {"available": True, "history": HISTORY, "project": "fixture"}),
                 )
                 self.assertEqual(
                     self.calls()[-1],
@@ -181,7 +182,10 @@ class WorkerHistoryTests(unittest.TestCase):
 
     def test_omitted_color_does_not_inherit_worker_or_record_truecolor(self):
         code, response = self.invoke()
-        self.assertEqual((code, response), (0, {"available": True, "history": HISTORY}))
+        self.assertEqual(
+            (code, response),
+            (0, {"available": True, "history": HISTORY, "project": "fixture"}),
+        )
         self.assertIsNone(self.calls()[0]["env"]["COLORTERM"])
 
     def test_unavailable_without_invoking_harness_for_nonpi_or_missing_conversation(
@@ -198,6 +202,7 @@ class WorkerHistoryTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertIs(response["available"], False)
                 self.assertIn(reason, response["reason"].lower())
+                self.assertEqual(response["project"], "fixture")
         self.write_record()
         record = json.loads(self.record.read_text())
         del record["conversation"]
@@ -211,6 +216,7 @@ class WorkerHistoryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIs(response["available"], False)
         self.assertIn("record", response["reason"])
+        self.assertIsNone(response["project"])
         self.assertEqual(self.calls(), [])
 
     def test_invalid_columns_and_colors_fail_without_harness(self):
@@ -277,6 +283,7 @@ class WorkerHistoryTests(unittest.TestCase):
                                 {
                                     "available": False,
                                     "reason": "No saved conversation history yet.",
+                                    "project": "fixture",
                                 },
                             ),
                         )
