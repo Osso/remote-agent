@@ -50,7 +50,7 @@ On 2026-10-20, installed SSH/Mosh/dtach/Pi acceptance exercised first attachment
 
 On 2026-10-21, after installing `detach` at agent-server `/usr/local/bin/detach` and deploying `d6f300a` to osso and allison, a disposable `detach-proof` Pi session started under a `/usr/local/bin/detach -n` master. Four real SSH/Mosh attachments ran `/usr/local/bin/detach -a dtach.sock -r winch` on the server, reached bracketed-paste readiness, echoed an unsent marker and detached with Ctrl+backslash (exit 0). The session was cancelled; the existing session inventory was unchanged, and its C dtach masters keep running.
 
-On 2026-10-22 each existing agent-server session (osso: pi-rust-repin, world-of-osso, wow-ui-sim; allison: hhh, HH_bbtautau) was relaunched under `detach` after the user closed it, via one real attach that resumed the recorded conversation. No C dtach process remains on agent-server.
+On 2026-10-22 each existing agent-server session (osso: pi-rust-repin, world-of-osso, wow-ui-sim; allison: hhh, HH_bbtautau) was relaunched under `detach` after the user closed it, via one real attach that resumed the recorded conversation. No C dtach process remains on agent-server, and the `dtach` 0.9-4 package was then removed; `detach` is the only session binary there.
 
 Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at 61×282: all 3,600 current-history rows matched exactly in the normal terminal buffer, above the live viewport. Independent replay confirmed both captures; this is terminal-buffer proof, not a Ghostty screenshot or proof of live-view repaint.
 
