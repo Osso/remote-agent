@@ -48,6 +48,8 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 On 2026-10-20, installed SSH/Mosh/dtach/Pi acceptance exercised first attachment and reattachment for both the default account and `--user allison`. Each TTY received bracketed-paste enablement, displayed both pasted lines without submitting conversation history, and detached cleanly with the agent alive. Disposable sessions were removed; existing session inventories were unchanged. Local real-dtach fixtures additionally assert exact paste contents and zero submissions. This does not claim native desktop clipboard-dialog or Claude acceptance.
 
+On 2026-10-21, after installing `detach` at agent-server `/usr/local/bin/detach` and deploying `d6f300a` to osso and allison, a disposable `detach-proof` Pi session started under a `/usr/local/bin/detach -n` master. Four real SSH/Mosh attachments ran `/usr/local/bin/detach -a dtach.sock -r winch` on the server, reached bracketed-paste readiness, echoed an unsent marker and detached with Ctrl+backslash (exit 0). The session was cancelled; the existing session inventory was unchanged, and its C dtach masters keep running.
+
 Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at 61×282: all 3,600 current-history rows matched exactly in the normal terminal buffer, above the live viewport. Independent replay confirmed both captures; this is terminal-buffer proof, not a Ghostty screenshot or proof of live-view repaint.
 
 ## Known gaps (current cycle)
