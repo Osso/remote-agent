@@ -24,14 +24,18 @@ state = json.loads(state_path.read_text())
 args = sys.argv[1:]
 tool = pathlib.Path(sys.argv[0]).name
 state['commands'].append([tool, *args])
+def save():
+    temporary = state_path.with_suffix(f'.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps(state))
+    os.replace(temporary, state_path)
 def finish(code=0, message=''):
-    state_path.write_text(json.dumps(state))
+    save()
     if message: print(message, file=sys.stderr)
     sys.exit(code)
 def pause(stage):
     global state
     if not state.get('block_attach'): return
-    state_path.write_text(json.dumps(state))
+    save()
     ready = state_path.with_suffix('.'+stage)
     ready.touch()
     deadline = time.monotonic() + 8
@@ -129,7 +133,9 @@ class SandboxSessionTests(unittest.TestCase):
         }
 
     def save(self, state):
-        self.state_file.write_text(json.dumps(state))
+        temporary = self.state_file.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(state))
+        os.replace(temporary, self.state_file)
 
     def state(self):
         return json.loads(self.state_file.read_text())
@@ -137,7 +143,9 @@ class SandboxSessionTests(unittest.TestCase):
     def invoke(self, *args, tty=False):
         command = [sys.executable, str(WRAPPER), "--config", str(self.config), *args]
         if not tty:
-            return subprocess.run(command, env=self.env, text=True, capture_output=True)
+            return subprocess.run(
+                command, env=self.env, text=True, capture_output=True, check=False
+            )
         master, slave = pty.openpty()
         try:
             return subprocess.run(
@@ -147,6 +155,7 @@ class SandboxSessionTests(unittest.TestCase):
                 stdout=slave,
                 stderr=subprocess.PIPE,
                 text=True,
+                check=False,
             )
         finally:
             os.close(slave)
@@ -219,6 +228,29 @@ class SandboxSessionTests(unittest.TestCase):
         self.release("running")
         _, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, stderr)
+
+    def test_repeated_winch_publications_remain_complete_while_polled(self):
+        payload = "state remains complete" * 4096
+        process = self.start_blocked(
+            "--session", "selected", keep_running=True, payload=payload
+        )
+        self.wait_for(lambda: self.state_file.with_suffix(".created").exists())
+        self.release("created")
+        self.wait_for(lambda: self.state_file.with_suffix(".running").exists())
+        expected = ["docker", "kill", "--signal", "WINCH", container_name("selected")]
+        for count in range(1, 33):
+            with self.subTest(signal=count):
+                os.kill(process.pid, signal.SIGWINCH)
+                self.wait_for(lambda: len(self.kill_commands()) == count)
+                self.assertEqual(self.kill_commands(), [expected] * count)
+                self.assertEqual(self.state()["payload"], payload)
+                self.assertIsNone(process.poll())
+        self.release("running")
+        _, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stderr, "")
+        self.assertEqual(self.kill_commands(), [expected] * 32)
+        self.assertEqual(self.state()["payload"], payload)
 
     def test_winch_docker_failure_is_reported_without_ending_attach(self):
         process = self.start_blocked(
@@ -427,6 +459,7 @@ class SandboxSessionTests(unittest.TestCase):
             env=self.env,
             text=True,
             capture_output=True,
+            check=False,
         )
         self.assert_success(result)
         self.assertIn(container_name("one"), self.state()["containers"])
