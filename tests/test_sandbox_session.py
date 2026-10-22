@@ -241,7 +241,7 @@ class SandboxSessionTests(unittest.TestCase):
         for count in range(1, 33):
             with self.subTest(signal=count):
                 os.kill(process.pid, signal.SIGWINCH)
-                self.wait_for(lambda: len(self.kill_commands()) == count)
+                self.wait_for(lambda count=count: len(self.kill_commands()) == count)
                 self.assertEqual(self.kill_commands(), [expected] * count)
                 self.assertEqual(self.state()["payload"], payload)
                 self.assertIsNone(process.poll())
