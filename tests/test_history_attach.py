@@ -211,6 +211,7 @@ if os.environ['MOSH_RETRY']=='1' and not any(x['action']=='mosh' for x in before
             env=self.env,
             capture_output=True,
             timeout=8,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         events = [json.loads(line) for line in self.events.read_text().splitlines()]
