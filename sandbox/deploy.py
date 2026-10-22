@@ -131,6 +131,11 @@ def main():
     parser.add_argument("--host", default="agent-server")
     parser.add_argument("--key-file", type=Path)
     parser.add_argument(
+        "--runtime-only",
+        action="store_true",
+        help="rebuild only the Pi launcher layer, preserving td/Pi and credentials",
+    )
+    parser.add_argument(
         "--wrappers-only",
         action="store_true",
         help="update host session routing without rebuilding the image",
@@ -142,6 +147,35 @@ def main():
         "--pi-install", type=Path, default=Path.home() / ".local/share/pi"
     )
     args = parser.parse_args()
+    if args.runtime_only:
+        target = remote(
+            args.host,
+            [
+                "python3",
+                "-c",
+                "import pathlib; print(pathlib.Path.home()/'.local/share/clank-sandbox')",
+            ],
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "scp",
+                *SSH_OPTIONS,
+                str(HERE / "launch.py"),
+                str(HERE / "runtime_update.py"),
+                f"{args.host}:{target}/",
+            ],
+            check=True,
+        )
+        revision = subprocess.check_output(
+            ["git", "-C", str(HERE.parent), "rev-parse", "HEAD"], text=True
+        ).strip()
+        remote(
+            args.host,
+            ["python3", target + "/runtime_update.py", target + "/launch.py", revision],
+        )
+        return
     if args.wrappers_only:
         target = remote(
             args.host,

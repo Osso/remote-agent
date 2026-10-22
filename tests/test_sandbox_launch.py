@@ -44,6 +44,10 @@ class SandboxLaunchTests(unittest.TestCase):
             ):
                 load().pi_environment({}, key)
 
+    def test_export_receives_only_supported_export_arguments(self):
+        arguments = ["--export-terminal", "fixture-id", "--export-columns", "120"]
+        self.assertEqual(load().pi_arguments(arguments), ["/opt/pi/pi", *arguments])
+
     def test_arguments_select_only_configured_openrouter_model(self):
         arguments = load().pi_arguments(["--session", "fixture-id"])
         self.assertEqual(arguments[-2:], ["--session", "fixture-id"])

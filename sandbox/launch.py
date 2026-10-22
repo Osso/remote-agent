@@ -30,6 +30,8 @@ def pi_environment(inherited: dict[str, str], key: str) -> dict[str, str]:
 
 
 def pi_arguments(arguments: list[str]) -> list[str]:
+    if "--export-terminal" in arguments:
+        return ["/opt/pi/pi", *arguments]
     return [
         "/opt/pi/pi",
         "--provider",
