@@ -77,7 +77,7 @@ def checked_command(arguments):
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(
-            f"{arguments[0]} {arguments[1]} failed ({result.returncode}): {detail}"
+            f"{arguments[0]} {arguments[1]} {arguments[-1]} failed ({result.returncode}): {detail}"
         )
     return result.stdout
 
@@ -102,6 +102,21 @@ def inspect_owned_container(name, conversation):
     if (record["Config"].get("Labels") or {}).get(LABEL) != conversation:
         raise ValueError(f"refusing container {name}: foreign or missing {LABEL} label")
     return record["State"]["Status"]
+
+
+def terminal_options(environment):
+    options = []
+    term = environment.get("TERM", "")
+    color = environment.get("COLORTERM", "")
+    if term:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}", term):
+            raise ValueError("invalid TERM terminal name")
+        options.extend(["--env", f"TERM={term}"])
+    if color:
+        if color not in ("truecolor", "24bit"):
+            raise ValueError("invalid COLORTERM color capability")
+        options.extend(["--env", f"COLORTERM={color}"])
+    return options
 
 
 def container_options(config, network, tty):
@@ -195,7 +210,7 @@ def run_session(config, arguments, conversation):
     checked_command(["systemctl", "is-active", "--quiet", config["firewall_service"]])
     tty = sys.stdin.isatty() and sys.stdout.isatty()
     network = config["network"] if conversation is not None else "none"
-    options = container_options(config, network, tty)
+    options = container_options(config, network, tty) + terminal_options(os.environ)
     if conversation is None:
         return subprocess.run(
             ["docker", "run", "--rm", *options, config["image"], *forwarded]

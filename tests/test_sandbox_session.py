@@ -38,7 +38,7 @@ if args[0] == 'rm':
     finish()
 if args[0] in ('create', 'run'):
     # All sandbox options that take a value; stop at the image.
-    valued = {'--user','--cap-drop','--security-opt','--pids-limit','--memory','--cpus', '--network','--dns','--sysctl','--tmpfs','--mount','--name','--label','--workdir'}
+    valued = {'--user','--cap-drop','--security-opt','--pids-limit','--memory','--cpus', '--network','--dns','--sysctl','--tmpfs','--mount','--name','--label','--workdir','--env'}
     i = 1
     while i < len(args) and args[i].startswith('--'):
         i += 2 if args[i] in valued else 1
@@ -51,6 +51,7 @@ if args[0] in ('create', 'run'):
     if name in state['containers']: finish(1, 'name conflict')
     label = args[args.index('--label')+1].split('=', 1)[1]
     state['containers'][name] = {'label': label, 'status': 'created', 'args': forwarded, 'files': {}}
+    if state.get('disable_firewall_after_create'): state['firewall'] = False
     print(name)
     finish()
 if args[0] == 'cp':
@@ -101,6 +102,8 @@ class SandboxSessionTests(unittest.TestCase):
             "FIXTURE_STATE": str(self.state_file),
             "OPENROUTER_API_KEY": "do-not-forward",
             "SSH_AUTH_SOCK": "/private/agent.sock",
+            "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
         }
 
     def save(self, state):
@@ -213,7 +216,6 @@ class SandboxSessionTests(unittest.TestCase):
             },
         )
         for forbidden in (
-            "--env",
             "--env-file",
             "--volume",
             "-v",
@@ -226,6 +228,56 @@ class SandboxSessionTests(unittest.TestCase):
             state["commands"][-1],
             ["docker", "start", "--attach", "--interactive", container_name("a b")],
         )
+
+    def test_only_safe_terminal_environment_forwarded(self):
+        self.assert_success(self.invoke("--session", "terminal"))
+        create = next(
+            c for c in self.state()["commands"] if c[:2] == ["docker", "create"]
+        )
+        environment = [create[i + 1] for i, arg in enumerate(create) if arg == "--env"]
+        self.assertEqual(environment, ["TERM=xterm-256color", "COLORTERM=truecolor"])
+        for key, value in (("TERM", "xterm\n--privileged"), ("COLORTERM", "not-color")):
+            with self.subTest(key=key):
+                original = self.env[key]
+                self.env[key] = value
+                result = self.invoke("--session", "bad-terminal")
+                self.env[key] = original
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(key, result.stderr)
+
+    def test_firewall_rechecked_after_create_before_start(self):
+        state = self.state()
+        state["disable_firewall_after_create"] = True
+        self.save(state)
+        result = self.invoke("--session", "one")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("clank-sandbox-firewall.service", result.stderr)
+        self.assertEqual(
+            self.state()["containers"][container_name("one")]["status"], "created"
+        )
+        self.assertFalse(
+            any(c[:2] == ["docker", "start"] for c in self.state()["commands"])
+        )
+
+    def test_default_config_is_installed_sibling(self):
+        installed = self.base / "session.py"
+        installed.write_bytes(WRAPPER.read_bytes())
+        result = subprocess.run(
+            [sys.executable, str(installed), "--session", "one"],
+            env=self.env,
+            text=True,
+            capture_output=True,
+        )
+        self.assert_success(result)
+        self.assertIn(container_name("one"), self.state()["containers"])
+
+    def test_transient_prompt_rejection_is_explicit(self):
+        prompt = self.base / "prompt.txt"
+        prompt.write_text("hello")
+        result = self.invoke("@" + str(prompt))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("require --session", result.stderr)
+        self.assertEqual(self.state()["containers"], {})
 
     def test_tty_only_when_callers_terminal(self):
         self.assert_success(self.invoke("--session", "terminal", tty=True))
