@@ -312,21 +312,36 @@ class ProjectPiExecutableTests(WorkerFixture):
     def test_pi_cancel_hook_runs_after_tmux_stop_with_recorded_conversation(self):
         from pi_cancel_fixture import configure_hook, hook_calls
 
+        executable = self.home / ".local/bin/pi"
+        executable.write_text(f"""#!{sys.executable}
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])
+Path({str(self.observation)!r}).write_text(json.dumps({{'pid': os.getpid(), 'child': child.pid}}))
+while True:
+    time.sleep(1)
+""")
         self.start(prompt="hold", resume="selected-conversation")
-        self.output()
-        pid = int(
-            self.worker.run_tmux(
-                "display-message", "-p", "-t", "=remote-agent-job:", "#{pane_pid}"
-            ).stdout
+        processes = self.output()
+        self.addCleanup(
+            self.module.terminate_owned_tree,
+            self.module.process_identity(processes["pid"]),
         )
         directory = self.worker.state / "remote-agent-job"
-        configure_hook(self.worker, "engine", self.home, directory, [pid])
+        configure_hook(
+            self.worker,
+            "engine",
+            self.home,
+            directory,
+            [processes["pid"], processes["child"]],
+        )
         self.worker.dispatch({"action": "cancel", "name": "job"})
         calls = hook_calls(self.home)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["argv"], ["selected-conversation"])
         self.assertEqual(calls[0]["record"]["conversation"], "selected-conversation")
-        self.assertEqual(calls[0]["alive"], [False])
+        self.assertEqual(calls[0]["alive"], [False, False])
         self.assertFalse(directory.exists())
 
     def test_pi_cancel_hook_failure_preserves_state_and_retries_without_tmux(self):

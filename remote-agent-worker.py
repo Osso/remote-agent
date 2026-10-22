@@ -246,21 +246,37 @@ class Worker:
             raise ValueError(f"no such session: {session}")
         if has_state:
             self.check_session_directory(directory)
+        command = self.pi_cancel_command(session)
         if exists:
-            self.run_tmux("kill-session", "-t", "=" + session)
-        self.cancel_pi_environment(session)
+            if command is not None:
+                self.stop_tmux_tree(session)
+            else:
+                self.run_tmux("kill-session", "-t", "=" + session)
+        self.run_pi_cancel(command)
         if directory.exists():
             for file in directory.iterdir():
                 file.unlink()
             directory.rmdir()
         return {"session": session, "cancelled": True}
 
-    def cancel_pi_environment(self, session):
+    def stop_tmux_tree(self, session):
+        panes = self.run_tmux(
+            "list-panes", "-s", "-t", "=" + session, "-F", "#{pane_pid}"
+        ).stdout.splitlines()
+        identities = [process_identity(int(pid)) for pid in panes]
+        for identity in identities:
+            terminate_owned_tree(identity)
+        if not self.run_tmux(
+            "has-session", "-t", "=" + session, check=False
+        ).returncode:
+            self.run_tmux("kill-session", "-t", "=" + session)
+
+    def pi_cancel_command(self, session):
         record = self.read_record(session)
         if record is None or record.get("agent") != "pi":
             return
         repo = record["repo"]
-        if "pi_cancel_executable" not in self.projects[repo]:
+        if "pi_cancel_executable" not in self.projects.get(repo, {}):
             return
         executable = self.project_executable(repo, "pi_cancel_executable")
         conversation = record.get("conversation")
@@ -268,12 +284,15 @@ class Worker:
             r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", conversation
         ):
             raise ValueError("Pi cancellation requires a recorded conversation id")
-        result = subprocess.run(
-            [executable, conversation], text=True, capture_output=True, check=False
-        )
+        return [executable, conversation]
+
+    def run_pi_cancel(self, command):
+        if command is None:
+            return
+        result = subprocess.run(command, text=True, capture_output=True, check=False)
         if result.returncode:
             raise RuntimeError(
-                f"project {repo} pi_cancel_executable exited {result.returncode}: "
+                f"pi_cancel_executable {command[0]!r} exited {result.returncode}: "
                 f"{result.stderr.strip()}"
             )
 
@@ -313,7 +332,7 @@ class Worker:
             )
         if action == "cancel":
             self.stop_dtach(session)
-            self.cancel_pi_environment(session)
+            self.run_pi_cancel(self.pi_cancel_command(session))
             directory = self.state / session
             for file in directory.iterdir():
                 file.unlink()
