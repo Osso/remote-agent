@@ -308,16 +308,17 @@ def claude_account(args):
         return send({**request, "name_current": args.name_current}, host)
     if not args.login:
         return send(request, host)
-    if code := send({**request, "release": True}, host):
+    if code := send({**request, "prepare_login": args.login}, host):
         return code
-    if code := subprocess.call(["ssh", "-t", *destination(host), "--claude-login"]):
+    if code := subprocess.call(
+        ["ssh", "-t", *destination(host), "--claude-login", args.login]
+    ):
         print(
-            "remote-agent: login did not finish; switch back with "
-            "`remote-agent claude-account PROFILE`",
+            "remote-agent: login did not finish; account selection unchanged",
             file=sys.stderr,
         )
         return code
-    return send({**request, "name_current": args.login}, host)
+    return send({**request, "use": args.login}, host)
 
 
 MACOS_CLIPBOARD_SCRIPT = """

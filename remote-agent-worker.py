@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -929,7 +930,7 @@ def write_private(path, text):
         stream.write(text)
 
 
-def atomic_write(path, data, *, mtime_ns=None):
+def atomic_write(path, data):
     if path.exists() and path.read_bytes() == data:
         return
     temporary = path.with_name(path.name + ".tmp")
@@ -937,28 +938,25 @@ def atomic_write(path, data, *, mtime_ns=None):
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)
-    if mtime_ns is not None:
-        os.utime(temporary, ns=(mtime_ns, mtime_ns))
     temporary.replace(path)
 
 
 class ClaudeAccounts:
-    """Same layout as the laptop's claude-cli: active ~/.claude/.credentials.json,
-    owner in .active-profile, saved profiles in <name>.credentials.json."""
+    """Select shared per-account grants; never synchronize legacy credential copies."""
 
-    SUFFIX = ".credentials.json"
+    NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}"
+    OWNER = "shared-v1\n"
 
     def __init__(self, home):
         self.dir = Path(home) / ".claude"
         self.active = self.dir / ".credentials.json"
         self.owner_file = self.dir / ".active-profile"
+        self.profiles = Path(home) / ".config/pi-claude-bridge/profiles"
 
     def profile_path(self, name):
-        if not isinstance(name, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name
-        ):
+        if not isinstance(name, str) or not re.fullmatch(self.NAME, name):
             raise ValueError("profile must be 1–64 letters/digits/_/-")
-        return self.dir / (name + self.SUFFIX)
+        return self.profiles / name / ".credentials.json"
 
     def owner(self):
         return self.owner_file.read_text().strip() if self.owner_file.exists() else None
@@ -966,6 +964,8 @@ class ClaudeAccounts:
     def dispatch(self, request):
         if "use" in request:
             self.use(request["use"])
+        elif "prepare_login" in request:
+            self.prepare_login(request["prepare_login"])
         elif "name_current" in request:
             self.name_current(request["name_current"])
         elif request.get("release"):
@@ -974,63 +974,129 @@ class ClaudeAccounts:
 
     def listing(self):
         profiles = sorted(
-            path.name.removesuffix(self.SUFFIX)
-            for path in self.dir.glob("*" + self.SUFFIX)
-            if not path.name.startswith(".")
+            path.name
+            for path in self.profiles.glob("*")
+            if path.is_dir() and re.fullmatch(self.NAME, path.name)
         )
         owner = self.owner()
-        if owner and owner not in profiles:
-            profiles = sorted([*profiles, owner])
-        unnamed = self.active.exists() and owner is None
-        return {"active": owner, "unnamed_active": unnamed, "profiles": profiles}
+        return {
+            "active": owner,
+            "unnamed_active": self.active.exists() and owner is None,
+            "profiles": profiles,
+        }
 
-    def save_active(self):
-        """Write the active credentials back to their owner; refuse to drop unnamed ones."""
-        owner = self.owner()
-        if owner is None:
-            if self.active.exists():
-                raise ValueError(
-                    "active credentials have no profile name; "
-                    "run `remote-agent claude-account --name-current NAME` first"
-                )
-            return None
-        if self.active.exists():
-            target = self.profile_path(owner)
-            active_mtime = self.active.stat().st_mtime_ns
-            if not target.exists() or active_mtime >= target.stat().st_mtime_ns:
-                atomic_write(target, self.active.read_bytes(), mtime_ns=active_mtime)
-        return owner
+    def require_owned(self, name):
+        directory = self.profile_path(name).parent
+        marker = directory / ".credential-owner"
+        if not marker.is_file() or marker.read_text() != self.OWNER:
+            raise ValueError(f"profile is not prepared for shared ownership: {name}")
+        return directory
+
+    def read_credentials(self, path):
+        try:
+            data = path.read_bytes()
+            credentials = json.loads(data)
+            oauth = (
+                credentials.get("claudeAiOauth")
+                if isinstance(credentials, dict)
+                else None
+            )
+            token = oauth.get("accessToken") if isinstance(oauth, dict) else None
+        except (OSError, ValueError, UnicodeError):
+            raise ValueError(
+                "missing or invalid OAuth credentials; log in to the named account"
+            ) from None
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError(
+                "missing or invalid OAuth access token; log in to the named account"
+            )
+        return data
+
+    def selected_dir(self):
+        name = self.owner()
+        if not name:
+            raise ValueError(
+                "no Claude account selected; run `remote-agent claude-account PROFILE`"
+            )
+        directory = self.require_owned(name)
+        self.read_credentials(directory / ".credentials.json")
+        return directory
 
     def use(self, name):
-        target = self.profile_path(name)
-        self.save_active()
-        if not target.exists():
-            raise ValueError(
-                f"profile not found: {name}; available: {self.listing()['profiles']}"
-            )
-        target_mtime = target.stat().st_mtime_ns
-        atomic_write(self.active, target.read_bytes(), mtime_ns=target_mtime)
+        directory = self.require_owned(name)
+        self.read_credentials(directory / ".credentials.json")
+        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         atomic_write(self.owner_file, name.encode())
+
+    @contextmanager
+    def initialize(self, name, *, new_only=False):
+        directory = self.profile_path(name).parent
+        existed = directory.exists()
+        if new_only and existed:
+            raise ValueError(f"profile already exists: {name}")
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory.chmod(0o700)
+        lock = directory / ".credential-migration"
+        try:
+            lock.mkdir(mode=0o700)
+        except FileExistsError:
+            raise ValueError(
+                f"credential initialization already in progress: {name}"
+            ) from None
+        try:
+            if existed:
+                self.require_owned(name)
+            else:
+                write_private(directory / ".credential-owner", self.OWNER)
+            yield directory
+        finally:
+            lock.rmdir()
+
+    def prepare_login(self, name):
+        with self.initialize(name) as directory:
+            return directory
 
     def name_current(self, name):
         self.profile_path(name)
-        if not self.active.exists():
-            raise ValueError("no active credentials to name")
-        if self.owner() not in (None, name):
-            raise ValueError(f"active credentials already belong to {self.owner()}")
+        if self.owner() is not None:
+            raise ValueError(
+                "active profile already selected; only unnamed global login can be imported"
+            )
+        self.read_credentials(self.active)
+        with self.initialize(name, new_only=True) as directory:
+            self.active.chmod(0o600)
+            self.active.replace(directory / ".credentials.json")
         atomic_write(self.owner_file, name.encode())
-        atomic_write(self.profile_path(name), self.active.read_bytes())
 
     def release(self):
-        """Prepare for a fresh login: save the active profile, then clear it."""
-        self.save_active()
-        self.active.unlink(missing_ok=True)
-        self.owner_file.unlink(missing_ok=True)
+        """Clear only the selection of an owned account, never its grant or staging."""
+        owner = self.owner()
+        if owner is not None:
+            self.require_owned(owner)
+            self.owner_file.unlink()
+        elif self.active.exists():
+            raise ValueError(
+                "unnamed credentials preserved; use `remote-agent claude-account --name-current NAME`"
+            )
 
 
-def exec_login(program, *args):
+def set_claude_environment(config_dir):
+    os.environ["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ):
+        os.environ.pop(name, None)
+
+
+def exec_login(program, *args, config_dir=None):
     """Interactive login over `ssh -t`, in the same environment agents get."""
     home = Path.home()
+    if program == "claude":
+        if config_dir is None:
+            raise ValueError("Claude login requires a named account config directory")
+        set_claude_environment(config_dir)
     os.environ["PATH"] = f"{home}/.local/bin:{os.environ.get('PATH', '')}"
     os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
     os.environ["PI_CODING_AGENT_DIR"] = str(home / ".config/pi/agent")
@@ -1056,6 +1122,8 @@ def launch_agent(agent, executable, path, home, prompt_file, *, tmux=True):
         )
         if result.returncode:
             raise RuntimeError(result.stderr.strip())
+    if agent == "claude":
+        set_claude_environment(ClaudeAccounts(home).selected_dir())
     os.environ["PATH"] = path
     os.environ["PI_CODING_AGENT_DIR"] = str(Path(home) / ".config/pi/agent")
     os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
@@ -1109,14 +1177,15 @@ def main():
     mode.add_argument("--scope", nargs=2, help=argparse.SUPPRESS)
     mode.add_argument("--dtach-scope", nargs=3, help=argparse.SUPPRESS)
     mode.add_argument("--dtach-ready", nargs=2, help=argparse.SUPPRESS)
-    mode.add_argument("--claude-login", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--claude-login", metavar="NAME", help=argparse.SUPPRESS)
     mode.add_argument("--pi-login", metavar="PROVIDER", help=argparse.SUPPRESS)
     parser.add_argument("--host", choices=HOSTS, default="desktop")
     parser.add_argument("--colorterm", choices=("", "truecolor", "24bit"))
     args = parser.parse_args()
     try:
-        if args.claude_login:
-            exec_login("claude", "auth", "login", "--claudeai")
+        if args.claude_login is not None:
+            directory = ClaudeAccounts(Path.home()).prepare_login(args.claude_login)
+            exec_login("claude", "auth", "login", "--claudeai", config_dir=directory)
         if args.pi_login is not None:
             exec_login("pi", "login", args.pi_login)
         if args.run is not None:

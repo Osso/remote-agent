@@ -1,130 +1,343 @@
-"""Account freshness regressions using isolated OAuth-shaped credentials."""
+"""Shared account ownership through local worker/controller subprocesses only."""
 
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from test_remote_agent import isolate_home, load_worker
+from test_remote_agent import ROOT, write_config
 
 
-class ClaudeAccountFreshnessTests(unittest.TestCase):
+class ClaudeAccountOwnershipTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
-        isolate_home(self, self.home)
-        self.module = load_worker()
-        self.accounts = self.module.ClaudeAccounts(self.home)
-        self.accounts.dir.mkdir(mode=0o700)
-        self.accounts.owner_file.write_text("named")
-        self.named = self.accounts.profile_path("named")
-        self.other = self.accounts.profile_path("other")
-        self.old = 1_700_000_000_000_000_000
-        self.new = self.old + 10_000_000_000
-        self.write_credentials(self.other, "other", self.old)
+        write_config(self.home)
+        self.legacy = self.home / ".claude"
+        self.legacy.mkdir(mode=0o700)
+        self.profiles = self.home / ".config/pi-claude-bridge/profiles"
+        self.selection = self.legacy / ".active-profile"
+        self.bin = self.home / ".local/bin"
+        self.bin.mkdir(parents=True)
+        self.capture = self.home / "agent-capture.json"
+        fixture = f"""#!{sys.executable}
+import json, os, pathlib, sys
+pathlib.Path({str(self.capture)!r}).write_text(json.dumps({{'env': dict(os.environ), 'argv': sys.argv[1:]}}))
+if sys.argv[1:] == ['auth', 'login', '--claudeai']:
+    if os.environ.get('FIXTURE_LOGIN_FAIL'):
+        sys.exit(7)
+    destination = pathlib.Path(os.environ['CLAUDE_CONFIG_DIR']) / '.credentials.json'
+    destination.write_text(json.dumps({{'claudeAiOauth': {{'accessToken': 'fixture-direct-login'}}}}))
+"""
+        for name in ("claude", "pi"):
+            executable = self.bin / name
+            executable.write_text(fixture)
+            executable.chmod(0o700)
+        ssh = self.bin / "ssh"
+        ssh.write_text(f"""#!{sys.executable}
+import subprocess, sys
+args = sys.argv[1:]
+if args[0] == '-t':
+    args = args[1:]
+# Replace only the fixture destination with the real local worker.
+sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.py")!r}, *args[3:]]))
+""")
+        ssh.chmod(0o700)
+        self.env = {
+            **os.environ,
+            "HOME": str(self.home),
+            "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+            "CLAUDE_CONFIG_DIR": "/fixture/stale-config",
+            "ANTHROPIC_API_KEY": "fixture-stale-api",
+            "ANTHROPIC_AUTH_TOKEN": "fixture-stale-auth",
+            "CLAUDE_CODE_OAUTH_TOKEN": "fixture-stale-oauth",
+        }
 
-    def credentials(self, generation):
-        return json.dumps(
+    def credentials(self, token):
+        return json.dumps({"claudeAiOauth": {"accessToken": token}}).encode()
+
+    def credential_path(self, name):
+        return self.profiles / name / ".credentials.json"
+
+    def canonical(self, name, token):
+        path = self.credential_path(name)
+        path.parent.mkdir(parents=True, mode=0o700)
+        (path.parent / ".credential-owner").write_text("shared-v1\n")
+        if token is not None:
+            path.write_bytes(self.credentials(token))
+            path.chmod(0o600)
+        return path
+
+    def account(self, **request):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "remote-agent-worker.py"),
+                "--host",
+                "agent-server",
+            ],
+            input=json.dumps({"action": "claude-account", **request}),
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+
+    def controller(self, *args):
+        return subprocess.run(
+            [sys.executable, str(ROOT / "remote-agent.py"), "claude-account", *args],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+
+    def assert_success(self, result):
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def launch(self, agent):
+        env = {
+            **self.env,
+            "REMOTE_AGENT_CONVERSATION": '["--session-id", "fixture-conversation"]',
+        }
+        code = (
+            "import importlib.util; "
+            f"spec = importlib.util.spec_from_file_location('worker', {str(ROOT / 'remote-agent-worker.py')!r}); "
+            "worker = importlib.util.module_from_spec(spec); spec.loader.exec_module(worker); "
+            f"worker.launch_agent({agent!r}, {str(self.bin / agent)!r}, {self.env['PATH']!r}, {str(self.home)!r}, None, tmux=False)"
+        )
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+
+    def test_canonical_switch_and_release_never_copy_credentials(self):
+        named = self.canonical("named", "fixture-canonical")
+        other = self.canonical("other", "fixture-other")
+        self.selection.write_text("named")
+        global_path = self.legacy / ".credentials.json"
+        global_path.write_bytes(self.credentials("fixture-stale-global"))
+        legacy_named = self.legacy / "named.credentials.json"
+        legacy_named.write_bytes(self.credentials("fixture-stale-named"))
+        before = {
+            p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns)
+            for p in (named, other, global_path, legacy_named)
+        }
+
+        result = self.account(use="other")
+        self.assert_success(result)
+        self.assertEqual(
+            json.loads(result.stdout),
             {
-                "claudeAiOauth": {
-                    "accessToken": f"fixture-access-{generation}",
-                    "refreshToken": f"fixture-refresh-{generation}",
-                    "expiresAt": 4102444800000,
-                    "scopes": ["user:inference"],
-                    "subscriptionType": "team",
-                }
-            }
-        ).encode()
+                "active": "other",
+                "unnamed_active": False,
+                "profiles": ["named", "other"],
+            },
+        )
+        self.assert_success(self.account(release=True))
+        self.assertFalse(self.selection.exists())
+        for path, original in before.items():
+            self.assertEqual(
+                (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns),
+                original,
+            )
 
-    def write_credentials(self, path, generation, mtime_ns):
-        path.write_bytes(self.credentials(generation))
-        path.chmod(0o600)
-        os.utime(path, ns=(mtime_ns, mtime_ns))
+    def test_deleted_or_empty_owned_grant_is_not_restored(self):
+        self.canonical("other", "fixture-other")
+        for token in (None, "", "   "):
+            with self.subTest(token=token):
+                path = self.credential_path("named")
+                if not path.parent.exists():
+                    self.canonical("named", None)
+                path.unlink(missing_ok=True)
+                if token is not None:
+                    path.write_bytes(self.credentials(token))
+                self.selection.write_text("other")
+                (self.legacy / ".credentials.json").write_bytes(
+                    self.credentials("fixture-global")
+                )
+                (self.legacy / "named.credentials.json").write_bytes(
+                    self.credentials("fixture-legacy")
+                )
+                result = self.account(use="named")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.selection.read_text(), "other")
+                self.assertEqual(path.exists(), token is not None)
+                if token is not None:
+                    self.assertEqual(path.read_bytes(), self.credentials(token))
 
-    def test_switch_does_not_overwrite_newer_named_refresh(self):
-        self.write_credentials(self.accounts.active, "R1", self.old)
-        self.write_credentials(self.named, "R2", self.new)
-        before = self.named.stat()
+    def test_listing_uses_canonical_directories_not_legacy_files(self):
+        self.canonical("other", "fixture-other")
+        self.canonical("cleared", None)
+        (self.legacy / "legacy.credentials.json").write_bytes(
+            self.credentials("fixture-old")
+        )
+        result = self.account()
+        self.assert_success(result)
+        self.assertEqual(json.loads(result.stdout)["profiles"], ["cleared", "other"])
 
-        self.accounts.use("other")
+    def test_unnamed_global_import_moves_once_and_refuses_overwrite(self):
+        global_path = self.legacy / ".credentials.json"
+        global_path.write_bytes(self.credentials("fixture-unnamed"))
+        self.assertNotEqual(self.account(release=True).returncode, 0)
+        self.assert_success(self.account(name_current="named"))
+        path = self.credential_path("named")
+        self.assertEqual(path.read_bytes(), self.credentials("fixture-unnamed"))
+        self.assertFalse(global_path.exists())
+        self.assertEqual((path.parent / ".credential-owner").read_text(), "shared-v1\n")
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assert_success(self.account(release=True))
+        path.unlink()
+        global_path.write_bytes(self.credentials("fixture-new-unnamed"))
+        self.assertNotEqual(self.account(name_current="named").returncode, 0)
+        self.assertFalse(path.exists())
+        self.assertEqual(
+            global_path.read_bytes(), self.credentials("fixture-new-unnamed")
+        )
 
-        self.assertEqual(self.named.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.named.stat().st_ino, before.st_ino)
-        self.assertEqual(self.named.stat().st_mtime_ns, self.new)
-        self.assertEqual(self.accounts.active.read_bytes(), self.credentials("other"))
-        self.assertEqual(self.accounts.active.stat().st_mtime_ns, self.old)
-        self.assertEqual(self.accounts.owner(), "other")
+    def test_import_rejects_empty_or_invalid_token_without_creating_owner(self):
+        for token in (None, "", "  ", 123):
+            with self.subTest(token=token):
+                (self.legacy / ".credentials.json").write_bytes(self.credentials(token))
+                self.assertNotEqual(self.account(name_current="named").returncode, 0)
+                self.assertFalse((self.profiles / "named").exists())
+                self.assertFalse(self.selection.exists())
 
-    def test_switch_persists_newer_native_global_refresh(self):
-        self.write_credentials(self.named, "R1", self.old)
-        self.write_credentials(self.accounts.active, "R2", self.new)
+    def test_invalid_missing_and_unprepared_profiles_preserve_selection(self):
+        self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        pending = self.profiles / "pending"
+        pending.mkdir()
+        for name in ("../other", 3, "missing", "pending"):
+            with self.subTest(name=name):
+                self.assertNotEqual(self.account(use=name).returncode, 0)
+                self.assertEqual(self.selection.read_text(), "other")
 
-        self.accounts.use("other")
+    def test_release_does_not_delete_unowned_staging_or_selection(self):
+        global_path = self.legacy / ".credentials.json"
+        global_path.write_bytes(self.credentials("fixture-unowned"))
+        self.selection.write_text("legacy")
+        result = self.account(release=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(global_path.read_bytes(), self.credentials("fixture-unowned"))
+        self.assertEqual(self.selection.read_text(), "legacy")
 
-        self.assertEqual(self.named.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.named.stat().st_mtime_ns, self.new)
-        self.assertEqual(stat.S_IMODE(self.named.stat().st_mode), 0o600)
-        self.assertEqual(self.accounts.active.stat().st_mtime_ns, self.old)
+    def test_native_claude_launch_uses_selected_account_and_clears_stale_env(self):
+        path = self.canonical("named", "fixture-selected")
+        self.selection.write_text("named")
+        result = self.launch("claude")
+        self.assert_success(result)
+        capture = json.loads(self.capture.read_text())
+        self.assertEqual(capture["env"]["CLAUDE_CONFIG_DIR"], str(path.parent))
+        self.assertEqual(capture["argv"], ["--session-id", "fixture-conversation"])
+        for name in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ):
+            self.assertNotIn(name, capture["env"])
 
-    def test_same_profile_use_adopts_newer_named_refresh(self):
-        self.write_credentials(self.accounts.active, "R1", self.old)
-        self.write_credentials(self.named, "R2", self.new)
-        before = self.named.stat()
+    def test_pi_launch_preserves_caller_credential_environment(self):
+        result = self.launch("pi")
+        self.assert_success(result)
+        capture = json.loads(self.capture.read_text())
+        for name in (
+            "CLAUDE_CONFIG_DIR",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ):
+            self.assertEqual(capture["env"][name], self.env[name])
 
-        self.accounts.use("named")
+    def test_direct_login_selects_only_after_success_in_named_canonical(self):
+        self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        global_path = self.legacy / ".credentials.json"
+        global_path.write_bytes(self.credentials("fixture-unrelated"))
+        result = self.controller("--login", "named")
+        self.assert_success(result)
+        path = self.credential_path("named")
+        capture = json.loads(self.capture.read_text())
+        self.assertEqual(capture["env"]["CLAUDE_CONFIG_DIR"], str(path.parent))
+        self.assertEqual(path.read_bytes(), self.credentials("fixture-direct-login"))
+        self.assertEqual(self.selection.read_text(), "named")
+        self.assertEqual(
+            global_path.read_bytes(), self.credentials("fixture-unrelated")
+        )
+        self.assertEqual((path.parent / ".credential-owner").read_text(), "shared-v1\n")
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        for name in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ):
+            self.assertNotIn(name, capture["env"])
 
-        self.assertEqual(self.accounts.active.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.accounts.active.stat().st_mtime_ns, self.new)
-        self.assertEqual(self.named.stat().st_ino, before.st_ino)
-        self.assertEqual(self.named.stat().st_mtime_ns, self.new)
-        self.assertEqual(self.accounts.owner(), "named")
-        self.assertEqual(stat.S_IMODE(self.accounts.active.stat().st_mode), 0o600)
+    def test_failed_login_preserves_old_selection_and_other_accounts(self):
+        other = self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        self.env["FIXTURE_LOGIN_FAIL"] = "1"
+        result = self.controller("--login", "named")
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        self.assertEqual(self.selection.read_text(), "other")
+        self.assertEqual(other.read_bytes(), self.credentials("fixture-other"))
+        self.assertFalse(self.credential_path("named").exists())
+        self.assertEqual(
+            (self.profiles / "named/.credential-owner").read_text(), "shared-v1\n"
+        )
 
-    def test_identical_save_leaves_named_inode_and_mtime_unchanged(self):
-        self.write_credentials(self.named, "R2", self.old)
-        self.write_credentials(self.accounts.active, "R2", self.new)
-        before = self.named.stat()
+    def test_reauthentication_uses_existing_owned_directory(self):
+        self.canonical("named", None)
+        self.assert_success(self.controller("--login", "named"))
+        self.assertEqual(
+            self.credential_path("named").read_bytes(),
+            self.credentials("fixture-direct-login"),
+        )
+        self.assertEqual(self.selection.read_text(), "named")
 
-        self.assertEqual(self.accounts.save_active(), "named")
+    def test_preexisting_migration_lock_blocks_login_and_import(self):
+        path = self.canonical("named", None).parent
+        lock = path / ".credential-migration"
+        lock.mkdir()
+        (self.legacy / ".credentials.json").write_bytes(
+            self.credentials("fixture-global")
+        )
+        self.assertNotEqual(self.account(prepare_login="named").returncode, 0)
+        self.assertNotEqual(self.account(name_current="named").returncode, 0)
+        self.assertTrue(lock.is_dir())
+        self.assertFalse(self.credential_path("named").exists())
+        self.assertFalse(self.selection.exists())
 
-        self.assertEqual(self.named.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.named.stat().st_ino, before.st_ino)
-        self.assertEqual(self.named.stat().st_mtime_ns, self.old)
-        self.assertEqual(self.accounts.active.stat().st_mtime_ns, self.new)
+    def test_native_launch_without_usable_selected_grant_does_not_fall_back(self):
+        for selected in (None, "cleared"):
+            with self.subTest(selected=selected):
+                if selected:
+                    self.canonical(selected, None)
+                    self.selection.write_text(selected)
+                result = self.launch("claude")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.capture.exists())
 
-    def test_equal_mtime_different_bytes_prefers_global(self):
-        self.write_credentials(self.named, "named", self.old)
-        self.write_credentials(self.accounts.active, "global", self.old)
-
-        self.accounts.use("named")
-
-        self.assertEqual(self.named.read_bytes(), self.credentials("global"))
-        self.assertEqual(self.accounts.active.read_bytes(), self.credentials("global"))
-        self.assertEqual(self.named.stat().st_mtime_ns, self.old)
-        self.assertEqual(self.accounts.active.stat().st_mtime_ns, self.old)
-
-    def test_release_preserves_newer_named_refresh(self):
-        self.write_credentials(self.accounts.active, "R1", self.old)
-        self.write_credentials(self.named, "R2", self.new)
-
-        self.accounts.release()
-
-        self.assertEqual(self.named.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.named.stat().st_mtime_ns, self.new)
-        self.assertFalse(self.accounts.active.exists())
-        self.assertIsNone(self.accounts.owner())
-
-    def test_save_creates_missing_named_profile_with_source_mtime(self):
-        self.write_credentials(self.accounts.active, "R2", self.new)
-
-        self.assertEqual(self.accounts.save_active(), "named")
-
-        self.assertEqual(self.named.read_bytes(), self.credentials("R2"))
-        self.assertEqual(self.named.stat().st_mtime_ns, self.new)
-        self.assertEqual(stat.S_IMODE(self.named.stat().st_mode), 0o600)
+    def test_login_validation_stops_before_authentication(self):
+        self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        for name in ("../bad", "pending"):
+            with self.subTest(name=name):
+                if name == "pending":
+                    (self.profiles / name).mkdir()
+                result = self.controller("--login", name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.capture.exists())
+                self.assertEqual(self.selection.read_text(), "other")
 
 
 if __name__ == "__main__":

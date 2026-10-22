@@ -1016,88 +1016,6 @@ class ClipboardTests(unittest.TestCase):
         )
 
 
-class ClaudeAccountTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
-        isolate_home(self, self.home)
-        self.module = load_worker()
-        self.claude = self.home / ".claude"
-        self.claude.mkdir()
-        self.worker = self.module.Worker(self.home)
-
-    def creds(self, token):
-        return json.dumps({"claudeAiOauth": {"accessToken": token}}).encode()
-
-    def account(self, **request):
-        return self.worker.dispatch({"action": "claude-account", **request})
-
-    def test_unnamed_login_must_be_named_before_switching(self):
-        (self.claude / ".credentials.json").write_bytes(self.creds("personal-1"))
-        self.assertEqual(
-            self.account(),
-            {"active": None, "unnamed_active": True, "profiles": []},
-        )
-        with self.assertRaisesRegex(ValueError, "name-current"):
-            self.account(release=True)
-        self.assertEqual(
-            (self.claude / ".credentials.json").read_bytes(), self.creds("personal-1")
-        )
-        listing = self.account(name_current="personal")
-        self.assertEqual(listing["active"], "personal")
-        self.assertEqual(
-            (self.claude / "personal.credentials.json").read_bytes(),
-            self.creds("personal-1"),
-        )
-
-    def test_switch_saves_refreshed_active_back_to_owner(self):
-        (self.claude / ".credentials.json").write_bytes(self.creds("personal-1"))
-        self.account(name_current="personal")
-        (self.claude / "gc.credentials.json").write_bytes(self.creds("gc-1"))
-        # Claude refreshed the active token after it was named.
-        (self.claude / ".credentials.json").write_bytes(self.creds("personal-2"))
-
-        listing = self.account(use="gc")
-        self.assertEqual(listing["active"], "gc")
-        self.assertEqual(listing["profiles"], ["gc", "personal"])
-        self.assertEqual(
-            (self.claude / ".credentials.json").read_bytes(), self.creds("gc-1")
-        )
-        self.assertEqual(
-            (self.claude / "personal.credentials.json").read_bytes(),
-            self.creds("personal-2"),
-        )
-        self.assertEqual(
-            stat.S_IMODE((self.claude / ".credentials.json").stat().st_mode), 0o600
-        )
-
-    def test_release_then_login_names_new_account(self):
-        (self.claude / ".credentials.json").write_bytes(self.creds("personal-1"))
-        self.account(name_current="personal")
-        self.account(release=True)
-        self.assertFalse((self.claude / ".credentials.json").exists())
-        (self.claude / ".credentials.json").write_bytes(self.creds("work-1"))
-        listing = self.account(name_current="work")
-        self.assertEqual(listing["active"], "work")
-        self.assertEqual(listing["profiles"], ["personal", "work"])
-        self.account(use="personal")
-        self.assertEqual(
-            (self.claude / ".credentials.json").read_bytes(), self.creds("personal-1")
-        )
-
-    def test_unknown_or_invalid_profile_is_rejected_without_change(self):
-        (self.claude / ".credentials.json").write_bytes(self.creds("personal-1"))
-        self.account(name_current="personal")
-        for name in ("missing", "../x", 3):
-            with self.assertRaises(ValueError):
-                self.account(use=name)
-        self.assertEqual(self.account()["active"], "personal")
-        self.assertEqual(
-            (self.claude / ".credentials.json").read_bytes(), self.creds("personal-1")
-        )
-
-
 class DeployTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -1821,20 +1739,20 @@ sys.stdout.write('\\x1b]2;Terminal\\x07')
             self.assertIn("agent-server", data["argv"])
             self.assertNotIn("desktop", data["argv"])
 
-    def test_claude_account_login_releases_logs_in_on_tty_then_names(self):
+    def test_claude_account_login_prepares_named_directory_then_selects(self):
         result = self.invoke("claude-account", "--login", "work")
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(
-            calls[0]["request"], {"action": "claude-account", "release": True}
+            calls[0]["request"], {"action": "claude-account", "prepare_login": "work"}
         )
         self.assertEqual(calls[1]["argv"][0], "-t")
-        self.assertEqual(calls[1]["argv"][-1], "--claude-login")
+        self.assertEqual(calls[1]["argv"][-2:], ["--claude-login", "work"])
         for call in calls:
             self.assertIn("agent-server", call["argv"])
             self.assertNotIn("desktop", call["argv"])
         self.assertEqual(
-            calls[2]["request"], {"action": "claude-account", "name_current": "work"}
+            calls[2]["request"], {"action": "claude-account", "use": "work"}
         )
 
     def test_pi_login_runs_on_tty_with_validated_provider(self):

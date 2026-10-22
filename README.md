@@ -276,28 +276,38 @@ installation, authentication, and project provisioning remain user responsibilit
 Authenticate providers independently on each host; do not copy stored credentials
 between hosts. `remote-agent pi-login PROVIDER --host HOST` starts Pi provider
 login over SSH. `remote-agent claude-account --login PROFILE --host HOST` starts
-Claude login; account switching is host-global and may affect running sessions.
+Claude login directly in that named account's canonical directory. Selection
+changes only after successful login; failed login preserves the old selection.
 
-### Claude account freshness
+### Shared Claude accounts
 
-The active credentials are `~/.claude/.credentials.json`; `.active-profile`
-records their owner, and `<PROFILE>.credentials.json` stores each named account.
-Switching or releasing an account saves global credentials only when the named
-file is absent or its modification time is no newer than the global file.
-Equal timestamps prefer global credentials. A newer named refresh is never
-replaced by stale global credentials.
+Each account owns one grant at
+`~/.config/pi-claude-bridge/profiles/PROFILE/.credentials.json`. Bridge, AskClaude,
+and new native Claude launches share that directory as `CLAUDE_CONFIG_DIR`.
+Native Claude ignores inherited API/OAuth token overrides; Pi keeps caller env.
+`~/.claude/.active-profile` selects an account for new native launches. Switching
+changes only this file; existing sessions are not restarted or migrated.
+Listing reads canonical profile directories, including logged-out accounts.
+Selection and native launch require a nonempty canonical OAuth access token.
 
-Selecting the already-active profile still adopts newer named credentials.
-Credential copies use atomic private-file replacement and preserve the source's
-pre-copy modification time, rather than making a copied token look freshly
-refreshed. Byte-identical writes leave the destination inode and modification
-time unchanged. These rules select freshness by filesystem timestamps, not by
-OAuth token validation; account switching is not synchronized with running
-provider refreshes.
+Bridge owns one-time legacy migration. Prepare existing profiles before
+activating this worker: `.credential-owner` must contain `shared-v1\n`.
+Missing/empty canonical grants are not restored from old global/named files.
+Login creates a private `0700` canonical directory and ownership marker, even
+when login fails, and can reauthenticate an already-owned account. Existing
+unprepared directories fail explicitly. Initialization uses the bridge's
+exclusive `.credential-migration` directory lock; existing locks are not removed.
 
-Isolated OAuth-shaped fixtures in `tests/test_claude_account_freshness.py` cover
-stale-global protection, native global refresh persistence, same-profile adoption,
-unchanged saves, equal-time ties, release, and first save. Run only account tests:
+`--name-current PROFILE` can move an unnamed global login into a previously
+absent canonical account once. It validates a nonempty OAuth access token and
+refuses existing accounts, including cleared ones. Release clears only an owned
+account's selection, never its canonical grant or unrelated global staging.
+There is no routine copying, freshness comparison, or writeback.
+
+Local synthetic subprocess fixtures in `tests/test_claude_account_freshness.py`
+cover switching/release, cleared grants, import, launcher environment, named
+login, failed login, and migration-lock refusal without network/auth calls.
+Run only account tests:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -k ClaudeAccount -v
