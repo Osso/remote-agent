@@ -84,9 +84,11 @@ class SandboxFirewallTests(unittest.TestCase):
             None,
             123,
         ):
-            with self.subTest(bridge=bridge):
-                with self.assertRaisesRegex(ValueError, "bridge"):
-                    self.firewall.render_policy(bridge=bridge)
+            with (
+                self.subTest(bridge=bridge),
+                self.assertRaisesRegex(ValueError, "bridge"),
+            ):
+                self.firewall.render_policy(bridge=bridge)
 
     def test_routes_reject_noncanonical_non_ipv4_and_injection(self):
         for route in (
@@ -102,12 +104,20 @@ class SandboxFirewallTests(unittest.TestCase):
             "8.8.8.0/24\n",
             "8.8.8.0/24; flush ruleset",
             "",
-            None,
-            123,
         ):
-            with self.subTest(route=route):
-                with self.assertRaisesRegex(ValueError, "IPv4.*CIDR"):
-                    self.firewall.render_policy(extra_ipv4=(route,))
+            with (
+                self.subTest(route=route),
+                self.assertRaisesRegex(ValueError, "IPv4.*CIDR"),
+            ):
+                self.firewall.render_policy(extra_ipv4=(route,))
+
+    def test_routes_reject_nonstring_types(self):
+        for route in (None, 123):
+            with (
+                self.subTest(route=route),
+                self.assertRaisesRegex(TypeError, "IPv4.*CIDR"),
+            ):
+                self.firewall.render_policy(extra_ipv4=(route,))
 
     def test_cli_prints_default_batch_only(self):
         result = subprocess.run(

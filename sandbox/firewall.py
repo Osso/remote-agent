@@ -28,7 +28,7 @@ def validate_route(route: str) -> str:
     """Reject non-IPv4, noncanonical CIDRs before interpolating nft text."""
     message = f"expected canonical IPv4 network CIDR, got {route!r}"
     if not isinstance(route, str):
-        raise ValueError(message)
+        raise TypeError(message)
     try:
         network = ipaddress.IPv4Network(route, strict=True)
     except ValueError as error:
@@ -81,7 +81,7 @@ def main() -> None:
     arguments = parser.parse_args()
     try:
         policy = render_policy(arguments.bridge, arguments.deny_route)
-    except ValueError as error:
+    except (TypeError, ValueError) as error:
         parser.error(str(error))
     print(policy, end="")
 

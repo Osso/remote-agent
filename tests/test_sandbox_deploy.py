@@ -1,9 +1,9 @@
 """Observed host-route input at the sandbox deployment boundary."""
 
 import importlib.util
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 DIRECTORY = Path(__file__).resolve().parents[1] / "sandbox"

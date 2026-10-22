@@ -1,8 +1,8 @@
 """Credential isolation at the container's Pi launch boundary."""
 
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "sandbox" / "launch.py"
 

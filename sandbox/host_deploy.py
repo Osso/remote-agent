@@ -4,11 +4,11 @@
 import hashlib
 import ipaddress
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from firewall import render_policy
 
@@ -70,7 +70,10 @@ def install_firewall(stage):
 
 def ensure_network():
     found = subprocess.run(
-        ["docker", "network", "inspect", NETWORK], capture_output=True, text=True
+        ["docker", "network", "inspect", NETWORK],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if found.returncode == 0:
         config = json.loads(found.stdout)[0]

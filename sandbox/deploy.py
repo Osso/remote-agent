@@ -5,12 +5,12 @@ import argparse
 import hashlib
 import io
 import json
-from pathlib import Path
 import shlex
 import stat
 import subprocess
 import tarfile
 import tempfile
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CLANK_REVISION = "b4f8f6d6308ef5217637f34a24cde016b8b38afc"

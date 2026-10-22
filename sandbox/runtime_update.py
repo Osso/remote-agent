@@ -3,10 +3,10 @@
 
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 root = Path.home() / ".local/share/clank-sandbox"
 config = json.loads((root / "runtime.json").read_text())

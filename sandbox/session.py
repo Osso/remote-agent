@@ -25,7 +25,7 @@ def container_name(conversation):
 def load_config(path):
     config = json.loads(path.read_text())
     if not isinstance(config, dict):
-        raise ValueError("runtime config must be a JSON object")
+        raise TypeError("runtime config must be a JSON object")
     for key in (
         "image",
         "network",
@@ -74,7 +74,7 @@ def parse_arguments(arguments):
 
 
 def checked_command(arguments):
-    result = subprocess.run(arguments, capture_output=True, text=True)
+    result = subprocess.run(arguments, capture_output=True, text=True, check=False)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(
@@ -88,6 +88,7 @@ def inspect_owned_container(name, conversation):
         ["docker", "inspect", "--type", "container", name],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode:
         if result.returncode == 1 and (
@@ -214,7 +215,8 @@ def run_session(config, arguments, conversation):
     options = container_options(config, network, tty) + terminal_options(os.environ)
     if conversation is None:
         return subprocess.run(
-            ["docker", "run", "--rm", *options, config["image"], *forwarded]
+            ["docker", "run", "--rm", *options, config["image"], *forwarded],
+            check=False,
         ).returncode
     name = container_name(conversation)
     status = inspect_owned_container(name, conversation)
@@ -252,7 +254,7 @@ def run_session(config, arguments, conversation):
     previous = signal.signal(signal.SIGWINCH, forward_winch)
     try:
         return subprocess.run(
-            ["docker", "start", "--attach", "--interactive", name]
+            ["docker", "start", "--attach", "--interactive", name], check=False
         ).returncode
     finally:
         signal.signal(signal.SIGWINCH, previous)
