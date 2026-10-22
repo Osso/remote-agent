@@ -50,16 +50,20 @@ The mapped host directory is only the worker's launch directory, not a workspace
 - Resume/TTY: `/tmp/clank-history-attach-proof.json` records normal SSH-history preload followed by actual Mosh attachment to the same conversation, restored response, one approved harmless `end_turn`, detach and exit0. `/tmp/clank-repaint-proof.json` separately records same-size 48×200 history before live-screen clear, live model footer/response/workspace, detach and exit0.
 - Scoped cancellation: main observed all four exact host identities for proof A (init, Pi, exec parent, sleep) gone while B and the original conversation remained running. B then restarted with network restrictions intact and was canceled. Backing identity evidence is remote `~/.local/share/clank-sandbox/cancel-proof.json`; it was not reread during this docs-only update.
 
-### Installed inventory reported by main — 2026-10-22
+### Independently reconciled installed inventory — 2026-10-22
 
-Original conversation `50a99d03-d10f-4e31-a252-e7fc85bd349d` remains running, detached, in Docker container `clank-pi-78d0ab79a48e37d22876fab3180cf226`. Runtime source is `023dbae`, wrapper source `cd8e959`, worker revision `1e477` (reported same as current source).
+Original conversation `50a99d03-d10f-4e31-a252-e7fc85bd349d` remains running, detached, in Docker container `clank-pi-78d0ab79a48e37d22876fab3180cf226`. Runtime launcher and wrapper source are `dde9bf5`; worker source remains identical to deployed revision `1e47784`. Final behavioral gate covers source `ddc17f7`.
 
 | Artifact | Image ID / SHA-256 |
 | --- | --- |
-| Runtime image | `d24696807bcdbf6a3db66aef830610e8eeb9dc54d9ddcc18d4fd082dc2585d26` |
+| Runtime image | `8cc443908d846aba1dbdc832f22d2808af943c6fcdd9cf8ad9e2d0a02fb33846` |
 | td | `5f81ab83a16cb64058d1cc1f0b0130933744925eecdb164a0815165cdbe6a0c9` |
 | Pi | `70e7eaa4562656febee169ad361d3134c1c7d9b41dacd1f8a7da07c7aca28d35` |
 
-### Pending acceptance
+### Independent gate — verified 2026-10-22
 
-Source-test agents reported targeted passes; independent final verification is pending. Coverage paths are `tests/test_sandbox_launch.py`, `tests/test_sandbox_firewall.py`, `tests/test_sandbox_session.py`, `tests/test_remote_agent.py` and `tests/test_history.py`; this docs-only update ran no tests. Paths and reported passes do not independently establish every requirement. Requirements without backing proof remain unchecked in the [spec](../docs/specs/clank-sandbox.md). Actual full-host-reboot behavior remains untested. No final completion/GO claim yet.
+Bounded PASS at `ddc17f7`: 62 distinct targeted tests across current/retained unchanged scopes, new sandbox Python lint and formatting clean. This is not a whole-project pass: 25 unrelated pre-existing Ruff diagnostics remain. Exact commands, revisions, artifacts and limits are recorded in `/tmp/clank-final-verification.md`; the current source and installed wrapper/launcher hashes were reconciled independently.
+
+Final normal resume and same-size 48×200 reattachment both exited0 using the original conversation; `/tmp/clank-final-resume-proof.bin` and `/tmp/clank-repaint-proof.bin` preserve separate evidence. The latter contains SSH-restored response before live-screen clear and actual live model/footer/response/workspace afterward. No model request was repeated for final source-format/fixture fixes.
+
+Actual full-host-reboot behavior remains untested; enabled firewall service and ordering were inspected without rebooting. Predeployment map-byte snapshots were not captured independently. See the [spec](../docs/specs/clank-sandbox.md) for scope and remaining proof gaps.
