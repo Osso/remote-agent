@@ -20,8 +20,10 @@ An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host 
 - `sandbox/firewall.py` — dedicated host nftables policy.
 - `sandbox/Dockerfile` — unprivileged immutable runtime image.
 - `sandbox/launch.py` — credential environment and Pi selection.
-- `sandbox/session.py` — host-side per-conversation container lifecycle.
-- `sandbox/deploy.sh` — source/artifact staging and supported deployment (in flight).
+- `sandbox/session.py` — host-side per-conversation lifecycle, selected cancellation and SIGWINCH proxy to the running container.
+- `sandbox/deploy.sh`, `sandbox/deploy.py` — supported deployment entry point and source/artifact staging.
+- `sandbox/host_deploy.py` — host firewall/service, image, volume and wrapper installation.
+- `sandbox/runtime_update.py` — launcher-only image update preserving audited td/Pi bytes.
 - `remote-agent-worker.py` — project-specific launch and cancellation executables.
 
 ## Tests asserting this spec
@@ -29,12 +31,14 @@ An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host 
 - `tests/test_sandbox_firewall.py` — serialized firewall policy and validation.
 - `tests/test_sandbox_launch.py` — credential environment and fixed provider/model arguments.
 - `tests/test_sandbox_session.py` — per-conversation container routing and selected cancellation.
-- Exact-revision passing results and installed network/real SSH/Mosh acceptance proofs are pending main-session evidence; test paths do not establish completion.
+- `tests/test_remote_agent.py`, `tests/test_history.py` — worker lifecycle routing and history integration.
+- Source-test agents reported targeted passes; independent final verification remains pending. Test paths alone do not establish completion.
+- [Verified 2026-10-22 coverage and installed inventory](../../sandbox/README.md#verification) records concrete network/model/resume/repaint artifacts and main's scoped-cancellation observations. Source requirements remain unchecked until backing proof is reconciled by the independent gate.
 
 ## Known gaps (current cycle)
 
-- [ ] Per-conversation wrapper/cancel callback integration and exact-revision test evidence pending.
-- [ ] Live deployment and isolation/attachment evidence pending.
+- [ ] Independent final gate: reconcile source-test results and installed/live evidence before final GO; deployment and live network/model/SSH-history/Mosh/repaint/cancellation observations are now recorded, not pending execution.
+- [ ] Full host reboot acceptance: service enabled and `Before=docker.service` established, but no actual host reboot performed. Proof-B conversation restart is not host-reboot proof.
 
 ## Out of scope
 

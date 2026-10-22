@@ -4,15 +4,15 @@ The configured agent-server sandbox runs Pi with OpenRouter model `deepseek/deep
 
 `td` is built from clank revision `b4f8f6d6308ef5217637f34a24cde016b8b38afc` in an unprivileged, network-filtered builder. The reviewed builder pins Node22.21.0, esbuild0.24.0 and postject1.0.0-alpha.6. npm tools remain an upstream supply-chain dependency; isolation does not authenticate their authors. Build and runtime image IDs and executable SHA-256 hashes are recorded by deployment.
 
-The source review found no observed malware; that is not a safety guarantee. The updater was judged unsafe independently of that finding. Deployment and live behavior remain unverified below.
+The source review found no observed malware; that is not a safety guarantee. The updater was judged unsafe independently of that finding. Observed deployment/live coverage is recorded below; independent final verification remains pending.
 
 ## Trust boundaries
 
-These describe configured controls, not observed live enforcement.
+Configured controls follow; the verification section distinguishes observed enforcement from unproven requirements.
 
 - Runtime UID1000, all capabilities dropped, no-new-privileges, read-only root, bounded memory/CPU/processes, IPv6 disabled, no published ports. Installed `td` cannot be replaced; `TD_NO_UPDATE=1` independently disables its unsafe same-server-checksum updater.
 - Host nftables rules apply to the dedicated `br-clank` interface before Docker forwarding: deny host input, nonpublic IPv4/connected routes, all IPv6, and unsolicited inbound traffic. Public IPv4 remains subject to Docker's normal rules. Public DNS servers are explicit; no LAN DNS proxy is configured. Same-bridge communication is disabled.
-- The firewall service must be active before the session wrapper starts a container. Deployment is intended to enable it for boot and order it before Docker. Containers do not automatically restart; remote-agent recovery goes through the checked wrapper.
+- The firewall service must be active before the session wrapper starts a container. The installed service is enabled and ordered before Docker; a full host reboot has not been tested. Containers do not automatically restart; remote-agent recovery goes through the checked wrapper.
 - Dedicated key is a read-only file mount, not an image layer or Docker environment/config value. Pi's launcher reads it without printing it and constructs an OpenRouter-only environment. Pi implementations for other providers remain built in, but no credentials for them are provisioned. Automatic extensions, skills, context files, prompt templates and themes are disabled.
 - Containers share the host kernel; container/runtime vulnerabilities remain a residual risk. Code in a container unavoidably can read/exfiltrate its own OpenRouter key and execute other downloaded programs from writable volumes. Use a dedicated spending-capped key. Public internet access is not a domain allowlist. Root/Docker administrators can bypass these boundaries.
 
@@ -35,12 +35,31 @@ remote-agent status clank
 remote-agent cancel clank
 ```
 
-Detach with Ctrl+backslash; do not cancel to detach. History export uses a transient offline container with the same private Pi-home/workspace volumes. Resume uses the recorded conversation. Cancellation removes only the selected conversation container, including its descendants, after stopping its host launcher; saved Pi history/workspace remains.
+Detach with Ctrl+backslash; do not cancel to detach. History export uses a transient offline container with the same private Pi-home/workspace volumes. Resume uses the recorded conversation. Cancellation removes only the selected conversation container, including its descendants, after stopping its host launcher; saved Pi history/workspace remains. The host session wrapper proxies SIGWINCH to the running container so Pi repaints after attachment.
+
+The mapped host directory is only the worker's launch directory, not a workspace mount. `remote-agent sync` and `fetch` still address that host directory; they do not transfer the container's named-volume workspace.
 
 `td --help` is available inside Pi's shell. Reviewed source is `/opt/clank-together`; writable work is `/workspace`. No clank project is authenticated or automatically set up. Read-only installation is not a promise that subsequently cloned workspaces or server-provided tools are safe.
 
 ## Verification
 
-Test coverage locations: `tests/test_sandbox_launch.py`, `tests/test_sandbox_firewall.py`, `tests/test_sandbox_session.py`; lifecycle routing also uses `tests/test_remote_agent.py` and `tests/test_history.py`. These paths alone are not passing-test evidence. Per-conversation wrapper/cancel integration remains in flight until exact-revision results are supplied. Live acceptance must check public connectivity, blocked host/LAN/private/metadata/IPv6, immutable td, provider configuration, selected-container cancellation, and actual SSH-history/Mosh-TTY attach/detach. Network rules alone and a help command are not end-to-end proof.
+### Observed coverage — verified 2026-10-22
 
-Deployment and live acceptance are pending main-session proof; no completion claim yet.
+- Network: `/tmp/clank-network-proof.json` records HTTP200 from public OpenRouter and clank, authenticated OpenRouter HTTP200 with a credit limit, UID1000, timeouts for tested host/LAN/bridge/private/CGNAT/metadata addresses, and IPv6 disabled (`1`). `/tmp/clank-restart-network-proof.json` confirms public access and tested host/metadata restrictions persisted after proof conversation B restarted. These are sampled endpoints, not exhaustive address-space proof or a host-reboot test.
+- Model: `/tmp/clank-model-proof.json` records one requested smoke, response sentinel, clean detach and exit0; main observed approximately $0.002 in the UI.
+- Resume/TTY: `/tmp/clank-history-attach-proof.json` records normal SSH-history preload followed by actual Mosh attachment to the same conversation, restored response, one approved harmless `end_turn`, detach and exit0. `/tmp/clank-repaint-proof.json` separately records same-size 48×200 history before live-screen clear, live model footer/response/workspace, detach and exit0.
+- Scoped cancellation: main observed all four exact host identities for proof A (init, Pi, exec parent, sleep) gone while B and the original conversation remained running. B then restarted with network restrictions intact and was canceled. Backing identity evidence is remote `~/.local/share/clank-sandbox/cancel-proof.json`; it was not reread during this docs-only update.
+
+### Installed inventory reported by main — 2026-10-22
+
+Original conversation `50a99d03-d10f-4e31-a252-e7fc85bd349d` remains running, detached, in Docker container `clank-pi-78d0ab79a48e37d22876fab3180cf226`. Runtime source is `023dbae`, wrapper source `cd8e959`, worker revision `1e477` (reported same as current source).
+
+| Artifact | Image ID / SHA-256 |
+| --- | --- |
+| Runtime image | `d24696807bcdbf6a3db66aef830610e8eeb9dc54d9ddcc18d4fd082dc2585d26` |
+| td | `5f81ab83a16cb64058d1cc1f0b0130933744925eecdb164a0815165cdbe6a0c9` |
+| Pi | `70e7eaa4562656febee169ad361d3134c1c7d9b41dacd1f8a7da07c7aca28d35` |
+
+### Pending acceptance
+
+Source-test agents reported targeted passes; independent final verification is pending. Coverage paths are `tests/test_sandbox_launch.py`, `tests/test_sandbox_firewall.py`, `tests/test_sandbox_session.py`, `tests/test_remote_agent.py` and `tests/test_history.py`; this docs-only update ran no tests. Paths and reported passes do not independently establish every requirement. Requirements without backing proof remain unchecked in the [spec](../docs/specs/clank-sandbox.md). Actual full-host-reboot behavior remains untested. No final completion/GO claim yet.
