@@ -134,12 +134,16 @@ class SandboxSessionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_two_conversations_cancel_only_selected_and_repeat_is_idempotent(self):
+        state = self.state()
+        state["keep_running"] = True
+        self.save(state)
         for conversation in ("first/id", "second"):
             self.assert_success(self.invoke("--session", conversation, "hello"))
         first, second = map(container_name, ("first/id", "second"))
         self.assertEqual(set(self.state()["containers"]), {first, second})
         self.assert_success(self.invoke("--cancel", "first/id"))
         self.assertEqual(set(self.state()["containers"]), {second})
+        self.assertEqual(self.state()["containers"][second]["status"], "running")
         self.assert_success(self.invoke("--cancel", "first/id"))
         removals = [c for c in self.state()["commands"] if c[:2] == ["docker", "rm"]]
         self.assertEqual(removals, [["docker", "rm", "--force", first]])
