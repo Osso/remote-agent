@@ -237,7 +237,8 @@ exec(compile(command[2],'<fixture-ssh>','exec'))
         history = self.history_request()
         self.assertEqual(history.returncode, 0, history.stderr)
         self.assertEqual(
-            json.loads(history.stdout), {"available": True, "history": self.history}
+            json.loads(history.stdout),
+            {"available": True, "history": self.history, "project": "target-only"},
         )
         self.assertEqual(self.snapshot(), before)
         events = [json.loads(line) for line in self.events.read_text().splitlines()]

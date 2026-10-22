@@ -1858,7 +1858,7 @@ sys.exit({list(codes)!r}[len(done)])
         self.assertEqual(output.count(b"reconnecting"), 2)
         # Every Mosh exit is followed by mouse tracking being switched off.
         self.assertEqual(output.count(b"\x1b[?1000h"), 3)
-        self.assertTrue(output.rstrip().endswith(b"\x1b[?1049l"))
+        self.assertTrue(output.rstrip().endswith(b"\x1b[?1049l\x1b[23;2t"))
         for after in output.split(b"\x1b[?1000h")[1:]:
             self.assertIn(b"\x1b[?1000l", after)
 
