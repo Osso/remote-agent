@@ -2,6 +2,7 @@
 """Install the dedicated sandbox on agent-server; invoked by deploy.py."""
 
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import shutil
@@ -34,9 +35,19 @@ def pull(image):
         time.sleep(2**attempt + __import__("random").random())
 
 
+def denied_routes(routes):
+    return sorted(
+        {
+            str(ipaddress.IPv4Network(route["dst"], strict=False))
+            for route in routes
+            if route.get("dst") != "default"
+        }
+    )
+
+
 def install_firewall(stage):
     routes = json.loads(capture("ip", "-j", "-4", "route", "show", "scope", "link"))
-    denied = sorted({route["dst"] for route in routes if route.get("dst") != "default"})
+    denied = denied_routes(routes)
     policy = stage / "clank-sandbox.nft"
     policy.write_text(render_policy(extra_ipv4=denied))
     unit = stage / SERVICE
