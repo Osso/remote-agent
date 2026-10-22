@@ -5,7 +5,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 ## What it must do
 
 - [x] New sessions explicitly record `backend: dtach`; missing `detach` fails without creating session state or starting tmux instead.
-- [x] Every attached client receives the complete, ordered output stream, including a slower client attached alongside a faster one. The worker runs `detach`, a dtach-compatible rewrite; masters started by C dtach 0.9 keep dropping chunks for non-writable clients until restarted, and `detach -a` still attaches to them.
+- [x] Every attached client receives the complete, ordered output stream from the moment it attaches (no replay), including a slower client attached alongside a faster one. A client more than 16 MiB behind is disconnected; it sees the same `[EOF - dtach terminating]` as a session end. The worker runs `detach`, a dtach-compatible rewrite; masters started by C dtach 0.9 keep dropping chunks for non-writable clients until restarted, and `detach -a` still attaches to them.
 - [x] Existing records without a backend remain tmux sessions, including restart from their recorded conversation.
 - [x] Start preserves the selected harness, project, prompt, conversation and user environment. With resource scoping enabled, dtach uses `remote-agent-NAME-dtach.scope`; legacy tmux retains `remote-agent-NAME.scope`.
 - [x] Normal attachment reopens a saved conversation without manual path, environment or session repair. Both legacy tmux and dtach reuse their same stable scope across repeated restarts, preserving retained jobs, active-scope resource limits and the recorded backend.
