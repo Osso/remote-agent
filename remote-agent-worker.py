@@ -1031,6 +1031,8 @@ class ClaudeAccounts:
     @contextmanager
     def initialize(self, name, *, new_only=False):
         directory = self.profile_path(name).parent
+        if directory.is_symlink():
+            raise ValueError(f"profile directory must not be a symlink: {name}")
         existed = directory.exists()
         if new_only and existed:
             raise ValueError(f"profile already exists: {name}")
@@ -1044,10 +1046,11 @@ class ClaudeAccounts:
                 f"credential initialization already in progress: {name}"
             ) from None
         try:
-            if existed:
+            marker = directory / ".credential-owner"
+            if marker.exists() or marker.is_symlink():
                 self.require_owned(name)
             else:
-                write_private(directory / ".credential-owner", self.OWNER)
+                write_private(marker, self.OWNER)
             yield directory
         finally:
             lock.rmdir()

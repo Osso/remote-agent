@@ -294,8 +294,10 @@ Bridge owns one-time legacy migration. Prepare existing profiles before
 activating this worker: `.credential-owner` must contain `shared-v1\n`.
 Missing/empty canonical grants are not restored from old global/named files.
 Login creates a private `0700` canonical directory and ownership marker, even
-when login fails, and can reauthenticate an already-owned account. Existing
-unprepared directories fail explicitly. Initialization uses the bridge's
+when login fails, and can claim an existing unmarked directory for explicit
+reauthentication without importing legacy grants or changing canonical bytes
+before native login. Invalid existing markers and symlink profile directories
+fail explicitly. Initialization uses the bridge's
 exclusive `.credential-migration` directory lock; existing locks are not removed.
 
 `--name-current PROFILE` can move an unnamed global login into a previously

@@ -304,6 +304,81 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
         )
         self.assertEqual(self.selection.read_text(), "named")
 
+    def test_prepare_login_claims_unowned_directory_without_restoring_credentials(self):
+        self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        global_path = self.legacy / ".credentials.json"
+        named_path = self.legacy / "named.credentials.json"
+        global_path.write_bytes(self.credentials("fixture-stale-global"))
+        named_path.write_bytes(self.credentials("fixture-stale-named"))
+        before = {p: p.read_bytes() for p in (global_path, named_path)}
+        for index, data in enumerate((None, b"", b"{}", b" \n")):
+            with self.subTest(data=data):
+                name = f"named{index}"
+                path = self.credential_path(name)
+                path.parent.mkdir()
+                if data is not None:
+                    path.write_bytes(data)
+                # An explicit import still cannot claim an existing directory.
+                self.selection.unlink()
+                self.assertNotEqual(self.account(name_current=name).returncode, 0)
+                self.selection.write_text("other")
+                self.assert_success(self.account(prepare_login=name))
+                self.assertEqual(path.exists(), data is not None)
+                if data is not None:
+                    self.assertEqual(path.read_bytes(), data)
+                self.assertEqual(
+                    (path.parent / ".credential-owner").read_text(), "shared-v1\n"
+                )
+                self.assertFalse((path.parent / ".credential-migration").exists())
+                self.assertEqual(self.selection.read_text(), "other")
+        for path, data in before.items():
+            self.assertEqual(path.read_bytes(), data)
+
+    def test_login_reauthenticates_unowned_empty_canonical_without_legacy_import(self):
+        self.canonical("other", "fixture-other")
+        self.selection.write_text("other")
+        global_path = self.legacy / ".credentials.json"
+        named_path = self.legacy / "named.credentials.json"
+        global_path.write_bytes(self.credentials("fixture-stale-global"))
+        named_path.write_bytes(self.credentials("fixture-stale-named"))
+        for fail in (True, False):
+            with self.subTest(fail=fail):
+                path = self.credential_path("named")
+                path.parent.mkdir(exist_ok=True)
+                (path.parent / ".credential-owner").unlink(missing_ok=True)
+                path.write_bytes(b"")
+                if fail:
+                    self.env["FIXTURE_LOGIN_FAIL"] = "1"
+                else:
+                    self.env.pop("FIXTURE_LOGIN_FAIL")
+                result = self.controller("--login", "named")
+                self.assertEqual(result.returncode, 7 if fail else 0, result.stderr)
+                capture = json.loads(self.capture.read_text())
+                self.assertEqual(capture["env"]["CLAUDE_CONFIG_DIR"], str(path.parent))
+                self.assertEqual(
+                    path.read_bytes(),
+                    b"" if fail else self.credentials("fixture-direct-login"),
+                )
+                self.assertEqual(
+                    self.selection.read_text(), "other" if fail else "named"
+                )
+        self.assertEqual(
+            global_path.read_bytes(), self.credentials("fixture-stale-global")
+        )
+        self.assertEqual(
+            named_path.read_bytes(), self.credentials("fixture-stale-named")
+        )
+
+    def test_login_rejects_symlink_directory_without_claiming_target(self):
+        target = self.home / "unowned"
+        target.mkdir()
+        self.profiles.mkdir(parents=True)
+        (self.profiles / "named").symlink_to(target, target_is_directory=True)
+        self.assertNotEqual(self.account(prepare_login="named").returncode, 0)
+        self.assertFalse((target / ".credential-owner").exists())
+        self.assertFalse((target / ".credential-migration").exists())
+
     def test_preexisting_migration_lock_blocks_login_and_import(self):
         path = self.canonical("named", None).parent
         lock = path / ".credential-migration"
@@ -333,7 +408,9 @@ sys.exit(subprocess.call([{sys.executable!r}, {str(ROOT / "remote-agent-worker.p
         for name in ("../bad", "pending"):
             with self.subTest(name=name):
                 if name == "pending":
-                    (self.profiles / name).mkdir()
+                    directory = self.profiles / name
+                    directory.mkdir()
+                    (directory / ".credential-owner").write_text("invalid-owner\n")
                 result = self.controller("--login", name)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.capture.exists())
