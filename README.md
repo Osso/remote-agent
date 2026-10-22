@@ -93,9 +93,13 @@ hyphens, starting with a letter or digit. Use the same `--host HOST` on subseque
 commands when starting on a non-default host.
 
 New sessions use dtach and save an explicit `backend: dtach` record. The remote
-worker requires dtach; a missing executable fails instead of falling back to tmux.
-Existing records without a backend retain tmux behavior, including conversation
-restart. Installing the worker does not migrate running sessions.
+worker runs the `detach` executable, a dtach-compatible rewrite
+(`~/Projects/cli/detach`) that delivers the complete output stream to every
+attached client; dtach 0.9 drops output for a client that is not writable while
+another is. A missing `detach` fails instead of falling back to tmux. Masters
+started by C dtach keep its behavior until restarted; `detach -a` attaches to
+them. Existing records without a backend retain tmux behavior, including
+conversation restart. Installing the worker does not migrate running sessions.
 
 For dtach, `status` and `list` use private runtime metadata and socket state to
 report liveness, attachment and a recorded exit status when available. Saved dtach

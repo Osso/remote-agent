@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -18,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-DTACH = shutil.which("dtach")
+DTACH = shutil.which("detach")
 
 FIXTURE = """#!/usr/bin/env python3
 import json, os, signal, subprocess, sys, termios, tty
@@ -87,6 +88,19 @@ while True:
 """
 
 
+STREAM_LINES = 20000
+STREAM_FIXTURE = r"""#!/usr/bin/env python3
+import os, tty
+tty.setraw(0)
+while True:
+    if b"E" in os.read(0, 1024):
+        lines = (b"LINE_%06d_%s\r\n" % (n, b"x" * 60) for n in range(STREAM_LINES))
+        view = memoryview(b"".join(lines) + b"STREAM_END\r\n")
+        while view:
+            view = view[os.write(1, view):]
+""".replace("STREAM_LINES", str(STREAM_LINES))
+
+
 def wait_for(predicate, timeout=5):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -104,7 +118,7 @@ def alive(pid):
         return False
 
 
-@unittest.skipUnless(DTACH, "real dtach executable required on PATH")
+@unittest.skipUnless(DTACH, "real detach executable required on PATH")
 class DtachTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ra-dtach-")
@@ -360,6 +374,46 @@ class DtachTests(unittest.TestCase):
             self.assertFalse(self.call("status")["dead"])
             self.assertTrue(alive(pid))
 
+    def test_new_attachment_receives_complete_output_after_dropped_client(self):
+        # A dropped Mosh connection leaves its dtach client attached and draining.
+        (self.home / ".local/bin/pi").write_text(STREAM_FIXTURE)
+        self.start()
+        previous, previous_terminal = self.attach()
+        current, current_terminal = self.attach()
+        os.write(current_terminal, b"E")
+        streams = {previous_terminal: b"", current_terminal: b""}
+        open_terminals = set(streams)
+        deadline = time.monotonic() + 30
+        quiet_since = time.monotonic()
+        # Stop at the newest stream end, or once it stays quiet after emission ends.
+        while b"STREAM_END" not in streams[current_terminal]:
+            emission_done = previous_terminal not in open_terminals or (
+                b"STREAM_END" in streams[previous_terminal]
+            )
+            if emission_done and time.monotonic() - quiet_since > 2:
+                break
+            self.assertLess(time.monotonic(), deadline, "newest attachment stalled")
+            ready = select.select(list(open_terminals), [], [], 0.05)[0]
+            for terminal in ready:
+                try:
+                    data = os.read(terminal, 1024 if terminal == current_terminal else 65536)
+                except OSError:
+                    data = b""
+                if not data:
+                    open_terminals.discard(terminal)
+                if data and terminal == current_terminal:
+                    quiet_since = time.monotonic()
+                streams[terminal] += data
+            # The active Mosh server drains more slowly than an idle orphaned one.
+            time.sleep(0.002)
+        received = [
+            int(number)
+            for number in re.findall(rb"LINE_(\d{6})_x{60}\r", streams[current_terminal])
+        ]
+        missing = sorted(set(range(STREAM_LINES)) - set(received))
+        self.assertEqual(missing, [], f"{len(missing)} of {STREAM_LINES} lines lost")
+        self.assertEqual(received, list(range(STREAM_LINES)))
+
     def test_non_tty_attach_does_not_emit_bracketed_paste_mode(self):
         self.start()
         call = wait_for(lambda: self.calls())[0]
@@ -480,10 +534,10 @@ class DtachTests(unittest.TestCase):
                 self.module.shutil,
                 "which",
                 side_effect=lambda name, **kwargs: (
-                    None if name == "dtach" else original(name, **kwargs)
+                    None if name == "detach" else original(name, **kwargs)
                 ),
             ),
-            self.assertRaisesRegex(FileNotFoundError, "dtach"),
+            self.assertRaisesRegex(FileNotFoundError, "detach"),
         ):
             self.start()
         self.assertFalse(self.directory().exists())
@@ -508,7 +562,7 @@ class DtachTests(unittest.TestCase):
         self.assertFalse(self.call("list")["sessions"][0]["attached"])
 
     def test_stalled_startup_is_bounded_and_leaves_no_child(self):
-        fake = self.home / ".local/bin/dtach"
+        fake = self.home / ".local/bin/detach"
         fake.write_text(
             "#!/usr/bin/env python3\nimport os,time\nfrom pathlib import Path\nPath(os.environ['HOME'], 'launcher-pid').write_text(str(os.getpid()))\ntime.sleep(600)\n"
         )
@@ -535,7 +589,7 @@ class DtachTests(unittest.TestCase):
                 saved.rename(path)
 
     def test_startup_failure_bounded_and_explicit(self):
-        fake = self.home / ".local/bin/dtach"
+        fake = self.home / ".local/bin/detach"
         fake.write_text(
             "#!/usr/bin/env python3\nimport sys; print('fixture startup failed', file=sys.stderr); sys.exit(23)\n"
         )

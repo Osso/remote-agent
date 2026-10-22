@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-DTACH = shutil.which("dtach")
+DTACH = shutil.which("detach")
 SCOPE = [
     "systemd-run",
     "--user",
@@ -248,7 +248,7 @@ class DtachScopeTests(unittest.TestCase):
         self.assertEqual(attached.wait(timeout=8), 0)
         wait_for(lambda: self.worker.dtach_status(self.session)["dead"])
 
-    @unittest.skipUnless(DTACH, "real dtach required")
+    @unittest.skipUnless(DTACH, "real detach required")
     def test_01_legacy_nondelegated_scope_attaches_real_new_children(self):
         self.memory_limit = "100663296"
         marker = self.home / "legacy-pid"
@@ -291,7 +291,7 @@ class DtachScopeTests(unittest.TestCase):
         self.recreate_collected_scope()
         self.assertEqual(self.properties()["DropInPaths"], "")
 
-    @unittest.skipUnless(DTACH, "real dtach required")
+    @unittest.skipUnless(DTACH, "real detach required")
     def test_02_new_scope_collects_and_recreates_same_name(self):
         self.exercise_reopens()
         self.recreate_collected_scope()
@@ -314,7 +314,7 @@ class DtachScopeTests(unittest.TestCase):
         conversation = self.worker.read_record(self.session)["conversation"]
         self.assertEqual(self.calls()[-1]["argv"], ["--session", conversation])
 
-    @unittest.skipUnless(DTACH, "real dtach required")
+    @unittest.skipUnless(DTACH, "real detach required")
     def test_03_scope_api_failure_is_reported_before_start_succeeds(self):
         self.worker.scope = [*SCOPE, "--property=NoSuchRemoteAgentProperty=yes"]
         with self.assertRaisesRegex(RuntimeError, "scope.*failed|scope.*exited"):
@@ -323,7 +323,7 @@ class DtachScopeTests(unittest.TestCase):
             )
         self.assertEqual(self.calls(), [])
 
-    @unittest.skipUnless(DTACH, "real dtach required")
+    @unittest.skipUnless(DTACH, "real detach required")
     def test_04_unsupported_attach_api_reports_error_without_new_scope(self):
         self.exercise_reopens()
         before = self.properties()

@@ -62,7 +62,7 @@ class WorkerHistoryTests(unittest.TestCase):
         (self.home / "project").mkdir()
         self.bindir = self.home / ".local/bin"
         self.bindir.mkdir(parents=True)
-        for name in ("pi", "tmux", "dtach", "systemd-run", "systemctl", "i"):
+        for name in ("pi", "tmux", "detach", "systemd-run", "systemctl", "i"):
             binary = self.bindir / name
             binary.write_text(FIXTURE)
             binary.chmod(0o700)

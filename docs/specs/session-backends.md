@@ -4,7 +4,8 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 ## What it must do
 
-- [x] New sessions explicitly record `backend: dtach`; missing dtach fails without creating session state or starting tmux instead.
+- [x] New sessions explicitly record `backend: dtach`; missing `detach` fails without creating session state or starting tmux instead.
+- [x] Every attached client receives the complete, ordered output stream, including a slower client attached alongside a faster one. The worker runs `detach`, a dtach-compatible rewrite; masters started by C dtach 0.9 keep dropping chunks for non-writable clients until restarted, and `detach -a` still attaches to them.
 - [x] Existing records without a backend remain tmux sessions, including restart from their recorded conversation.
 - [x] Start preserves the selected harness, project, prompt, conversation and user environment. With resource scoping enabled, dtach uses `remote-agent-NAME-dtach.scope`; legacy tmux retains `remote-agent-NAME.scope`.
 - [x] Normal attachment reopens a saved conversation without manual path, environment or session repair. Both legacy tmux and dtach reuse their same stable scope across repeated restarts, preserving retained jobs, active-scope resource limits and the recorded backend.
@@ -37,6 +38,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 
 - `tests/test_dtach.py` — real dtach process and PTY lifecycle, metadata, private state, explicit log errors, cancellation and failed startup. The 14-case lifecycle suite passed at `068e5c4`; deployed-worker checks also passed after fixture isolation in `46635a7`.
 - `tests/test_dtach.py::DtachTests.test_bracketed_multiline_paste_on_first_and_repeat_attach` — real dtach/PTY attachments to a fixture TUI that enables paste once before attachment: terminal enable sequence, exact multiline paste content, no submissions, retained process and clean detach on first and repeat attachment. `test_non_tty_attach_does_not_emit_bracketed_paste_mode` covers real pipe output without the mode sequence. Local transport proof only; not SSH/Mosh or actual-harness acceptance.
+- `tests/test_dtach.py::DtachTests.test_new_attachment_receives_complete_output_after_dropped_client` — real `detach` master; an earlier attachment (a dropped Mosh connection's client) keeps draining fast while the newest attachment reads slowly. The newest receives all 20,000 fixture lines in order; under C dtach 0.9 it lost 15,426.
 - `tests/test_dtach_scope.py` — real-systemd stable-scope reuse, retained jobs and limits, legacy delegation upgrade and startup failure boundaries. Legacy tmux regression exercises main exit with a retained detached child, ordinary attach twice with the selected saved conversation, then inactive same-name recreation.
 - `tests/test_terminal_colors.py` — start/attach capability forwarding, normalization and account routing: four tests with 32 subcases passed at `232a98c`.
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.

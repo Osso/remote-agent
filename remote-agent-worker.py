@@ -330,9 +330,9 @@ class Worker:
 
     def find_dtach(self):
         path = f"{self.home}/.local/bin:{os.environ.get('PATH', '')}"
-        binary = shutil.which("dtach", path=path)
+        binary = shutil.which("detach", path=path)
         if binary is None:
-            raise FileNotFoundError("dtach executable not found")
+            raise FileNotFoundError("detach executable not found")
         return binary
 
     def stop_dtach(self, session):

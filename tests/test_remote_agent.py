@@ -743,7 +743,7 @@ os.execvp(args[command+1], args[command+1:])
         self.assertFalse(self.status()["dead"])
 
     def test_dtach_launch_failure_cleans_only_created_state(self):
-        binary = self.home / ".local/bin/dtach"
+        binary = self.home / ".local/bin/detach"
         binary.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(1)\n")
         binary.chmod(0o700)
         with self.assertRaisesRegex(RuntimeError, "dtach startup failed"):
