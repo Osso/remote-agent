@@ -120,7 +120,7 @@ session is lost. This does not guarantee recovery of unsaved work or availabilit
 of the host, harness, or provider.
 Mosh retains `--no-init` for terminal-native scrollback. dtach attachment uses
 `-r winch`; press Ctrl+backslash to detach without stopping the agent. No Ctrl+L
-is injected. Same-size reattachment may need a window resize to repaint Pi.
+is injected. Pi repaints its viewport on same-size reattachment.
 After deploying the bracketed-paste repair, detach an existing dtach attachment
 with Ctrl+backslash and reconnect using the same `remote-agent attach NAME`
 command (including `--user` when applicable); no agent restart is needed.

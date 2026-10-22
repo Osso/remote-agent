@@ -50,17 +50,19 @@ On 2026-10-20, installed SSH/Mosh/dtach/Pi acceptance exercised first attachment
 
 On 2026-10-21, after installing `detach` at agent-server `/usr/local/bin/detach` and deploying `d6f300a` to osso and allison, a disposable `detach-proof` Pi session started under a `/usr/local/bin/detach -n` master. Four real SSH/Mosh attachments ran `/usr/local/bin/detach -a dtach.sock -r winch` on the server, reached bracketed-paste readiness, echoed an unsent marker and detached with Ctrl+backslash (exit 0). The session was cancelled; the existing session inventory was unchanged, and its C dtach masters keep running.
 
+On 2026-10-22 each existing agent-server session (osso: pi-rust-repin, world-of-osso, wow-ui-sim; allison: hhh, HH_bbtautau) was relaunched under `detach` after the user closed it, via one real attach that resumed the recorded conversation. No C dtach process remains on agent-server.
+
 Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at 61×282: all 3,600 current-history rows matched exactly in the normal terminal buffer, above the live viewport. Independent replay confirmed both captures; this is terminal-buffer proof, not a Ghostty screenshot or proof of live-view repaint.
 
 ## Known gaps (current cycle)
 
-- [ ] Same-size dtach attachment can leave the live viewport blank until Pi repaints. Current-history scrollback is restored independently; viewport repaint is not fixed here.
+- [x] Same-size dtach attachment repaints Pi's live viewport: Pi `6c710c27f` repaints on SIGWINCH even when the size is unchanged, preserving scrollback. Three installed SSH/Mosh same-size attach cycles passed (Pi docs `1a6671ee9`).
 - [ ] A prior full repository run recorded three periodic-runtime case failures (four subtests), reproduced on pre-change `6cabad8` under the same installed runtime. Scoped history tests pass; no whole-repository pass is claimed.
 
 ## Out of scope
 
 - Raw terminal byte replay, pre-compaction archive restoration, images and expanded tool output: the snapshot contains Pi's current saved context with normal collapsed output, not captured PTY output.
 - Transparent transfer of a running tmux process: an existing conversation must exit gracefully before resuming under dtach.
-- Pi rendering changes: same-size reattachment may require a window resize for repaint.
+- Pi rendering changes: the same-size repaint lives in Pi, not remote-agent.
 - Complete Ghostty backlog: `--no-init` cannot replay output dtach never retained.
 - Exhaustive cross-user dtach isolation matrix and full-history pixel proof: one user-authorized SSH/Mosh/dtach Pi attach/detach at 48×200 returned exit 0, with target cwd and selected conversation confirmed through process and health metadata and the existing tmux client preserved. Earlier disposable tmux isolation evidence remains separate; see [cross-user attachment](cross-user-attachment.md#tests-asserting-this-spec).
