@@ -5,6 +5,13 @@
   "approvalPolicy": "auto-approve",
   "supervisorModel": "openrouter/deepseek/deepseek-v4.1-flash-1017",
   "enabledModels": ["openrouter/deepseek/deepseek-v4.1-flash-1017"],
+  "agents": {
+    "implement": { "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinkingLevel": "medium" },
+    "explore": { "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinkingLevel": "low" },
+    "verifier": { "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinkingLevel": "medium" },
+    "documentation-update": { "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinkingLevel": "low" },
+    "reviewer": { "context": "fresh", "model": "openrouter/deepseek/deepseek-v4.1-flash-1017", "thinkingLevel": "medium" }
+  },
   "disabledExtensions": [
     "ask-secret",
     "bwrap",
