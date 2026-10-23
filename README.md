@@ -363,9 +363,9 @@ Periodic checks remain opt-in through an ignored, host-private
 `periodic-checks.md` at the current Git root. Each host maintains its own file;
 remote-agent never distributes it. No file means no timer or audit.
 
-Pi owns the [scheduler and report-only audit contract](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md),
-[checklist configuration, commands, discovery, and disabling](https://github.com/Osso/pi/blob/main/docs/wiki/systems/periodic-checks.md),
-and [`/exit` contract](https://github.com/Osso/pi/blob/main/docs/specs/slash-commands.md#bundled-exit).
+Pi owns the [scheduler and report-only audit contract](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md),
+[checklist configuration, commands, discovery, and disabling](https://github.com/Osso/pi/blob/master/docs/wiki/systems/periodic-checks.md),
+and [`/exit` contract](https://github.com/Osso/pi/blob/master/docs/specs/slash-commands.md#bundled-exit).
 
 ## Tests
 
@@ -376,7 +376,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Native scheduler and dispatch tests belong to Pi; see the
-[canonical scheduler spec](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md#tests-asserting-this-spec).
+[canonical scheduler spec](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md#tests-asserting-this-spec).
 Python discovery retains `tests/test_periodic_runtime.py` with
 `tests/fixtures/periodic-runtime-provider.ts` as installed-Pi integration
 acceptance. It uses Pi's bundled extension without explicit `--extension`

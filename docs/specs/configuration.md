@@ -1,6 +1,6 @@
 # Per-user configuration
 
-Host and project mappings belong to the current user's `~/.config/remote-agent/`, independent of the code checkout. Mapping consumers live in `remote-agent.py`, `remote-agent-worker.py`, and `deploy.py`. Pi's bundled periodic-checks extension discovers projects independently of these maps; see the [canonical contract](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md). See [mapping setup and deployment](../../README.md#mapping-setup).
+Host and project mappings belong to the current user's `~/.config/remote-agent/`, independent of the code checkout. Mapping consumers live in `remote-agent.py`, `remote-agent-worker.py`, and `deploy.py`. Pi's bundled periodic-checks extension discovers projects independently of these maps; see the [canonical contract](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md). See [mapping setup and deployment](../../README.md#mapping-setup).
 
 ## What it must do
 
@@ -11,7 +11,7 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - [x] Deployment sends local user mapping bytes to the selected remote user's `~/.config/remote-agent/`, with directory mode `0700` and file modes `0600`, including replacement of existing public permissions. Fresh deployed code directories contain neither map. Asserted by `DeployTests`.
 - [x] Optional host `deploy_users` lists existing Unix usernames for deployment after the default SSH account, in configured order, through existing `authsudo` authorization. No account discovery. Homes resolve through the remote account directory; each target uses an isolated account environment. The same code payload/revision is deployed while both existing target maps remain byte-for-byte unchanged; missing maps or failed user deployments fail explicitly without copying operator maps. Wrapped/Windows cross-user deployments are rejected; absent/empty lists retain default deployment behavior. No service/session restart or saved-conversation modification. Asserted by subprocess fixtures in `tests/test_deploy_users.py`; real UID/authsudo acceptance remains a live verification responsibility.
 - [x] Optional selected-host `build_host_scripts` is passed unchanged as `BUILD_HOST_SCRIPTS` to launched and restarted agents through tmux. An absent setting injects no value or personal fallback; an inherited caller value remains unchanged. Asserted by `WorkerTests.test_build_scripts_*`.
-- [ ] Deployment does not install a user-level `periodic-checks.ts` extension or distribute project checklists. Pi owns bundled extension installation, scheduling, and audit policy; see the [canonical contract](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md) and [host-private opt-in instructions](../../README.md#optional-periodic-checks). No checklist means no timer or audit.
+- [ ] Deployment does not install a user-level `periodic-checks.ts` extension or distribute project checklists. Pi owns bundled extension installation, scheduling, and audit policy; see the [canonical contract](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md) and [host-private opt-in instructions](../../README.md#optional-periodic-checks). No checklist means no timer or audit.
 
 ## Shared Claude credential ownership
 
@@ -39,7 +39,7 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - `tests/test_remote_agent.py` — isolated configuration, selected controller/sync/worker behavior, real-tmux host environment propagation, and local execution of deployed payload.
 - `tests/test_periodic_runtime.py` with `tests/fixtures/periodic-runtime-provider.ts` — installed-Pi integration acceptance for bundled periodic commands, without explicit `--extension` injection. Uses private state and an offline faux provider during held model/tool turns. Passing proof against the new bundle belongs to the implementation gate.
 
-Native scheduler/dispatch coverage belongs to [Pi's scheduler spec](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md#tests-asserting-this-spec); this spec makes no bundled-runtime verification claim.
+Native scheduler/dispatch coverage belongs to [Pi's scheduler spec](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md#tests-asserting-this-spec); this spec makes no bundled-runtime verification claim.
 
 ## Known gaps (current cycle)
 
