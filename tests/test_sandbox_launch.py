@@ -56,7 +56,8 @@ class SandboxLaunchTests(unittest.TestCase):
             arguments[arguments.index("--model") + 1],
             "deepseek/deepseek-v4.1-flash-1017",
         )
-        self.assertIn("--no-extensions", arguments)
+        # First-party extensions (agents, goal, loop) load; settings.json disables host-only ones.
+        self.assertNotIn("--no-extensions", arguments)
         self.assertIn("--no-context-files", arguments)
 
 

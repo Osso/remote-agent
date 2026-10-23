@@ -3,5 +3,23 @@
   "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
   "defaultProjectTrust": "never",
   "approvalPolicy": "auto-approve",
-  "enabledModels": ["openrouter/deepseek/deepseek-v4.1-flash-1017"]
+  "enabledModels": ["openrouter/deepseek/deepseek-v4.1-flash-1017"],
+  "disabledExtensions": [
+    "ask-secret",
+    "bwrap",
+    "claude-memory-enrich",
+    "claude-memory-session-end",
+    "codex-daybreak",
+    "codex-fast",
+    "codex-image-generation",
+    "codex-usage",
+    "codex-web-search",
+    "debug",
+    "docs-tree-context",
+    "safe",
+    "self-restart",
+    "session-archive",
+    "session-autoname",
+    "spec-validation"
+  ]
 }

@@ -38,7 +38,6 @@ def pi_arguments(arguments: list[str]) -> list[str]:
         "openrouter",
         "--model",
         MODEL,
-        "--no-extensions",
         "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
