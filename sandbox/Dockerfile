@@ -1,6 +1,7 @@
 # The deployment records the resolved base-image ID and installed Pi/td hashes.
 FROM archlinux:base
-RUN pacman -Syu --noconfirm --needed ca-certificates git python ripgrep icu curl \
+# wine runs the server-provided MSVC cl.exe for td's local checks.
+RUN pacman -Syu --noconfirm --needed ca-certificates git python ripgrep icu curl wine \
     && pacman -Scc --noconfirm
 RUN useradd --uid 1000 --create-home --shell /bin/bash agent \
     && install -d -o agent -g agent -m 0700 /home/agent/.config/pi/agent /home/agent/.remote-agent-prompts \

@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CLANK_REVISION = "b4f8f6d6308ef5217637f34a24cde016b8b38afc"
+CLANK_REVISION = "804ebd15c25d9371eb45e836bcf1d22a69241440"
 SSH_OPTIONS = [
     "-o",
     "BatchMode=yes",
@@ -129,7 +129,9 @@ def update_controller_map():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="agent-server")
-    parser.add_argument("--key-file", type=Path)
+    parser.add_argument(
+        "--key-file", type=Path, help="OpenRouter key; omit to keep the provisioned one"
+    )
     parser.add_argument(
         "--runtime-only",
         action="store_true",
@@ -209,10 +211,8 @@ def main():
             "Host session wrapper updated; image and credentials unchanged.", flush=True
         )
         return
-    if args.key_file is None:
-        parser.error("--key-file is required for full deployment")
     # Validate secret ownership without reading it into logs or build context.
-    if stat.S_IMODE(args.key_file.stat().st_mode) & 0o077:
+    if args.key_file and stat.S_IMODE(args.key_file.stat().st_mode) & 0o077:
         raise ValueError("key file must be owner-only")
     with tempfile.TemporaryDirectory(prefix="clank-stage-") as temporary:
         archive = Path(temporary) / "inputs.tar.gz"
@@ -242,14 +242,17 @@ def main():
             ],
         )
         remote(args.host, ["python3", stage + "/host_deploy.py", stage])
-        provision_key(args.host, args.key_file)
+        if args.key_file:
+            provision_key(args.host, args.key_file)
         update_controller_map()
         remote(
             args.host,
             ["python3", "-c", "import shutil,sys; shutil.rmtree(sys.argv[1])", stage],
         )
     print(
-        "Sandbox installed; key provisioned privately. Live acceptance pending.",
+        "Sandbox installed; key "
+        + ("provisioned privately" if args.key_file else "unchanged")
+        + ". Live acceptance pending.",
         flush=True,
     )
 
