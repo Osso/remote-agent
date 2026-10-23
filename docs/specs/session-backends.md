@@ -59,6 +59,8 @@ Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at
 
 ## Known gaps (current cycle)
 
+- [ ] Actual native SSH/Mosh/Pi resize-rebuild acceptance remains pending; the controller real-PTY fixtures above do not establish it. Earlier installed attachment/history acceptance does not cover this resize path.
+
 - [x] Same-size dtach attachment repaints Pi's live viewport: Pi `6c710c27f` repaints on SIGWINCH even when the size is unchanged, preserving scrollback. Three installed SSH/Mosh same-size attach cycles passed (Pi docs `1a6671ee9`).
 - [ ] A prior full repository run recorded three periodic-runtime case failures (four subtests), reproduced on pre-change `6cabad8` under the same installed runtime. Scoped history tests pass; no whole-repository pass is claimed.
 

@@ -51,6 +51,7 @@ The controller and privileged helper implement the account boundary; see
 
 ## Known gaps (current cycle)
 
+- [ ] Native cross-user SSH/Mosh/Pi resize-rebuild acceptance remains pending; controller real-PTY SSH/Mosh fixtures are separate evidence. See [resize coverage](session-backends.md#tests-asserting-this-spec).
 - [ ] Exhaustive cross-user dtach isolation matrix and full-history pixel proof remain unproven. The single actual attachment above and earlier disposable tmux isolation trial provide distinct, bounded evidence; see [managed session backends](session-backends.md).
 
 ## Out of scope

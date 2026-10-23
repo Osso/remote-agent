@@ -174,9 +174,11 @@ refresh stops attachment without clearing the old scrollback. Initial attachment
 without available history retain ordinary Mosh resizing. Saved history can overlap
 the live viewport's most recent messages; the rebuild prevents older resize
 artifacts accumulating, not that snapshot/live-view overlap.
-After deploying this repair, detach an existing controller with Ctrl+backslash and
-run the same `remote-agent attach NAME` command (including `--user` when needed)
-once to enable resize rebuilding.
+Detach an existing controller with Ctrl+backslash and run the same
+`remote-agent attach NAME` command (including `--user` when needed) once to enable
+resize rebuilding. No Pi restart or remote deployment is needed for this
+controller-only repair. Resize coverage uses real controller PTYs with SSH/Mosh
+fixtures; actual native SSH/Mosh/Pi resize acceptance remains pending.
 
 This is Pi's loaded context with normal collapsed output, not the pre-compaction
 archive or a recording of detached terminal bytes; images and expanded tool
