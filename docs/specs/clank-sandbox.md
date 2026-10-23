@@ -42,6 +42,6 @@ An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host 
 
 ## Out of scope
 
-- Clank account/token setup, server operation, local compiler/Ghidra installation and host td installation.
+- Automated clank account/token setup, server operation, Ghidra installation and host td installation. Wine is in the image for the server-provided compiler; workspace setup is a documented manual step.
 - Eliminating supply-chain, container/runtime or shared-kernel exploit risk. No observed malware does not establish safety; the unsafe updater is disabled, not trusted.
 - Preventing sandbox code from reading/exfiltrating its own OpenRouter key: exposure is unavoidable with code execution and public internet. Writable volumes can execute other downloaded code.

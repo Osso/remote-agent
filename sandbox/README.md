@@ -2,7 +2,7 @@
 
 The configured agent-server sandbox runs Pi with OpenRouter model `deepseek/deepseek-v4.1-flash-1017` and the reviewed clank client. Each remote-agent conversation gets its own container; only dedicated Pi-home and workspace volumes are shared. No host home, SSH agent, Docker socket or existing provider credentials enter the image. The installed custom Pi binary and support assets are copied without user configuration.
 
-`td` is built from clank revision `b4f8f6d6308ef5217637f34a24cde016b8b38afc` in an unprivileged, network-filtered builder. The reviewed builder pins Node22.21.0, esbuild0.24.0 and postject1.0.0-alpha.6. npm tools remain an upstream supply-chain dependency; isolation does not authenticate their authors. Build and runtime image IDs and executable SHA-256 hashes are recorded by deployment.
+`td` is built from clank revision `804ebd15c25d9371eb45e836bcf1d22a69241440` in an unprivileged, network-filtered builder. The reviewed builder pins Node22.21.0, esbuild0.24.0 and postject1.0.0-alpha.6. npm tools remain an upstream supply-chain dependency; isolation does not authenticate their authors. Build and runtime image IDs and executable SHA-256 hashes are recorded by deployment.
 
 The source review found no observed malware; that is not a safety guarantee. The updater was judged unsafe independently of that finding. Observed deployment/live coverage is recorded below; independent final verification remains pending.
 
@@ -24,7 +24,9 @@ From the remote-agent repository:
 sandbox/deploy.sh --host agent-server --key-file /private/path/openrouter.key
 ```
 
-Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes. For a host-wrapper-only change, `sandbox/deploy.sh --wrappers-only` updates routing without rebuilding td/Pi or touching credentials. `sandbox/deploy.sh --runtime-only` rebuilds only the Pi launcher's image layer; it preserves the audited td/Pi bytes and credentials.
+Omit `--key-file` on redeploy to keep the provisioned key.
+
+Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. The image includes Arch `wine` so the server-provided MSVC `cl.exe` can run for `td check`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes. For a host-wrapper-only change, `sandbox/deploy.sh --wrappers-only` updates routing without rebuilding td/Pi or touching credentials. `sandbox/deploy.sh --runtime-only` rebuilds only the Pi launcher's image layer; it preserves the audited td/Pi bytes and credentials.
 
 ## Use
 
@@ -39,7 +41,7 @@ Detach with Ctrl+backslash; do not cancel to detach. History export uses a trans
 
 The mapped host directory is only the worker's launch directory, not a workspace mount. `remote-agent sync` and `fetch` still address that host directory; they do not transfer the container's named-volume workspace.
 
-`td --help` is available inside Pi's shell. Reviewed source is `/opt/clank-together`; writable work is `/workspace`. No clank project is authenticated or automatically set up. Read-only installation is not a promise that subsequently cloned workspaces or server-provided tools are safe.
+`td --help` is available inside Pi's shell. Reviewed source is `/opt/clank-together`; writable work is `/workspace`. Deployment does not set up a clank project. Workspace setup is a one-time manual step: run `td setup https://saty.dev /workspace/wowdecomp --token <token>` and `td toolchain install` inside the running container (`docker exec -i`, token on stdin); the token then lives in the workspace volume's `.td` config, readable by the agent. Pi has no MCP; the agent uses the `td` CLI. Read-only installation is not a promise that subsequently cloned workspaces or server-provided tools are safe.
 
 ## Verification
 
@@ -50,7 +52,17 @@ The mapped host directory is only the worker's launch directory, not a workspace
 - Resume/TTY: `/tmp/clank-history-attach-proof.json` records normal SSH-history preload followed by actual Mosh attachment to the same conversation, restored response, one approved harmless `end_turn`, detach and exit0. `/tmp/clank-repaint-proof.json` separately records same-size 48×200 history before live-screen clear, live model footer/response/workspace, detach and exit0.
 - Scoped cancellation: main observed all four exact host identities for proof A (init, Pi, exec parent, sleep) gone while B and the original conversation remained running. B then restarted with network restrictions intact and was canceled. Backing identity evidence is remote `~/.local/share/clank-sandbox/cancel-proof.json`; it was not reread during this docs-only update.
 
-### Independently reconciled installed inventory — 2026-10-22
+### Installed inventory — 2026-10-23
+
+Deployed from setup `b61d502`, clank `804ebd1`; conversation `50a99d03` restarted on it with workspace `/workspace/wowdecomp` (authenticated, toolchain `cl.exe` `23b2f5a5…` matches server pin; `td check` compiled and compared a unit under wine).
+
+| Artifact | Image ID / SHA-256 |
+| --- | --- |
+| Runtime image | `cab07cead199d2ed89f9e7a2a92f83ddb47e1c0e457e7758fbc518010285b74e` |
+| td | `87690f978c1903b25bed412f7be609fdeaeebcf28c10d4e7f8f66fb14667980d` |
+| Pi | `356916ce5d86183ca3e3c46007d6b6163a64d26d9d849188fbec5254f72dbd39` |
+
+### Independently reconciled installed inventory — 2026-10-22 (superseded)
 
 Original conversation `50a99d03-d10f-4e31-a252-e7fc85bd349d` remains running, detached, in Docker container `clank-pi-78d0ab79a48e37d22876fab3180cf226`. Runtime launcher and wrapper source are `dde9bf5`; worker source remains identical to deployed revision `1e47784`. Final behavioral gate covers source `ddc17f7`.
 
