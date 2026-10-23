@@ -167,6 +167,7 @@ class NativeMoshResizeTests(unittest.TestCase):
         modules = subprocess.run(
             ["node", "-e", "require('@xterm/headless')"],
             capture_output=True,
+            check=False,
             timeout=10,
         )
         if modules.returncode:
