@@ -164,6 +164,20 @@ avoids Mosh dropping intermediate screens during a large redraw. It preserves
 existing terminal scrollback; reconnecting in the same terminal can repeat a
 previously restored snapshot. Terminal capacity still limits retained history.
 
+When a terminal with available Pi history changes size (including font zoom), the
+controller briefly reconnects Mosh after the size settles, fetches fresh history
+at the new width, and replaces the terminal's scrollback before restoring the
+live view. This deliberately discards unrelated pre-attach scrollback as well as
+stale transcript copies. It does not restart Pi, resubmit input, or change the
+conversation. Same-size resize signals do not reconnect. An unavailable or failed
+refresh stops attachment without clearing the old scrollback. Initial attachments
+without available history retain ordinary Mosh resizing. Saved history can overlap
+the live viewport's most recent messages; the rebuild prevents older resize
+artifacts accumulating, not that snapshot/live-view overlap.
+After deploying this repair, detach an existing controller with Ctrl+backslash and
+run the same `remote-agent attach NAME` command (including `--user` when needed)
+once to enable resize rebuilding.
+
 This is Pi's loaded context with normal collapsed output, not the pre-compaction
 archive or a recording of detached terminal bytes; images and expanded tool
 output are not restored. Unsupported harnesses, missing session/conversation
@@ -372,7 +386,8 @@ and [`/exit` contract](https://github.com/Osso/pi/blob/master/docs/specs/slash-c
 Run from this checkout:
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_*.py'
+./run-tests.sh
+./run-tests.sh unit test_resize_attach.py test_history_attach.py
 ```
 
 Native scheduler and dispatch tests belong to Pi; see the

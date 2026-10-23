@@ -9,6 +9,7 @@ import shlex
 import random
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -415,7 +416,55 @@ def restore_terminal():
     subprocess.run(["stty", "sane"], check=True)
 
 
-def preload_session_history(name, host=DEFAULT_HOST, user=None):
+def stop_mosh(process):
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print(
+            "remote-agent: Mosh did not stop after resize; killing local client",
+            file=sys.stderr,
+        )
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def run_mosh(argv, rebuild_on_resize):
+    if not rebuild_on_resize:
+        return subprocess.call(argv)
+    size = os.get_terminal_size(sys.stdout.fileno())
+    deadline = None
+
+    def resized(_signal, _frame):
+        nonlocal size, deadline
+        current = os.get_terminal_size(sys.stdout.fileno())
+        if current != size:
+            size = current
+            deadline = time.monotonic() + 0.2
+
+    previous_handler = signal.signal(signal.SIGWINCH, resized)
+    process = None
+    try:
+        process = subprocess.Popen(argv, start_new_session=True)
+        while True:
+            try:
+                return process.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                if deadline is not None and time.monotonic() >= deadline:
+                    stop_mosh(process)
+                    return None
+    finally:
+        signal.signal(signal.SIGWINCH, previous_handler)
+        if process is not None:
+            stop_mosh(process)
+
+
+def preload_session_history(name, host=DEFAULT_HOST, user=None, replace=False):
     if not sys.stdout.isatty():
         return
     columns, rows = os.get_terminal_size(sys.stdout.fileno())
@@ -430,14 +479,18 @@ def preload_session_history(name, host=DEFAULT_HOST, user=None):
         user,
     )
     if not snapshot["available"]:
+        if replace:
+            raise ValueError(f"cannot rebuild resized history: {snapshot['reason']}")
         print(f"remote-agent: {snapshot['reason']}", file=sys.stderr)
-        return snapshot["project"]
+        return snapshot
+    if replace:
+        sys.stdout.write("\x1b[2J\x1b[H\x1b[3J")
     if snapshot["history"]:
         sys.stdout.write(snapshot["history"])
         # Keep the restored history above the viewport Mosh replaces on attach.
         sys.stdout.write("\n" * rows)
         sys.stdout.flush()
-    return snapshot["project"]
+    return snapshot
 
 
 def attach(name, host=DEFAULT_HOST, user=None):
@@ -448,9 +501,12 @@ def attach(name, host=DEFAULT_HOST, user=None):
         query(host, {"action": "list"}, user)
     failures = 0
     title_saved = False
+    replace_history = False
     try:
         while True:
-            project = preload_session_history(name, host, user)
+            snapshot = preload_session_history(name, host, user, replace_history)
+            replace_history = False
+            project = snapshot["project"] if snapshot is not None else None
             if project is not None:
                 title = "".join(
                     c for c in project if c >= " " and not "\x7f" <= c <= "\x9f"
@@ -460,18 +516,25 @@ def attach(name, host=DEFAULT_HOST, user=None):
                     sys.stdout.write("\x1b[22;2t")
                 sys.stdout.write(f"\x1b]2;{title}\x07")
                 sys.stdout.flush()
-            code = subprocess.call(
-                [
-                    "mosh",
-                    "--no-init",
-                    "--",
-                    *destination(host, user),
-                    f"--colorterm={terminal_colorterm()}",
-                    "--attach",
-                    name,
-                ]
-            )
-            restore_terminal()
+            try:
+                code = run_mosh(
+                    [
+                        "mosh",
+                        "--no-init",
+                        "--",
+                        *destination(host, user),
+                        f"--colorterm={terminal_colorterm()}",
+                        "--attach",
+                        name,
+                    ],
+                    rebuild_on_resize=snapshot is not None and snapshot["available"],
+                )
+            finally:
+                restore_terminal()
+            if code is None:
+                replace_history = True
+                failures = 0
+                continue
             if code == 0:
                 # Mosh does not propagate the worker's refused-attach exit status.
                 # Verify the session survived rather than silently accepting refusal.
