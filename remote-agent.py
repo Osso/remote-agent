@@ -5,14 +5,14 @@ import argparse
 import base64
 import json
 import os
-import shlex
 import random
-from pathlib import Path
 import re
+import shlex
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = Path.home() / ".config/remote-agent"
