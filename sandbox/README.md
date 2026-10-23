@@ -41,7 +41,7 @@ Detach with Ctrl+backslash; do not cancel to detach. History export uses a trans
 
 The mapped host directory is only the worker's launch directory, not a workspace mount. `remote-agent sync` and `fetch` still address that host directory; they do not transfer the container's named-volume workspace.
 
-`td --help` is available inside Pi's shell. Reviewed source is `/opt/clank-together`; writable work is `/workspace`. Deployment does not set up a clank project. Workspace setup is a one-time manual step: run `td setup https://saty.dev /workspace/wowdecomp --token <token>` and `td toolchain install` inside the running container (`docker exec -i`, token on stdin); the token then lives in the workspace volume's `.td` config, readable by the agent. Pi has no MCP; the agent uses the `td` CLI. Read-only installation is not a promise that subsequently cloned workspaces or server-provided tools are safe.
+`td --help` is available inside Pi's shell. Reviewed source is `/opt/clank-together`; writable work is `/workspace`. Deployment does not set up a clank project. Workspace setup is a one-time manual step: run `td setup https://saty.dev /workspace/wowdecomp --token <token>` and `td toolchain install` inside the running container (`docker exec -i`, token on stdin); the token then lives in the workspace volume's `.td` config, readable by the agent. Pi has no MCP; the agent uses the `td` CLI. Image settings set `approvalPolicy: auto-approve` so the agent runs unattended inside the container boundary; an existing home volume keeps its own `settings.json` (set there by hand on 2026-10-23). Read-only installation is not a promise that subsequently cloned workspaces or server-provided tools are safe.
 
 ## Verification
 
