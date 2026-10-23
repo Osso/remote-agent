@@ -3,6 +3,7 @@
   "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
   "defaultProjectTrust": "never",
   "approvalPolicy": "auto-approve",
+  "supervisorModel": "openrouter/deepseek/deepseek-v4.1-flash-1017",
   "enabledModels": ["openrouter/deepseek/deepseek-v4.1-flash-1017"],
   "disabledExtensions": [
     "ask-secret",

@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
+# Supervisor memory stays in the container's home volume, not the host KB.
+KB_DIR = "/home/agent/kb"
 
 
 def pi_environment(inherited: dict[str, str], key: str) -> dict[str, str]:
@@ -22,6 +24,7 @@ def pi_environment(inherited: dict[str, str], key: str) -> dict[str, str]:
         "PI_SKIP_VERSION_CHECK": "1",
         "PI_OFFLINE": "1",
         "TD_NO_UPDATE": "1",
+        "PI_KB_DIR": KB_DIR,
         "OPENROUTER_API_KEY": key,
     }
     if inherited.get("COLORTERM") in ("truecolor", "24bit"):
@@ -51,6 +54,7 @@ def main() -> None:
         os.environ, Path("/run/secrets/openrouter.key").read_text()
     )
     os.umask(0o077)
+    os.makedirs(KB_DIR, exist_ok=True)
     arguments = pi_arguments(sys.argv[1:])
     os.execve(arguments[0], arguments, environment)
 

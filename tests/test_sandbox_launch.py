@@ -33,6 +33,7 @@ class SandboxLaunchTests(unittest.TestCase):
         self.assertEqual(environment["TD_NO_UPDATE"], "1")
         self.assertEqual(environment["PI_SKIP_VERSION_CHECK"], "1")
         self.assertEqual(environment["PI_OFFLINE"], "1")
+        self.assertEqual(environment["PI_KB_DIR"], "/home/agent/kb")
         for key in ("ANTHROPIC_API_KEY", "SSH_AUTH_SOCK", "LD_PRELOAD"):
             self.assertNotIn(key, environment)
 
