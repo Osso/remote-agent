@@ -177,8 +177,10 @@ artifacts accumulating, not that snapshot/live-view overlap.
 Detach an existing controller with Ctrl+backslash and run the same
 `remote-agent attach NAME` command (including `--user` when needed) once to enable
 resize rebuilding. No Pi restart or remote deployment is needed for this
-controller-only repair. Resize coverage uses real controller PTYs with SSH/Mosh
-fixtures; actual native SSH/Mosh/Pi resize acceptance remains pending.
+controller-only repair. Resize coverage includes real controller PTYs with
+SSH/Mosh fixtures and native Mosh/Pi TUI regression coverage; installed default
+and cross-user SSH/Mosh/Pi acceptance proves terminal-buffer behavior, not desktop
+pixels. See [acceptance scope](docs/specs/session-backends.md#known-gaps-current-cycle).
 
 This is Pi's loaded context with normal collapsed output, not the pre-compaction
 archive or a recording of detached terminal bytes; images and expanded tool
