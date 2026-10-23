@@ -46,6 +46,7 @@ The worker manages new sessions with dtach while retaining existing tmux session
 - `tests/test_remote_agent.py` — harness semantics, legacy sessions, controller and deployment fixtures.
 - `tests/test_cross_user.py` — account boundaries and private state.
 - `tests/test_history.py` — history export protocol, exact ANSI, unchanged state, input validation and explicit unavailability/error boundaries; nine passing tests reported for the current worker.
+- `tests/test_mosh_resize.py` with `tests/fixtures/mosh-resize.ts` — actual localhost Mosh client/server, Rust detach and Pi TUI: 80 saved wrapped paragraphs and five sentinels once and ordered across 70×16→40×8→70×16; a newer unsaved reply remains visible, old clients exit before export, natural detach preserves the fixture, and owned processes/sockets are cleaned. SSH export/bootstrap are controlled fixtures; installed-account acceptance is separate.
 - `tests/test_resize_attach.py` — real controller PTY shrink/width-change handling with controlled SSH/Mosh processes: debounced latest dimensions, replacement history ordered once above the live view, old client exit before export, input delivery, retained server, sane terminal modes, natural detach precedence, same-size and unavailable-history behavior, failed refresh before clearing. These are controller/process and headless terminal-buffer tests, not native Mosh acceptance.
 - `tests/test_history_attach.py` and `tests/history_scrollback_fixture.cjs` — real-PTY controller cases, including project-title setup, retry reapplication, restored title on clean detach/failure/interruption, control-character stripping, missing-record and non-TTY behavior (headless title-state assertions), including headless normal-buffer assertions for all 200 ordered history markers above the live viewport, retry restoration and unavailable/error behavior. SSH and Mosh are fixtures in these regression tests.
 
@@ -59,7 +60,7 @@ Separate installed acceptance captured two real SSH/Mosh/dtach/Pi attachments at
 
 ## Known gaps (current cycle)
 
-- [ ] Actual native SSH/Mosh/Pi resize-rebuild acceptance remains pending; the controller real-PTY fixtures above do not establish it. Earlier installed attachment/history acceptance does not cover this resize path.
+- [x] On 2026-10-23, installed `remote-agent attach HH_bbtautau --user allison` and default-account `remote-agent attach wow-ui-sim` passed real SSH history preload plus Mosh/detach/Pi at 100×40→80×30→120×50. Each resize rebuilt once; stateful terminal replay matched the complete fresh saved-history prefix above the live viewport at all six stages (1,376–4,227 rows). Both reached paste-ready live views and detached with Ctrl+backslash, exit 0. Surviving prior clients restored their own native sizes after the probes. This proves terminal-buffer behavior, not desktop pixels or removal of documented snapshot/live-tail overlap.
 
 - [x] Same-size dtach attachment repaints Pi's live viewport: Pi `6c710c27f` repaints on SIGWINCH even when the size is unchanged, preserving scrollback. Three installed SSH/Mosh same-size attach cycles passed (Pi docs `1a6671ee9`).
 - [ ] A prior full repository run recorded three periodic-runtime case failures (four subtests), reproduced on pre-change `6cabad8` under the same installed runtime. Scoped history tests pass; no whole-repository pass is claimed.

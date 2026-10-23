@@ -406,6 +406,12 @@ History-attachment tests additionally use `@xterm/headless` 5.5.0 to assert actu
 normal-buffer scrollback, not merely emitted bytes. It is a test-only dependency
 already present in the Pi checkout's development `node_modules`; expose that
 location through `NODE_PATH` when running those tests.
+The native resize regression additionally needs Node 22.18+, Linux, Mosh client
+and server, `DETACH` pointing to the Rust executable, and `PI_TUI_SOURCE` pointing
+to Pi's `packages/tui/src`. Run `./run-tests.sh unit test_mosh_resize.py` with those
+environment variables; missing native dependencies are reported as skipped.
+This test uses only disposable localhost sessions, not a provider or real SSH
+account.
 
 ## License
 

@@ -29,6 +29,8 @@ FILES = (
     "tests/test_history.py",
     "tests/test_history_attach.py",
     "tests/test_resize_attach.py",
+    "tests/test_mosh_resize.py",
+    "tests/fixtures/mosh-resize.ts",
     "tests/history_scrollback_fixture.cjs",
     "run-tests.sh",
     "tests/test_cross_user.py",
