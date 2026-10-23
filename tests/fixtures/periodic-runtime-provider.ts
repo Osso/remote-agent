@@ -102,6 +102,7 @@ async function respond(
 	return [
 		{ type: "text", text: report },
 		toolCall("send_agent_message", {
+			body: report,
 			toAgentId: "main",
 			toSessionId: JSON.parse(parent[1]),
 		}),
