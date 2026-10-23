@@ -268,9 +268,9 @@ The remote worker and its deployed `wl-paste` shim remain Linux-side components.
 ./deploy.sh --host agent-server
 ```
 
-`deploy.sh` deploys remotely first, then links the local controller and installs
-its Pi extension. Local-only users should not run it blindly; use the local
-helper below instead.
+`deploy.sh` deploys remotely first, then links the local controller. Local-only
+users should not run it blindly; controller linking is independent of Pi
+extension installation.
 
 Deploy installs its selected payload under the remote user's
 `~/Projects/cli/remote-agent/`, records the controller revision under
@@ -349,115 +349,23 @@ python3 -m unittest discover -s tests -p 'test_*.py' -k ClaudeAccount -v
 
 ## Optional periodic checks
 
-Deployment installs `periodic-checks.ts` as a user-level Pi extension on both
-the controller and selected remote host, symlinked at
-`~/.config/pi/agent/extensions/periodic-checks.ts`. If `PI_CODING_AGENT_DIR` is
-set, its `extensions/` directory is used instead. Unmanaged files and foreign
-symlinks at the extension path are not replaced.
+Pi bundles `periodic-checks` and `exit-command` as first-party extensions.
+Remote-agent no longer installs `periodic-checks.ts` on the controller or remote
+hosts. Update Pi on each host; start a new session or use `/reload` to discover
+`/periodic-checks` and `/exit`.
 
-For local-only extension installation, run from this checkout:
+After installing the bundled Pi build, remove superseded user-level
+`periodic-checks.ts` and `exit-command.ts` copies/symlinks from the active Pi
+configuration's `extensions/` directory and remove explicit references to those
+old paths. Keep only the bundled registrations; do not load both versions.
 
-```sh
-python3 -c 'import deploy; deploy.install_periodic_extension()'
-```
+Periodic checks remain opt-in through an ignored, host-private
+`periodic-checks.md` at the current Git root. Each host maintains its own file;
+remote-agent never distributes it. No file means no timer or audit.
 
-This helper performs no remote deployment. Importing `deploy.py` still requires
-a readable, valid `~/.config/remote-agent/remote-hosts.json`. To also link the
-local controller, first ensure `~/.local/bin` exists, then use
-`python3 -c 'import deploy; deploy.link_controller()'` instead; that helper also
-installs the extension. These are Python helpers, not CLI flags. Keep this
-checkout in place because the installed paths are symlinks.
-
-At session start, the extension discovers the current directory's Git root and
-looks for `periodic-checks.md` there. Keep this host-local policy file Git-ignored
-and configure its contents independently on each host. Deployment ships plugin
-code, never project checklist contents. That file opts the project in; no file
-means no timer. Reload an existing Pi session or start a new one after installing
-the extension to discover newly installed commands, or after adding the checklist
-to arm its timer. Eligible local and remote main sessions behave alike: TUI or RPC
-mode, a multi-agent store, and active `spawn_agent` and `send_agent_message`
-tools are required. Child sessions are excluded. These are custom Pi
-multi-agent capabilities; compatibility with stock Pi is not guaranteed.
-
-Use Google OKF YAML frontmatter inside the ignored, host-private
-`periodic-checks.md`, followed by the audit checklist:
-
-```markdown
----
-type: Periodic Checks
-interval_seconds: 1800
----
-# Periodic checks
-
-Report Git status and test failures. No edits.
-```
-
-`type` must be a nonempty string; custom `interval_seconds` must be a positive
-safe integer, bounded to 1–2147483 seconds by Node's timer limit. Unknown fields
-are allowed. For manual testing, use `interval_seconds: 60`. The extension reuses
-Pi's exported `parseFrontmatter` YAML parser; no new dependency is added.
-
-Metadata is read on `session_start` (including reload), not on every tick.
-The first tick waits the full configured interval; subsequent ticks use that
-interval while the session is alive. There is no fixed 30-minute fallback.
-Missing or invalid metadata produces an explicit error and leaves the timer
-disabled; an absent file means no timer. Reload or start a new session to apply
-metadata edits or re-arm after restoring the file. Main-session activity and
-pending messages do not skip ticks. A pending spawn or an existing live audit
-skips overlapping dispatch. Removing the checklist stops
-the timer at the next tick. This is not an offline scheduler.
-
-Use `/periodic-checks status` (or `/periodic-checks` with no arguments) to display
-scheduler state. Use `/periodic-checks run` to request an audit immediately.
-Other arguments show `Usage: /periodic-checks status|run`.
-The notification reports `Periodic checks: armed` or `Periodic checks: disabled`,
-plus `Checklist:` when its path is known. Armed status includes the active
-`interval_seconds:` and a relative schedule estimate: `Next run: in N minutes`,
-`Next run: in 1 minute`, or `Next run: in less than a minute`. Remaining time is
-calculated when status is requested; minutes round up (90 seconds shows 2
-minutes), and due or overdue ticks show less than a minute. Disabled status
-includes `Reason:` (for example, `No checklist` or `Checklist removed`).
-Status reflects the current scheduler, not unapplied metadata edits. The command
-is read-only and displays its notification immediately, including while main is
-busy: no audit, abort, model turn, timer reset, or re-arm. The next-run estimate
-tracks the scheduled boundary, not child completion or a guaranteed dispatch;
-skipped ticks still advance that boundary.
-
-`/periodic-checks run` uses the armed schedule's same direct, read-only child
-dispatch, even while main is busy or has pending messages. It does not reset or
-advance the normal scheduled countdown, reread metadata, or re-arm a disabled
-schedule. A pending spawn or live `periodic-checks-audit` refuses duplicate runs
-with `Cannot run periodic audit: Audit already starting` or `Audit already live`.
-Disabled schedules, missing/removed checklists, unavailable runtime/tools, and
-changed session/project identity produce a reason-bearing warning rather than
-claiming success. Removing the checklist during a manual run also stops the timer.
-
-An accepted manual request first reports `Periodic audit starting`. Only a
-successful tool result with `details.dispatched: true` reports `Periodic audit
-started`; tool errors, blocked/undispatched results, and rejection report a
-`spawn_agent` error with session ID, checklist path, and failure details. The
-command does not wait for spawn settlement or child completion. `started` means
-dispatch accepted, not audit completed or findings delivered.
-
-The scheduler calls `pi.callTool("spawn_agent", ...)` directly to launch one
-fresh-context `explore` child named `periodic-checks-audit`, independently of
-main's current turn. It sends no follow-up/steering prompt to main and queues no
-model prompt for main to spawn the audit. The pending-spawn lock releases when
-the tool call settles, including errors; dispatch failures produce an explicit
-error notification. A child with that name blocks overlap until its stored
-lifecycle is `completed`, `failed`, or `aborted`. Completion permits a later
-scheduled tick, not an immediate audit; main's turn ending does not release it.
-A restored live audit also blocks overlap after reload. Unrelated children do
-not block dispatch. Late spawn results from an old schedule cannot unlock the
-new schedule or emit stale diagnostics.
-
-Each audit rereads the checklist and sends findings to the originating main
-session, checking successful delivery. Audits are report-only: no corrections,
-nested audit spawning, builds, cleanup, blocking, cancellation, steering, edits,
-or deployment. Authorized work continues independently. Offline real-Pi PTY
-fixtures prove scheduled/manual audits and visible status during active model
-and tool turns, overlap refusal, unchanged countdown, and normal main completion.
-Findings are delivered while main is busy; main consumes its mailbox when idle.
+Pi owns the [scheduler and report-only audit contract](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md),
+[checklist configuration, commands, discovery, and disabling](https://github.com/Osso/pi/blob/main/docs/wiki/systems/periodic-checks.md),
+and [`/exit` contract](https://github.com/Osso/pi/blob/main/docs/specs/slash-commands.md#bundled-exit).
 
 ## Tests
 
@@ -465,21 +373,17 @@ Run from this checkout:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py'
-NODE_PATH="$(npm root -g)${NODE_PATH:+:$NODE_PATH}" node --test tests/test_periodic_scheduler.mjs
 ```
 
-Python discovery also includes `test_periodic_runtime.py`, which uses an installed
-Pi executable (`PI_TEST_BINARY` overrides discovery), temporary private state,
-and a faux provider without network requests or credentials. Its three cases
-exercise scheduled audits during held model/tool turns and manual-run dispatch.
-
-Native Node scheduler tests require a Node version that can load TypeScript and
-an installed `@earendil-works/pi-coding-agent` npm package reachable through Node
-resolution. The command above exposes global npm packages through `NODE_PATH`.
-If Pi's npm package is installed elsewhere, set `NODE_PATH` to its containing
-`node_modules` directory instead. Python's embedded Node runner needs the same
-`NODE_PATH`. A compiled-only Pi executable is insufficient
-for these tests; they do not universally run with just `pi` installed.
+Native scheduler and dispatch tests belong to Pi; see the
+[canonical scheduler spec](https://github.com/Osso/pi/blob/main/docs/specs/periodic-checks.md#tests-asserting-this-spec).
+Python discovery retains `tests/test_periodic_runtime.py` with
+`tests/fixtures/periodic-runtime-provider.ts` as installed-Pi integration
+acceptance. It uses Pi's bundled extension without explicit `--extension`
+injection, private temporary state, and an offline faux provider. Set
+`PI_TEST_BINARY` to select the installed Pi under test. These cases cover
+scheduled/manual audits and status during held model/tool turns; this documentation
+update does not claim they pass against the new bundle.
 
 History-attachment tests additionally use `@xterm/headless` 5.5.0 to assert actual
 normal-buffer scrollback, not merely emitted bytes. It is a test-only dependency
