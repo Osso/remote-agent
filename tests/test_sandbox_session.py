@@ -314,7 +314,22 @@ class SandboxSessionTests(unittest.TestCase):
         self.assertEqual(self.state()["containers"][second]["status"], "running")
         self.assert_success(self.invoke("--cancel", "first/id"))
         removals = [c for c in self.state()["commands"] if c[:2] == ["docker", "rm"]]
-        self.assertEqual(removals, [["docker", "rm", "--force", first]])
+        self.assertEqual(removals, [["docker", "rm", "--force", "--volumes", first]])
+
+    def test_cancel_exited_container_removes_anonymous_volumes(self):
+        name = container_name("finished")
+        self.save(
+            {
+                "containers": {name: {"label": "finished", "status": "exited"}},
+                "commands": [],
+            }
+        )
+        self.assert_success(self.invoke("--cancel", "finished"))
+        self.assertEqual(self.state()["containers"], {})
+        self.assertEqual(
+            self.state()["commands"][-1],
+            ["docker", "rm", "--force", "--volumes", name],
+        )
 
     def test_session_id_creates_named_labeled_container_on_configured_network(self):
         conversation = "d50a3efb-4be5-41b5-a88b-70295b1c7b57"
@@ -358,6 +373,17 @@ class SandboxSessionTests(unittest.TestCase):
         state["containers"][container_name("one")]["status"] = "exited"
         self.save(state)
         self.assert_success(self.invoke("--resume", "one", "next"))
+        commands = self.state()["commands"]
+        removals = [c for c in commands if c[:2] == ["docker", "rm"]]
+        self.assertEqual(
+            removals, [["docker", "rm", "--volumes", container_name("one")]]
+        )
+        replacement = next(
+            i
+            for i, command in enumerate(commands)
+            if command[:2] == ["docker", "create"] and "next" in command
+        )
+        self.assertLess(commands.index(removals[0]), replacement)
         self.assertEqual(
             self.state()["containers"][container_name("one")]["args"],
             ["--resume", "one", "next"],
@@ -380,6 +406,7 @@ class SandboxSessionTests(unittest.TestCase):
         for flag in ("--init", "--read-only", "--interactive"):
             self.assertIn(flag, create)
         self.assertNotIn("--tty", create)
+        self.assertNotIn("--tmpfs", create)
         expected = {
             "--user": "1000:1000",
             "--cap-drop": "ALL",
@@ -389,7 +416,6 @@ class SandboxSessionTests(unittest.TestCase):
             "--cpus": "4",
             "--network": "clank-sandbox",
             "--sysctl": "net.ipv6.conf.all.disable_ipv6=1",
-            "--tmpfs": "/tmp:rw,exec,nosuid,nodev,size=512m",
             "--workdir": "/workspace",
         }
         for flag, value in expected.items():
@@ -402,6 +428,7 @@ class SandboxSessionTests(unittest.TestCase):
         self.assertEqual(
             set(mounts),
             {
+                "type=volume,dst=/tmp",
                 "type=volume,src=clank-pi-home,dst=/home/agent",
                 "type=volume,src=clank-pi-workspace,dst=/workspace",
                 f"type=bind,src={self.secret},dst=/run/secrets/openrouter.key,readonly",
@@ -498,6 +525,12 @@ class SandboxSessionTests(unittest.TestCase):
         state = self.state()
         command = next(c for c in state["commands"] if c[:2] == ["docker", "run"])
         self.assertIn("--rm", command)
+        self.assertNotIn("--tmpfs", command)
+        mounts = [command[i + 1] for i, arg in enumerate(command) if arg == "--mount"]
+        self.assertEqual(
+            [mount for mount in mounts if "dst=/tmp" in mount],
+            ["type=volume,dst=/tmp"],
+        )
         self.assertNotIn("--name", command)
         self.assertNotIn("--label", command)
         self.assertEqual(command[command.index("--network") + 1], "none")

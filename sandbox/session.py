@@ -145,8 +145,8 @@ def container_options(config, network, tty):
         "8.8.8.8",
         "--sysctl",
         "net.ipv6.conf.all.disable_ipv6=1",
-        "--tmpfs",
-        "/tmp:rw,exec,nosuid,nodev,size=512m",
+        "--mount",
+        "type=volume,dst=/tmp",
         "--mount",
         f"type=volume,src={config['home_volume']},dst=/home/agent",
         "--mount",
@@ -223,7 +223,7 @@ def run_session(config, arguments, conversation):
     if status is not None:
         if status != "exited":
             raise ValueError(f"refusing container {name}: conversation is {status}")
-        checked_command(["docker", "rm", name])
+        checked_command(["docker", "rm", "--volumes", name])
     checked_command(
         [
             "docker",
@@ -268,7 +268,7 @@ def main(arguments=None):
         if cancel:
             name = container_name(conversation)
             if inspect_owned_container(name, conversation) is not None:
-                checked_command(["docker", "rm", "--force", name])
+                checked_command(["docker", "rm", "--force", "--volumes", name])
             return 0
         return run_session(load_config(path), arguments, conversation)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
