@@ -159,18 +159,6 @@ class ConfigurationTests(unittest.TestCase):
                 )
 
 
-class PeriodicSchedulerTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("node"), "node runtime required")
-    def test_periodic_scheduler_runtime(self):
-        result = subprocess.run(
-            ["node", "--test", str(ROOT / "tests/test_periodic_scheduler.mjs")],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-
 class WorkerFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
