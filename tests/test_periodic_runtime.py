@@ -113,8 +113,6 @@ class RuntimeFixture:
                     "--no-skills",
                     "--no-themes",
                     "--no-prompt-templates",
-                    "--extension",
-                    str(REPO / "periodic-checks.ts"),
                     "--provider",
                     "periodic-runtime-faux",
                     "--model",

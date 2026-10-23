@@ -4,6 +4,7 @@ import base64
 import fcntl
 import importlib.util
 import io
+from itertools import product
 import json
 import os
 import pty
@@ -1316,7 +1317,7 @@ if 'show' in sys.argv:
             env={**self.env, **env},
         )
 
-    def test_deployed_config_is_private_and_used_by_worker_and_extension(self):
+    def test_deployed_config_is_private_and_used_by_worker(self):
         config = self.home / ".config/remote-agent"
         config.mkdir(parents=True, mode=0o755)
         for name in ("remote-hosts.json", "remote-projects.json"):
@@ -1350,113 +1351,80 @@ if 'show' in sys.argv:
         )
         self.assertEqual(worker.returncode, 0, worker.stderr)
         self.assertEqual(json.loads(worker.stdout), {"projects": FIXTURE_PROJECTS})
-        extension = subprocess.run(
-            ["node", "--test", str(installed / "tests/test_periodic_scheduler.mjs")],
-            env=self.env,
-            text=True,
-            capture_output=True,
-        )
-        self.assertEqual(extension.returncode, 0, extension.stdout + extension.stderr)
 
-    def test_bundle_contains_generic_extension_without_project_checklist(self):
+    def test_bundle_excludes_periodic_extension_and_keeps_runtime_acceptance(self):
         archive = base64.b64decode(self.module.bundle_files())
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
             names = bundle.getnames()
-            self.assertIn("periodic-checks.ts", names)
-            for helper in (
+            for name in (
+                "periodic-checks.ts",
+                "tests/test_periodic_scheduler.mjs",
                 "tests/periodic_scheduler_dispatch.mjs",
                 "tests/periodic_scheduler_fixture.mjs",
+            ):
+                self.assertNotIn(name, names)
+            for name in (
+                "remote-agent.py",
+                "remote-agent-worker.py",
+                "remote-agent-user.py",
+                "agents.slice",
                 "tests/test_periodic_runtime.py",
                 "tests/fixtures/periodic-runtime-provider.ts",
             ):
-                self.assertIn(helper, names)
-                with bundle.extractfile(helper) as content:
-                    self.assertEqual(content.read(), (ROOT / helper).read_bytes())
-            self.assertEqual(
-                [name for name in names if name.endswith(".ts")],
-                ["periodic-checks.ts", "tests/fixtures/periodic-runtime-provider.ts"],
-            )
+                with bundle.extractfile(name) as content:
+                    self.assertEqual(content.read(), (ROOT / name).read_bytes())
             self.assertEqual(
                 [name for name in names if name.endswith(".md")], ["README.md"]
             )
-            with bundle.extractfile("periodic-checks.ts") as content:
-                self.assertEqual(
-                    content.read(), (ROOT / "periodic-checks.ts").read_bytes()
-                )
 
-    def install_extension(self, route, agent_dir=None):
-        if route == "local":
-            env = {} if agent_dir is None else {"PI_CODING_AGENT_DIR": str(agent_dir)}
-            with mock.patch.dict(os.environ, env):
-                self.module.link_controller()
-        else:
-            env = {} if agent_dir is None else {"PI_CODING_AGENT_DIR": str(agent_dir)}
-            archive = io.BytesIO()
-            with tarfile.open(fileobj=archive, mode="w") as bundle:
-                for name in ("tmux.conf", "agents.slice", "remote-agent-worker.py"):
-                    bundle.add(ROOT / name, arcname=name)
-                extension = b"export default function () {}\n"
-                entry = tarfile.TarInfo("periodic-checks.ts")
-                entry.size = len(extension)
-                bundle.addfile(entry, io.BytesIO(extension))
-            result = self.deploy(
-                archive=base64.b64encode(archive.getvalue()).decode(), **env
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr)
-
-    def extension_paths(self, route):
-        home = self.local_home if route == "local" else self.home
-        source = (
-            ROOT if route == "local" else home / "Projects/cli/remote-agent"
-        ) / "periodic-checks.ts"
-        return home / ".config/pi/agent/extensions/periodic-checks.ts", source
-
-    def test_user_extension_link_created_and_idempotent_in_both_routes(self):
-        for route in ("local", "remote"):
-            with self.subTest(route=route):
-                link, source = self.extension_paths(route)
-                self.install_extension(route)
-                self.assertTrue(link.is_symlink())
-                self.assertEqual(link.readlink(), source)
-                inode = link.lstat().st_ino
-                self.install_extension(route)
-                self.assertEqual(link.lstat().st_ino, inode)
-                self.assertEqual(link.read_bytes(), source.read_bytes())
-
-    def test_user_extension_honors_pi_agent_dir_in_both_routes(self):
-        for route in ("local", "remote"):
-            with self.subTest(route=route):
-                default, source = self.extension_paths(route)
-                directory = default.parents[3] / "custom-agent"
-                self.install_extension(route, directory)
-                link = directory / "extensions/periodic-checks.ts"
-                self.assertEqual(link.readlink(), source)
-                self.assertFalse(default.exists())
-
-    def test_user_extension_refuses_unmanaged_file_in_both_routes(self):
-        for route in ("local", "remote"):
-            with self.subTest(route=route):
-                link, _ = self.extension_paths(route)
-                link.parent.mkdir(parents=True)
-                link.write_text("user extension")
-                with self.assertRaisesRegex(
-                    (RuntimeError, FileExistsError), "unmanaged"
-                ):
-                    self.install_extension(route)
-                self.assertFalse(link.is_symlink())
-                self.assertEqual(link.read_text(), "user extension")
-
-    def test_user_extension_refuses_foreign_dangling_link_in_both_routes(self):
-        for route in ("local", "remote"):
-            with self.subTest(route=route):
-                link, _ = self.extension_paths(route)
-                link.parent.mkdir(parents=True)
-                foreign = self.home / "foreign-extension.ts"
-                link.symlink_to(foreign)
-                with self.assertRaisesRegex((RuntimeError, FileExistsError), "foreign"):
-                    self.install_extension(route)
-                self.assertEqual(link.readlink(), foreign)
+    def test_deployment_leaves_pi_extensions_untouched_in_both_routes(self):
+        cases = product(
+            ("local", "remote"), (False, True), ("absent", "file", "symlink")
+        )
+        for route, configured, existing in cases:
+            home = self.local_home if route == "local" else self.home
+            default = home / ".config/pi/agent"
+            directory = home / "custom-agent" if configured else default
+            extension = directory / "extensions/periodic-checks.ts"
+            env = {"PI_CODING_AGENT_DIR": str(directory)} if configured else {}
+            with self.subTest(route=route, configured=configured, existing=existing):
+                if existing != "absent":
+                    extension.parent.mkdir(parents=True, exist_ok=True)
+                    if existing == "file":
+                        extension.write_text("user extension\n")
+                    else:
+                        extension.symlink_to(home / "foreign-extension.ts")
+                try:
+                    if route == "local":
+                        with mock.patch.dict(os.environ, env):
+                            self.module.link_controller()
+                        self.assertEqual(
+                            (home / ".local/bin/remote-agent").readlink(),
+                            ROOT / "remote-agent.py",
+                        )
+                    else:
+                        result = self.deploy(**env)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(
+                            (home / ".local/bin/wl-paste").readlink(),
+                            home / "Projects/cli/remote-agent/remote-agent-worker.py",
+                        )
+                    if existing == "absent":
+                        self.assertFalse(directory.exists())
+                    elif existing == "file":
+                        self.assertFalse(extension.is_symlink())
+                        self.assertEqual(extension.read_text(), "user extension\n")
+                    else:
+                        self.assertEqual(
+                            extension.readlink(), home / "foreign-extension.ts"
+                        )
+                    if configured:
+                        self.assertFalse(default.exists())
+                finally:
+                    extension.unlink(missing_ok=True)
+                    if extension.parent.exists():
+                        extension.parent.rmdir()
+                        directory.rmdir()
 
     def test_deploy_preserves_existing_tmux_configuration(self):
         installed = self.home / "Projects/cli/remote-agent"

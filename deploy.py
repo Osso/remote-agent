@@ -21,7 +21,6 @@ FILES = (
     "remote-agent.py",
     "remote-agent-worker.py",
     "remote-agent-user.py",
-    "periodic-checks.ts",
     "agents.slice",
     "tests/test_remote_agent.py",
     "tests/test_dtach.py",
@@ -31,9 +30,6 @@ FILES = (
     "tests/test_history_attach.py",
     "tests/history_scrollback_fixture.cjs",
     "tests/test_cross_user.py",
-    "tests/test_periodic_scheduler.mjs",
-    "tests/periodic_scheduler_dispatch.mjs",
-    "tests/periodic_scheduler_fixture.mjs",
     "tests/test_periodic_runtime.py",
     "tests/fixtures/periodic-runtime-provider.ts",
     "README.md",
@@ -67,10 +63,6 @@ def link(path,source):
   raise RuntimeError('Not replacing foreign symlink '+str(path))
  if not path.is_symlink():
   path.symlink_to(source)
-agent_dir=pathlib.Path(os.environ['PI_CODING_AGENT_DIR']).expanduser() if os.environ.get('PI_CODING_AGENT_DIR') else home/'.config/pi/agent'
-extension=agent_dir/'extensions/periodic-checks.ts'
-extension.parent.mkdir(parents=True,exist_ok=True)
-link(extension,destination/'periodic-checks.ts')
 (home/'.local/bin').mkdir(parents=True,exist_ok=True)
 link(home/'.local/bin/wl-paste',destination/'remote-agent-worker.py')
 def slice_fragment(user):
@@ -184,27 +176,7 @@ def deploy_remote(profile, target, program, request):
     )
 
 
-def install_periodic_extension():
-    configured = os.environ.get("PI_CODING_AGENT_DIR")
-    agent_dir = (
-        Path(configured).expanduser()
-        if configured
-        else Path.home() / ".config/pi/agent"
-    )
-    extension = agent_dir / "extensions/periodic-checks.ts"
-    source = ROOT / "periodic-checks.ts"
-    extension.parent.mkdir(parents=True, exist_ok=True)
-    if extension.is_symlink():
-        if extension.readlink() != source:
-            raise FileExistsError(f"Not replacing foreign symlink: {extension}")
-    elif extension.exists():
-        raise FileExistsError(f"Not replacing unmanaged extension: {extension}")
-    else:
-        extension.symlink_to(source)
-
-
 def link_controller():
-    install_periodic_extension()
     executable = Path.home() / ".local/bin/remote-agent"
     if executable.is_symlink():
         executable.unlink()
