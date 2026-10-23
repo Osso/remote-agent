@@ -6,6 +6,7 @@ An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host 
 
 - [x] Run Pi plus clank `td` as an unprivileged container user with a read-only root filesystem, only dedicated OpenRouter credentials and model `deepseek/deepseek-v4.1-flash-1017`.
 - [x] Keep host homes, credentials, SSH agents and container-management sockets inaccessible; persist only dedicated workspace and Pi state.
+- [x] Use a per-container anonymous disk-backed Docker volume for `/tmp` instead of the 512MiB tmpfs; discard it on container cancellation/replacement. Add no host mounts; preserve the read-only root, 4GB RAM limit and private Pi-home/workspace volumes.
 - [x] Deny container-initiated host, LAN, private, metadata and IPv6 traffic while allowing public IPv4 internet.
 - [x] Install reviewed td read-only with self-update disabled; do not authenticate clank or install it on the host.
 - [x] Preserve normal remote-agent start, resume, SSH history export, Mosh attachment/detach and scoped cancellation; cancellation must terminate only the selected conversation's container.
