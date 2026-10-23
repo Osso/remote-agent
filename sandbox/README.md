@@ -58,9 +58,11 @@ Deployed from setup `b61d502`, clank `804ebd1`; conversation `50a99d03` restarte
 
 | Artifact | Image ID / SHA-256 |
 | --- | --- |
-| Runtime image | `cab07cead199d2ed89f9e7a2a92f83ddb47e1c0e457e7758fbc518010285b74e` |
+| Runtime image | `8efa97f7f15778ddd7df78327d76c5f8ec29aa1c55bdedbb7db2ccf76e73d237` (setup `4413bd9`) |
 | td | `87690f978c1903b25bed412f7be609fdeaeebcf28c10d4e7f8f66fb14667980d` |
-| Pi | `356916ce5d86183ca3e3c46007d6b6163a64d26d9d849188fbec5254f72dbd39` |
+| Pi | `acbde2a25199a6a73fea83cb120c6259ea1693d6a48f3ed2cfff77bb460e7041` (Pi `2a208ddef`) |
+
+Verified in the container: `ask_supervisor` answered on `openrouter/deepseek/deepseek-v4.1-flash-1017`; `spawn_agent` `implement` and `verifier` children run on the same model; a `--prompt-file` sent while the conversation was mid-run reached its transcript at restart.
 
 ### Independently reconciled installed inventory — 2026-10-22 (superseded)
 
