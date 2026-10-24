@@ -14,7 +14,7 @@ Configured controls follow; the verification section distinguishes observed enfo
 - `/tmp` uses a per-container anonymous disk-backed Docker volume instead of the 512MiB tmpfs, with no host bind mount. It is discarded on container cancellation/replacement; private Pi-home/workspace volumes remain unchanged. Temporary storage now shares host disk capacity, without a separate volume quota. Unlike the old tmpfs, the volume does not request `nosuid,nodev`; `no-new-privileges` and dropped capabilities remain enabled.
 - Host nftables rules apply to the dedicated `br-clank` interface before Docker forwarding: deny host input, nonpublic IPv4/connected routes, all IPv6, and unsolicited inbound traffic. Public IPv4 remains subject to Docker's normal rules. Public DNS servers are explicit; no LAN DNS proxy is configured. Same-bridge communication is disabled.
 - The firewall service must be active before the session wrapper starts a container. The installed service is enabled and ordered before Docker; a full host reboot has not been tested. Containers do not automatically restart; remote-agent recovery goes through the checked wrapper.
-- Dedicated key is a read-only file mount, not an image layer or Docker environment/config value. Pi's launcher reads it without printing it and constructs an OpenRouter-only environment. Pi implementations for other providers remain built in, but no credentials for them are provisioned. Skills, context files, prompt templates and themes are disabled. Built-in first-party extensions load (sub-agents, mailbox, goal, loop); `settings.json` `disabledExtensions` drops host-only ones (Claude memory, Codex, bwrap, session archive, self-restart, debug REPL). Sub-agents run in-process on the same OpenRouter model: `settings.json` `agents` overrides Pi's built-in `implement`/`explore`/`verifier`/`reviewer`/`documentation-update` profiles, which otherwise pin unreachable `openai/*` models. The resident Supervisor (goal review, `ask_supervisor`) uses `supervisorModel` on the same DeepSeek model with `PI_KB_DIR=/home/agent/kb`; it needs Pi `45e67c2b1` or later, so full deploys pass `--pi-install` pointing at a build of that revision (current deployed Pi build: `dbc28f233`, supplied from `~/.local/share/pi` after the approved laptop/agent-server deployment). Bundled `/periodic-checks` and `/exit` require no user-extension files; [periodic checks](../README.md#optional-periodic-checks) remain inactive without a project checklist.
+- Dedicated key is a read-only file mount, not an image layer or Docker environment/config value. Pi's launcher reads it without printing it and constructs an OpenRouter-only environment. Pi implementations for other providers remain built in, but no credentials for them are provisioned. Skills, context files, prompt templates and themes are disabled. Built-in first-party extensions load (sub-agents, mailbox, goal, loop); `settings.json` `disabledExtensions` drops host-only ones (Claude memory, Codex, bwrap, session archive, self-restart, debug REPL). Sub-agents run in-process on the same OpenRouter model: `settings.json` `agents` overrides Pi's built-in `implement`/`explore`/`verifier`/`reviewer`/`documentation-update` profiles, which otherwise pin unreachable `openai/*` models. The resident Supervisor (goal review, `ask_supervisor`) uses `supervisorModel` on the same DeepSeek model with `PI_KB_DIR=/home/agent/kb`; it needs Pi `45e67c2b1` or later, so full deploys pass `--pi-install` pointing at a build of that revision (current deployed build: see [installed inventory](#installed-inventory--2026-10-24)). Bundled `/periodic-checks` and `/exit` require no user-extension files; [periodic checks](../README.md#optional-periodic-checks) remain inactive without a project checklist.
 - Containers share the host kernel; container/runtime vulnerabilities remain a residual risk. Code in a container unavoidably can read/exfiltrate its own OpenRouter key and execute other downloaded programs from writable volumes. Use a dedicated spending-capped key. Public internet access is not a domain allowlist. Root/Docker administrators can bypass these boundaries.
 
 ## Deploy
@@ -22,12 +22,12 @@ Configured controls follow; the verification section distinguishes observed enfo
 From the remote-agent repository:
 
 ```text
-sandbox/deploy.sh --host agent-server --key-file /private/path/openrouter.key
+sandbox/deploy.sh --host agent-server --pi-install /home/osso/.local/share/pi
 ```
 
-Omit `--key-file` on redeploy to keep the provisioned key.
+`--pi-install` selects the updated Pi installation for a full deployment. First provisioning also requires `--key-file /private/path/openrouter.key`; omit it on redeploy to preserve the provisioned credentials.
 
-Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. The image includes Arch `wine` so the server-provided MSVC `cl.exe` can run for `td check`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes. For a host-wrapper-only change, `sandbox/deploy.sh --wrappers-only` updates routing without rebuilding td/Pi or touching credentials. `sandbox/deploy.sh --runtime-only` rebuilds only the Pi launcher's image layer; it preserves the audited td/Pi bytes and credentials.
+Deployment preserves existing project maps and workloads, installs only the `clank` project entry, and does not log in to clank, configure MCP, install Ghidra/compiler toolchains, or install host `td`. The image includes Arch `wine` so the server-provided MSVC `cl.exe` can run for `td check`. Key contents never belong in tracked files. The ordinary remote-agent worker deployment remains `./deploy.sh`; use both when its protocol changes. For a host-wrapper-only change, `sandbox/deploy.sh --wrappers-only` updates routing without rebuilding td/Pi or touching credentials. `sandbox/deploy.sh --runtime-only` rebuilds only the Pi launcher's image layer; it preserves the audited td/Pi bytes and credentials and cannot update Pi.
 
 ## Use
 
@@ -57,7 +57,21 @@ Wrapper `0d7a2b0` deployed through `sandbox/deploy.sh --wrappers-only`. Inside t
 - Resume/TTY: `/tmp/clank-history-attach-proof.json` records normal SSH-history preload followed by actual Mosh attachment to the same conversation, restored response, one approved harmless `end_turn`, detach and exit0. `/tmp/clank-repaint-proof.json` separately records same-size 48×200 history before live-screen clear, live model footer/response/workspace, detach and exit0.
 - Scoped cancellation: main observed all four exact host identities for proof A (init, Pi, exec parent, sleep) gone while B and the original conversation remained running. B then restarted with network restrictions intact and was canceled. Backing identity evidence is remote `~/.local/share/clank-sandbox/cancel-proof.json`; it was not reread during this docs-only update.
 
-### Installed inventory — 2026-10-23
+### Installed inventory — 2026-10-24
+
+Full deployment used setup `642a63ef`, audited clank `804ebd15` and Pi `9fbbb78c0`, through the [deployment command](#deploy) without `--key-file`. The same conversation `50a99d03-d10f-4e31-a252-e7fc85bd349d` runs in deterministic container `clank-pi-78d0ab79a48e37d22876fab3180cf226`.
+
+| Artifact | Image ID / SHA-256 |
+| --- | --- |
+| Runtime image | `sha256:932cfb12e316972561ff94e8d0972769d94d5cbf6a59d75d6fc70c731e15b3f3` |
+| td (unchanged) | `87690f978c1903b25bed412f7be609fdeaeebcf28c10d4e7f8f66fb14667980d` |
+| Pi (`9fbbb78c0`) | `b9ffbc7cf93f5cc8b390039e73dea4af4cf127e0ea278a2a3c500167261e32e1` |
+
+Proof artifacts: `/var/tmp/pi-archive-deploy/clank-identity-final.json`, `clank-inventory-final.json` and `clank-normal-attach.json` in the same directory. Selected saved-record fields and conversation identity, named home/workspace volumes, and secret inode/size/mtime/mode remained unchanged. Read-only root, all-capability drop and no-new-privileges remained enabled. Replacement discarded the old anonymous `/tmp` as documented; named volumes persisted. Natural running main PID7/generation20 and resident Supervisor PID957 were healthy on the recorded Pi hash.
+
+Normal actual-TTY attachment restored history over SSH, reached Mosh in 5.1 seconds, then detached only with Ctrl+backslash, exit0. No session cancellation, game commands or forced model prompt. This acceptance adds no network, host-reboot or model-API coverage. td vendor CJS/SEA builder warnings persisted with unchanged td hash; this is not a warning-free build claim. This inventory covers only the Clank target.
+
+### Installed inventory — 2026-10-23 (superseded)
 
 Deployed from setup `c425b21`, clank `804ebd1`, Pi `dbc28f233`; conversation `50a99d03` resumed with its existing workspace, credentials and disk-backed `/tmp`. Inventory reports bundled `periodic-checks` and `exit-command`. A disposable TUI returned disabled scheduler status and exited through `/exit`; no periodic checklist was installed. Normal attachment and detach were checked without exiting the active conversation.
 
