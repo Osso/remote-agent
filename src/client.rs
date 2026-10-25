@@ -372,7 +372,7 @@ impl Attachment {
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
         loop {
             tokio::select! {
-                frame = incoming.recv() => if let Some(code) = self.receive(frame.context("network reader ended")??, writer).await? { return Ok(code); },
+                frame = incoming.recv() => if let Some(code) = self.receive(frame.context("network reader ended")??, writer, terminal).await? { return Ok(code); },
                 data = input.recv() => match data {
                     Some(data) => {
                         let actions = self.decoder.feed(&data);
@@ -383,29 +383,41 @@ impl Attachment {
                 _ = tick.tick() => {
                     let actions = self.decoder.finish();
                     if self.send_actions(actions, writer).await? { return Ok(0); }
-                    let size = terminal.size()?;
-                    if size != self.size {
-                        self.size = size;
-                        self.renderer.resize_physical(size);
-                        send_frame(writer, &ClientFrame::Resize { size }).await?;
-                        if let Some(update) = &self.latest {
-                            if update.size.rows <= size.rows && update.size.cols <= size.cols {
-                                write_terminal(&self.renderer.render(update)?)?;
-                            }
-                        }
-                    }
+                    self.refresh_physical_size(terminal, writer).await?;
                 },
             }
         }
+    }
+
+    async fn refresh_physical_size(
+        &mut self,
+        terminal: &TerminalGuard,
+        writer: &mut quinn::SendStream,
+    ) -> Result<()> {
+        let size = terminal.size()?;
+        if size == self.size {
+            return Ok(());
+        }
+        self.size = size;
+        self.renderer.resize_physical(size);
+        send_frame(writer, &ClientFrame::Resize { size }).await?;
+        if let Some(update) = &self.latest {
+            if update.size.rows <= size.rows && update.size.cols <= size.cols {
+                write_terminal(&self.renderer.render(update)?)?;
+            }
+        }
+        Ok(())
     }
 
     async fn receive(
         &mut self,
         frame: ServerFrame,
         writer: &mut quinn::SendStream,
+        terminal: &TerminalGuard,
     ) -> Result<Option<i32>> {
         match frame {
             ServerFrame::Display { update } => {
+                self.refresh_physical_size(terminal, writer).await?;
                 let Some(update) = self.prepare_display(update) else {
                     return Ok(None);
                 };
