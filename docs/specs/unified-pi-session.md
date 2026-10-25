@@ -59,7 +59,7 @@ No passing tests establish the proposed replacement contract.
 ## Known gaps (current cycle)
 
 - [ ] Review session command scope and reconnect/replay behavior before implementation; specify retention units/default and how a fresh attachment obtains valid terminal state after history expires.
-- [ ] Choose the Pi clipboard integration after inspecting the actual image-read path.
+- [ ] Choose the Pi clipboard integration; the existing image-read path has been inspected, but the integration remains unsettled.
 - [ ] Define acceptance for provider login and transparent image paste on supported platforms.
 - [ ] Define a migration approach that preserves existing conversations, running processes, and configuration.
 
@@ -67,6 +67,6 @@ No passing tests establish the proposed replacement contract.
 
 - Claude and other agent backends: user selected Pi only.
 - Mosh wire compatibility and predictive local echo: user selected replacement of both ends and no predictive echo.
-- File `sync` and `fetch`: not selected in the first-version helper scope.
+- File `sync` and `fetch`: not selected for the current scope; this is not a permanent rejection.
 - Implementation or deployment during this design stage.
 - Restarting or cancelling existing sessions as a migration shortcut.
