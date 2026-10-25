@@ -530,22 +530,29 @@ class NativeRustAttachTests(unittest.TestCase):
             "behavior", result="passed", phases=[stage["name"] for stage in self.stages]
         )
 
-    def test_detach_remains_responsive_while_ssh_control_is_unavailable(self):
+    def test_unavailable_ssh_bootstrap_preserves_terminal_and_server(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
         offline = self.root / "ssh-offline"
         offline.touch()
         try:
             self.attach()
-            output = self.drain(0.5)
-            self.assertIn(b"reconnecting", output)
-            began = time.monotonic()
-            self.detach()
-            self.assertLess(
-                time.monotonic() - began,
-                2,
-                "offline detach must not wait for network retries",
-            )
+            output = bytearray()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                output.extend(self.drain(0.05))
+                pid, status = os.waitpid(self.client, os.WNOHANG)
+                if pid:
+                    self.reaped.add(pid)
+                    self.client = None
+                    self.assertEqual(os.waitstatus_to_exitcode(status), 1)
+                    break
+            else:
+                self.fail("unavailable initial SSH bootstrap did not fail promptly")
+            self.assertIn(b"fixture SSH control transport is unavailable", output)
+            self.assertEqual(termios.tcgetattr(self.master), self.original_termios)
+            os.close(self.master)
+            self.master = None
         finally:
             offline.unlink()
         after = self.cli("status", "bulk-proof")
