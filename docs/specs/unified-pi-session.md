@@ -13,6 +13,7 @@ A proposed single Rust project replaces the needed remote-agent, detach, and Mos
 - [ ] Retain Pi provider login.
 - [ ] Paste a local clipboard image into remote Pi without a separate manual `paste` command.
 - [ ] Keep bounded, configurable output history; clearly report expired output when a requested replay position is no longer retained.
+- [ ] Allow simultaneous attached clients; size the shared Pi PTY to the smallest attached terminal dimensions.
 
 ### Proposed session and transport acceptance
 
@@ -30,7 +31,7 @@ These details require user review; they are not a claim that every existing CLI 
 - [ ] Make image data available before Pi consumes the paste; do not paste a stale image after an empty clipboard or transfer failure.
 - [ ] Preserve ordinary text paste and its terminal input framing.
 - [ ] Transfer clipboard contents on demand, not by continuously synchronizing the clipboard.
-- [ ] Associate the image with the intended attached session and account.
+- [ ] Associate each paste with the initiating client's clipboard and intended session/account, including simultaneous attachments; do not let another client's image replace it.
 
 ## How it works
 

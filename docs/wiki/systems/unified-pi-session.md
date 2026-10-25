@@ -35,6 +35,10 @@ This is not an implementation choice for a specific transport library. Authentic
 
 The user selected bounded output history. When old output expires, an arbitrary retained byte tail is not a sufficient terminal-state checkpoint: escape sequences, cursor position, and active terminal modes can depend on preceding bytes. Fresh attachment and expired-offset recovery need a valid state baseline plus ordered retained output, or another demonstrated reconstruction method. This requirement may retain terminal parsing through an existing library; a complete removal of server terminal emulation is not yet justified.
 
+## Simultaneous attachments
+
+The user selected simultaneous clients with the shared PTY using the smallest attached terminal dimensions. Output delivery positions belong to individual clients, not one global acknowledgement. The implementation still needs behavioral proof for join/leave/resize ordering and for paste identity when clients interact concurrently.
+
 ## Current image-paste boundary
 
 Pi's `packages/coding-agent/src/modes/interactive/interactive-mode.ts` maps the editor's image-paste action to `handleClipboardImagePaste()`, which invokes `readClipboardImage()`. On headless Linux, `packages/coding-agent/src/utils/clipboard-image.ts` reads image types and bytes through `wl-paste`.
