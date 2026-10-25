@@ -1,0 +1,454 @@
+"""Native CLI -> QUIC -> session PTY -> real Pi bulk-output regression.
+
+Run directly with Python on Linux. REMOTE_AGENT_RUST_BIN overrides target/debug/
+remote-agent-rs. NODE_PATH and PI_TUI_SOURCE may override the local Pi checkout.
+Only SSH bootstrap is substituted; no real account, provider, or model is used.
+Evidence, including failed runs, remains in /var/tmp/pi-resize-fix/rust-cli/.
+"""
+
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+import pty
+import re
+import select
+import shlex
+import shutil
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import termios
+import time
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "tests/fixtures/mosh-resize.ts"
+EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-cli")
+
+
+def ssh_bootstrap():
+    """Execute the real JSON control server, without invoking a remote shell."""
+    arguments = sys.argv[2:]
+    root = Path(os.environ["RUST_ATTACH_HOME"])
+    with (root / "ssh-events.jsonl").open("a") as stream:
+        stream.write(json.dumps({"argv": arguments, "pid": os.getpid()}) + "\n")
+    if arguments == ["-G", "fixture-host"]:
+        print("hostname 127.0.0.1")
+        return
+    if len(arguments) != 2 or arguments[0] != "fixture-host":
+        raise RuntimeError(f"unexpected SSH bootstrap arguments: {arguments!r}")
+    command = shlex.split(arguments[1])
+    expected = [str(root / ".local/bin/remote-agent-rs"), "__rpc"]
+    if command != expected:
+        raise RuntimeError(f"unexpected remote command: {command!r}")
+    os.execv(command[0], command)
+
+
+def process_exists(pid):
+    return Path(f"/proc/{pid}").exists()
+
+
+def children():
+    path = Path(f"/proc/self/task/{os.getpid()}/children")
+    return {int(value) for value in path.read_text().split()}
+
+
+class NativeRustAttachTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if sys.platform != "linux":
+            raise unittest.SkipTest(
+                "native session identity and cleanup require Linux /proc"
+            )
+        cls.binary = Path(
+            os.environ.get(
+                "REMOTE_AGENT_RUST_BIN", ROOT / "target/debug/remote-agent-rs"
+            )
+        ).resolve()
+        if not cls.binary.is_file() or not os.access(cls.binary, os.X_OK):
+            raise unittest.SkipTest(
+                f"native Rust binary absent: {cls.binary}; set REMOTE_AGENT_RUST_BIN"
+            )
+        cls.node = shutil.which("node")
+        if not cls.node:
+            raise unittest.SkipTest("native Pi fixture requires node")
+        cls.source = Path(
+            os.environ.get("PI_TUI_SOURCE", "/home/osso/Repos/pi/packages/tui/src")
+        ).resolve()
+        if not (cls.source / "tui.ts").is_file():
+            raise unittest.SkipTest(
+                f"Pi TUI source absent: {cls.source}; set PI_TUI_SOURCE"
+            )
+        cls.fixture_env = {
+            **os.environ,
+            "NODE_PATH": os.environ.get(
+                "NODE_PATH", "/home/osso/Repos/pi/node_modules"
+            ),
+            "PI_TUI_SOURCE": str(cls.source),
+        }
+        probe = subprocess.run(
+            [
+                cls.node,
+                "-e",
+                "require('@xterm/headless'); if(Number(process.versions.node.split('.')[0])<22)process.exit(1)",
+            ],
+            env=cls.fixture_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if probe.returncode:
+            raise unittest.SkipTest(
+                f"Node >=22 with @xterm/headless required: {probe.stderr}"
+            )
+
+    def setUp(self):
+        EVIDENCE.mkdir(parents=True, exist_ok=True)
+        self.root = Path(tempfile.mkdtemp(prefix="run-", dir=EVIDENCE))
+        self.state = self.root / ".local/state/remote-agent-rs/sessions/bulk-proof"
+        self.stages = []
+        self.master = None
+        self.client = None
+        self.reaped = set()
+        self.owned = set()
+        self.baseline_children = children()
+        self.libc = ctypes.CDLL(None, use_errno=True)
+        self.previous_subreaper = ctypes.c_int()
+        self.assertEqual(
+            self.libc.prctl(37, ctypes.byref(self.previous_subreaper), 0, 0, 0), 0
+        )
+        self.assertEqual(self.libc.prctl(36, 1, 0, 0, 0), 0)
+        self.addCleanup(self.cleanup_session)
+        self.env = {
+            **self.fixture_env,
+            "HOME": str(self.root),
+            "XDG_CONFIG_HOME": str(self.root / ".config"),
+            "XDG_STATE_HOME": str(self.root / ".local/state"),
+            "RUST_ATTACH_HOME": str(self.root),
+            "TERM": "xterm-256color",
+            "LANG": "C.UTF-8",
+        }
+        self.env.pop("REMOTE_AGENT_AGENT_SERVER_SSH", None)
+        self.configure_home()
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self.record(
+            "scope",
+            revision=revision,
+            binary=str(self.binary),
+            sha256=hashlib.sha256(self.binary.read_bytes()).hexdigest(),
+            command=[sys.executable, str(Path(__file__).resolve())],
+        )
+        print(f"Native Rust evidence: {self.root}", flush=True)
+
+    def record(self, action, **fields):
+        with (self.root / "ledger.jsonl").open("a") as stream:
+            stream.write(json.dumps({"action": action, **fields}) + "\n")
+
+    def configure_home(self):
+        config = self.root / ".config/remote-agent"
+        config.mkdir(parents=True)
+        bindir = self.root / ".local/bin"
+        bindir.mkdir(parents=True)
+        (bindir / "remote-agent-rs").symlink_to(self.binary)
+        project = self.root / "project"
+        project.mkdir()
+        wrapper = bindir / "pi-fixture"
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os\n"
+            f"os.execv({self.node!r}, [{self.node!r}, {str(FIXTURE)!r}, 'bulk-tui', {str(self.root / 'input.jsonl')!r}])\n"
+        )
+        wrapper.chmod(0o700)
+        ssh = bindir / "ssh"
+        ssh.write_text(
+            f"#!{sys.executable}\nimport runpy, sys\n"
+            f"sys.argv = [{str(Path(__file__).resolve())!r}, '--ssh', *sys.argv[1:]]\n"
+            "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+        )
+        ssh.chmod(0o700)
+        self.env["PATH"] = str(bindir) + os.pathsep + os.environ["PATH"]
+        (config / "remote-hosts.json").write_text(
+            json.dumps(
+                {
+                    "agent-server": {
+                        "ssh": "fixture-host",
+                        "home": str(self.root),
+                        "wrap": [],
+                        "windows_shell": False,
+                    },
+                }
+            )
+        )
+        (config / "remote-projects.json").write_text(
+            json.dumps(
+                {
+                    "demo": {"remote": str(project), "pi_executable": str(wrapper)},
+                }
+            )
+        )
+
+    def cli(self, *arguments, check=True):
+        result = subprocess.run(
+            [str(self.binary), *arguments],
+            env=self.env,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.record(
+            "cli",
+            argv=list(arguments),
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        if check:
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"CLI {arguments}: {result.stderr}\n{result.stdout}\n{self.server_log()}",
+            )
+            return json.loads(result.stdout)
+        return result
+
+    def server_log(self):
+        path = self.state / "server.log"
+        return path.read_text() if path.exists() else "no server.log"
+
+    def events(self):
+        path = self.root / "input.jsonl"
+        return (
+            [json.loads(line) for line in path.read_text().splitlines()]
+            if path.exists()
+            else []
+        )
+
+    def drain(self, duration):
+        output = bytearray()
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            if select.select(
+                [self.master], [], [], min(0.03, max(0, deadline - time.monotonic()))
+            )[0]:
+                try:
+                    data = os.read(self.master, 65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                output.extend(data)
+        return bytes(output)
+
+    def attach(self):
+        self.master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 46, 165, 0, 0))
+        self.original_termios = termios.tcgetattr(slave)
+        pid = os.fork()
+        if pid == 0:
+            os.close(self.master)
+            os.setsid()
+            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+            for fd in (0, 1, 2):
+                os.dup2(slave, fd)
+            if slave > 2:
+                os.close(slave)
+            os.execve(
+                str(self.binary), [str(self.binary), "attach", "bulk-proof"], self.env
+            )
+        os.close(slave)
+        self.client = pid
+        self.owned.add(pid)
+        self.record("attach", pid=pid)
+
+    def capture(self, phase, *, wait_phase=True):
+        output = bytearray()
+        deadline = time.monotonic() + 12
+        try:
+            while time.monotonic() < deadline:
+                output.extend(self.drain(0.1))
+                phase_ready = not wait_phase or any(
+                    event["phase"] == phase for event in self.events()
+                )
+                if phase_ready and output:
+                    output.extend(self.drain(1))
+                    return
+                if "unsupported" in self.server_log().lower():
+                    self.fail(f"Pi terminal startup rejected: {self.server_log()}")
+            self.fail(
+                f"phase {phase!r} timed out: {self.server_log()}; client={output.decode(errors='replace')}"
+            )
+        finally:
+            stage = {"name": phase, "output": output.decode(errors="replace")}
+            self.stages.append(stage)
+            (self.root / f"{len(self.stages):02d}-{phase}.ansi").write_bytes(output)
+            (self.root / "stages.json").write_text(json.dumps(self.stages))
+
+    def detach(self):
+        os.write(self.master, b"\x1c")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            pid, status = os.waitpid(self.client, os.WNOHANG)
+            if pid:
+                self.reaped.add(pid)
+                self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+                self.assertEqual(
+                    termios.tcgetattr(self.master),
+                    self.original_termios,
+                    "Ctrl-backslash must restore the original PTY attributes",
+                )
+                os.close(self.master)
+                self.master = None
+                self.client = None
+                return
+            self.drain(0.05)
+        self.fail("Ctrl-backslash did not detach the native CLI")
+
+    def analyze(self, stages, name):
+        result = subprocess.run(
+            [self.node, str(FIXTURE), "analyze-live"],
+            input=json.dumps(stages),
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        (self.root / f"{name}-terminal.json").write_text(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def assert_bulk(self, report, phase):
+        history = "\n".join(report["history"])
+        visible = "\n".join(report["visible"])
+        transcript = history + "\n" + visible
+        widgets = phase in ("widgets", "partial")
+        expected = [f"BULK_LINE_{index:03d}" for index in range(80)]
+        if widgets:
+            expected += ["TOOL_WIDGET", "EVENT_WIDGET"]
+        self.assertEqual(
+            re.findall(r"BULK_LINE_\d{3}|TOOL_WIDGET|EVENT_WIDGET", transcript),
+            expected,
+            f"{phase}: all 80 lines and widgets must occur once in order in terminal history + viewport",
+        )
+        self.assertIn("BULK_LINE_000", history)
+        self.assertIn("EVENT_WIDGET" if widgets else "BULK_LINE_079", visible)
+        if phase != "bulk":
+            self.assertIn("TABLE_EXPANDED", transcript)
+            self.assertNotIn("TABLE_PENDING", transcript)
+        else:
+            self.assertIn("TABLE_PENDING", transcript)
+        if phase == "partial":
+            self.assertIn("TOOL_WIDGET complete", visible)
+            self.assertNotIn("TOOL_WIDGET pending", transcript)
+
+    def test_bulk_output_and_reconnect_preserve_real_pi_history(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.assertTrue(started["running"], self.server_log())
+        runtime = json.loads((self.state / "runtime.json").read_text())
+        self.owned.update((runtime["pid"], runtime["child_pid"]))
+        self.assertEqual(started["pid"], runtime["pid"])
+        self.assertEqual(started["child_pid"], runtime["child_pid"])
+        self.assertEqual(
+            Path(f"/proc/{runtime['child_pid']}/cwd").resolve(), self.root / "project"
+        )
+        server_args = Path(f"/proc/{runtime['pid']}/cmdline").read_bytes().split(b"\0")
+        self.assertEqual(
+            server_args[1:4], [b"__serve", b"--state", os.fsencode(self.state)]
+        )
+        self.assertTrue(os.path.samefile(f"/proc/{runtime['pid']}/exe", self.binary))
+        self.attach()
+        self.capture("ready")
+        self.assertEqual(
+            {event["pid"] for event in self.events()}, {runtime["child_pid"]}
+        )
+        for key, phase in (
+            (b"b", "bulk"),
+            (b"r", "revised"),
+            (b"w", "widgets"),
+            (b"p", "partial"),
+        ):
+            os.write(self.master, key)
+            self.capture(phase)
+        reports = self.analyze(self.stages, "live")
+        for report in reports[1:]:
+            self.assert_bulk(report, report["name"])
+        self.detach()
+        detached = self.cli("status", "bulk-proof")
+        for field in ("pid", "child_pid", "conversation"):
+            self.assertEqual(detached[field], started[field])
+        self.assertTrue(detached["running"])
+        self.attach()
+        self.capture("reconnected", wait_phase=False)
+        self.assert_bulk(self.analyze([self.stages[-1]], "reconnected")[0], "partial")
+        reconnected = self.cli("status", "bulk-proof")
+        for field in ("pid", "child_pid", "conversation"):
+            self.assertEqual(reconnected[field], started[field])
+        self.assertEqual(
+            {event["pid"] for event in self.events()}, {runtime["child_pid"]}
+        )
+        self.detach()
+        self.record(
+            "behavior", result="passed", phases=[stage["name"] for stage in self.stages]
+        )
+
+    def cleanup_session(self):
+        errors = []
+        try:
+            if self.client and process_exists(self.client):
+                try:
+                    self.detach()
+                except (AssertionError, OSError, ChildProcessError) as error:
+                    errors.append(str(error))
+            if (self.state / "runtime.json").exists():
+                result = self.cli("cancel", "bulk-proof", check=False)
+                if result.returncode and "refusing to signal" not in result.stderr:
+                    errors.append(f"CLI cancellation failed: {result.stderr}")
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline:
+                self.owned.update(children() - self.baseline_children)
+                for pid in self.owned - self.reaped:
+                    try:
+                        reaped, _ = os.waitpid(pid, os.WNOHANG)
+                        if reaped:
+                            self.reaped.add(reaped)
+                    except ChildProcessError:
+                        pass
+                if not any(process_exists(pid) for pid in self.owned):
+                    break
+                time.sleep(0.05)
+            survivors = [pid for pid in self.owned if process_exists(pid)]
+            sockets = [
+                str(path)
+                for path in self.root.rglob("*")
+                if stat.S_ISSOCK(path.lstat().st_mode)
+            ]
+            self.record("cleanup", survivors=survivors, sockets=sockets, errors=errors)
+            self.assertEqual(
+                survivors, [], "owned native process leaked after actual CLI cancel"
+            )
+            self.assertEqual(sockets, [], "owned session socket leaked")
+            self.assertEqual(
+                children() - self.baseline_children, set(), "owned children leaked"
+            )
+            self.assertEqual(errors, [], "native CLI cleanup failed")
+        finally:
+            if self.master is not None:
+                os.close(self.master)
+            self.libc.prctl(36, self.previous_subreaper.value, 0, 0, 0)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--ssh"]:
+        ssh_bootstrap()
+    else:
+        unittest.main()
