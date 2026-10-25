@@ -220,9 +220,20 @@ struct Attachment {
     consecutive_failures: u32,
 }
 
+async fn fetch_ticket(
+    config: &Config,
+    host: &str,
+    user: Option<&str>,
+    request: &ControlRequest,
+) -> Result<Ticket> {
+    Ok(serde_json::from_value(
+        query_remote(config, host, user, request).await?,
+    )?)
+}
+
 pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str) -> Result<i32> {
     let request = ControlRequest::Attach { name: name.into() };
-    let ticket: Ticket = serde_json::from_value(query_remote(config, host, user, &request).await?)?;
+    let ticket = fetch_ticket(config, host, user, &request).await?;
     let hostname = query_ssh_hostname(config, host)?;
     let terminal = TerminalGuard::enter()?;
     let size = terminal.size()?;
@@ -247,17 +258,11 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                         let entropy = uuid::Uuid::new_v4().as_u128();
                         tokio::time::sleep(reconnect_delay(state.consecutive_failures, entropy))
                             .await;
-                        match query_remote(config, host, user, &request)
-                            .await
-                            .and_then(|reply| Ok(serde_json::from_value(reply)?))
-                        {
+                        match fetch_ticket(config, host, user, &request).await {
                             Ok(ticket) => current = ticket,
-                            Err(error) => {
-                                state.show_status(&format!(
-                                    "remote-agent-rs: reconnect control: {error:#}"
-                                ))?;
-                                continue;
-                            }
+                            Err(error) => state.show_status(&format!(
+                                "remote-agent-rs: reconnect control: {error:#}"
+                            ))?,
                         }
                     }
                 }

@@ -167,13 +167,7 @@ async fn serve_connection(
         } => (token, client, size, after),
         ClientFrame::Logs { token: presented } => {
             check_token(&presented, token)?;
-            let (reply, snapshot) = tokio::sync::oneshot::channel();
-            events.send(Event::Logs { reply }).await?;
-            let update = snapshot.await.context("session stopped before logs")?;
-            send_frame(&mut writer, &ServerFrame::Display { update }).await?;
-            writer.finish()?;
-            writer.stopped().await?;
-            return Ok(());
+            return send_logs_snapshot(writer, &events).await;
         }
         _ => bail!("first frame must authenticate the client"),
     };
@@ -211,6 +205,20 @@ async fn serve_connection(
     }
     connection.close(0u32.into(), b"attachment closed");
     result
+}
+
+/// Answer a one-shot logs request; the requester never joins the session.
+async fn send_logs_snapshot(
+    mut writer: quinn::SendStream,
+    events: &mpsc::Sender<Event>,
+) -> Result<()> {
+    let (reply, snapshot) = tokio::sync::oneshot::channel();
+    events.send(Event::Logs { reply }).await?;
+    let update = snapshot.await.context("session stopped before logs")?;
+    send_frame(&mut writer, &ServerFrame::Display { update }).await?;
+    writer.finish()?;
+    writer.stopped().await?;
+    Ok(())
 }
 
 fn check_token(presented: &str, token: &str) -> Result<()> {
