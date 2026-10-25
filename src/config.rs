@@ -84,7 +84,7 @@ impl Config {
         Ok((cwd, pi))
     }
 
-    fn find_pi(&self) -> Result<PathBuf> {
+    pub fn find_pi(&self) -> Result<PathBuf> {
         let mut directories = vec![self.home.join(".local/bin"), self.home.join(".cargo/bin")];
         if let Some(path) = std::env::var_os("PATH") {
             directories.extend(std::env::split_paths(&path));

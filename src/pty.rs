@@ -80,6 +80,35 @@ impl Pty {
     }
 }
 
+impl Drop for Pty {
+    fn drop(&mut self) {
+        if let Err(error) = self.terminate() {
+            eprintln!("stop owned Pi process: {error:#}");
+        }
+        for _ in 0..200 {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(error) => {
+                    eprintln!("reap owned Pi process: {error}");
+                    return;
+                }
+            }
+        }
+        // Only this PTY's process group is escalated after graceful shutdown expires.
+        let killed = unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) };
+        if killed < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            eprintln!(
+                "kill owned Pi process group: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        if let Err(error) = self.child.wait() {
+            eprintln!("reap killed Pi process: {error}");
+        }
+    }
+}
+
 fn winsize(size: Size) -> libc::winsize {
     libc::winsize {
         ws_row: size.rows,

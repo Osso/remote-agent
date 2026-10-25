@@ -532,6 +532,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "tokio",
  "uuid",

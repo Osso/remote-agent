@@ -1,6 +1,6 @@
 # Unified Rust Pi sessions
 
-The user-approved product scope is a single Rust project replacing the needed remote-agent, detach, and Mosh behavior for Pi sessions. Architecture and detailed acceptance remain design work, not an implemented replacement. Source for the replacement does not exist yet. The existing implementations remain in service. See [design notes](../wiki/systems/unified-pi-session.md).
+The user-approved product scope is a single Rust project replacing the needed remote-agent, detach, and Mosh behavior for Pi sessions. The Rust prototype is under implementation; full product acceptance and deployment remain incomplete. The existing implementations remain in service. See [design notes](../wiki/systems/unified-pi-session.md).
 
 ## What it must do
 
@@ -41,20 +41,25 @@ These details require user review; they are not a claim that every existing CLI 
 
 ## Implementation inventory
 
-No unified Rust implementation exists. The current behavior is distributed across:
+The Rust prototype uses one package, `remote-agent-rs`:
 
-- `remote-agent.py`: local commands, SSH control requests, Mosh attachment, clipboard upload.
-- `remote-agent-worker.py`: remote session lifecycle, provider login, clipboard helper.
-- `remote-agent-user.py`: Unix-account routing.
-- Separate Rust `detach` project: persistent PTY and local socket attachment.
-- Upstream Mosh: network transport and screen-state synchronization.
+- `src/main.rs`, `src/config.rs`, `src/control.rs`: CLI/control dispatch, existing configuration maps, private session records and process identity.
+- `src/server.rs`, `src/pty.rs`: QUIC endpoint, persistent Pi PTY, serialized client input and image-file insertion.
+- `src/client.rs`, `src/local.rs`: SSH bootstrap, authenticated attachment, terminal/input lifetime and local clipboard acquisition.
+- `src/terminal.rs`: authoritative terminal parser, every scrolled-row event, bounded replay, and native client scrollback rendering.
+- `src/protocol.rs`: bounded authenticated transport messages, terminal dimensions, session launch and ticket types.
+
+The Python controller/workers, separate detach project, and Mosh remain the current operational stack; they are not silently replaced by this prototype.
 
 ## Tests asserting this spec
 
-No passing tests establish the proposed replacement contract.
+Targeted development tests establish the listed boundaries, not full CLI/deployment/platform acceptance.
 
-- `tests/test_mosh_resize.py::NativeMoshResizeTests.test_native_fixed_size_streaming_assistant_preserves_all_live_lines`: existing-stack diagnostic, slow incremental output passed; not replacement proof.
-- The native bulk-output case in `tests/test_mosh_resize.py`, committed as `e34f683`, fails on the existing Mosh path: 80 numbered lines become only lines 034–079 at 165×46. Direct detach retains all 80. This is one required regression boundary, not the sole acceptance test.
+- `src/server_tests.rs`: real PTY plus QUIC bulk/reconnect test retains all 80 markers exactly once and preserves the child; another test covers simultaneous clients, smallest-size changes and separate private image files. The child is an isolated scripted fixture, not real Pi login/paste acceptance.
+- `src/terminal.rs` tests: bulk output at different physical sizes, ANSI/UTF-8 fragmentation, native scrollback, bounded expiry, replay, resize, soft wraps and query replies.
+- `src/local.rs` tests: fragmented keyboard input, bracketed paste, raw terminal restoration and injectable clipboard-provider processes; no macOS runtime proof.
+- `src/config.rs`, `src/control.rs`, `src/pty.rs` tests: concrete configuration, detached lifecycle, unrelated-PID rejection and PTY size/output.
+- Existing-stack regression `tests/test_mosh_resize.py` at `e34f683` remains RED through Mosh (80 expected markers, only 034–079 delivered at 165×46). Slow streaming passed. Neither observation is a repair of the old stack.
 
 ## Known gaps (current cycle)
 
@@ -68,5 +73,5 @@ No passing tests establish the proposed replacement contract.
 - Claude and other agent backends: user selected Pi only.
 - Mosh wire compatibility and predictive local echo: user selected replacement of both ends and no predictive echo.
 - File `sync` and `fetch`: not selected for the current scope; this is not a permanent rejection.
-- Implementation or deployment during this design stage.
+- Disruptive replacement of the current stack before native acceptance and a safe migration decision.
 - Restarting or cancelling existing sessions as a migration shortcut.

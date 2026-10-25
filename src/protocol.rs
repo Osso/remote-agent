@@ -2,7 +2,8 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
+// JSON's numeric byte arrays can occupy four times their decoded size.
+pub const MAX_FRAME_BYTES: usize = 80 * 1024 * 1024;
 pub const DEFAULT_HISTORY_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -98,7 +99,8 @@ pub enum ControlRequest {
         project: String,
         name: Option<String>,
         resume: Option<String>,
-        prompt_file: Option<String>,
+        prompt: Option<String>,
+        history_bytes: Option<usize>,
     },
     List,
     Status {
