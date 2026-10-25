@@ -211,7 +211,8 @@ conversion; it does not prove macOS-to-Linux attachment, interactive Pi, SSH,
 terminal repaint, or installed deployment. GitHub run `40206416647` passed the macOS job, including native clipboard,
 PTY and unit tests. Ubuntu failed a fixture readiness race, fixed in `81021f2`.
 Run `40226091616` passed both jobs at `fdaa0d6`. Installed macOS-to-Linux
-acceptance remains open.
+attachment passed at `7831e16` on an arm64 macOS 26.6.2 laptop; see the
+[proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance).
 
 ## Session commands
 

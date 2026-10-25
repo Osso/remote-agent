@@ -7,7 +7,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 ### Scope and lifecycle
 
 - [x] Manage Pi sessions independently of attached clients, with Linux servers and Linux clients. Keep sessions alive across clean detach and attachment loss.
-- [ ] Support installed macOS-to-Linux attachment; earlier native macOS client proof is not current installed acceptance.
+- [x] Support installed macOS-to-Linux attachment (arm64 macOS laptop at `7831e16`).
 - [x] Start each session as an enabled systemd user service in the user's `agents.slice`; deploy its template and reload each server account's user manager.
 - [x] Cancel by disabling and stopping the service, wait for the server PID to exit, then invoke the configured project cancellation hook with the conversation ID. Repeated stop must be a no-op so a failed hook can be retried. Preserve errors and retry state.
 - [x] Keep sessions manageable after binary upgrades by validating exact server argv and absolute state path, without requiring the current executable inode.
@@ -64,7 +64,6 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 ## Known gaps (current cycle)
 
 - [ ] Actual host reboot: not performed because it would stop legacy sessions.
-- [ ] Installed macOS-to-Linux acceptance remains open. (GitHub run `40226091616` passed the Ubuntu and macOS jobs at `fdaa0d6`.)
 - [ ] Full OAuth/model-call, macOS real-client image paste, per-display geometry and complete Pi VT acceptance remain open.
 
 ## Out of scope
