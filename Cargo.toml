@@ -18,6 +18,7 @@ subtle = "2.6"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 vt100 = "0.18.1"
+vte = "0.15.0"
 
 [dev-dependencies]
 png = "0.18"

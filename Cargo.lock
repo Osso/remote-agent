@@ -606,6 +606,7 @@ dependencies = [
  "tokio",
  "uuid",
  "vt100",
+ "vte",
 ]
 
 [[package]]

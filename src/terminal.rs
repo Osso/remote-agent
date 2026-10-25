@@ -144,6 +144,26 @@ impl vt100::Callbacks for Capture {
     }
 }
 
+#[derive(Default)]
+struct ScrollbackClear {
+    detected: bool,
+}
+
+impl vte::Perform for ScrollbackClear {
+    fn csi_dispatch(
+        &mut self,
+        params: &vte::Params,
+        intermediates: &[u8],
+        ignore: bool,
+        action: char,
+    ) {
+        self.detected = !ignore
+            && intermediates.is_empty()
+            && action == 'J'
+            && params.iter().next() == Some([3].as_slice());
+    }
+}
+
 /// A persistent vt100 parser with byte-bounded formatted history and journal.
 /// `history_bytes` independently caps retained rows and replay updates. A live
 /// feed still returns EVERY row, even when that one update exceeds the budget.
@@ -153,6 +173,8 @@ impl vt100::Callbacks for Capture {
 /// sanitizer: vt100 itself ignores some unsupported modes and escape strings.
 pub struct TerminalState {
     parser: vt100::Parser<Capture>,
+    sequence_parser: vte::Parser,
+    reset: bool,
     size: Size,
     sequence: u64,
     budget: usize,
@@ -171,6 +193,8 @@ impl TerminalState {
         let screen = display_bytes(parser.screen());
         Ok(Self {
             parser,
+            sequence_parser: vte::Parser::new(),
+            reset: false,
             size,
             sequence: 0,
             budget: history_bytes,
@@ -184,7 +208,20 @@ impl TerminalState {
 
     pub fn feed(&mut self, data: &[u8]) -> Result<DisplayUpdate> {
         self.ensure_supported()?;
-        self.parser.process(data);
+        let mut clear = ScrollbackClear::default();
+        for byte in data {
+            let byte = std::slice::from_ref(byte);
+            self.parser.process(byte);
+            self.sequence_parser.advance(&mut clear, byte);
+            if std::mem::take(&mut clear.detected) {
+                self.history.clear();
+                self.history_len = 0;
+                self.journal.clear();
+                self.journal_len = 0;
+                self.parser.callbacks_mut().rows.clear();
+                self.reset = true;
+            }
+        }
         self.ensure_supported()?;
         Ok(self.publish())
     }
@@ -216,7 +253,9 @@ impl TerminalState {
     pub fn snapshot(&self, after: Option<u64>) -> DisplayUpdate {
         if let Some(updates) = after.and_then(|sequence| self.updates_since(sequence)) {
             let mut snapshot = self.display();
-            snapshot.scrolled = updates
+            snapshot.reset = updates.iter().any(|u| u.reset);
+            let rows_after_clear = updates.iter().rposition(|u| u.reset).unwrap_or(0);
+            snapshot.scrolled = updates[rows_after_clear..]
                 .iter()
                 .flat_map(|u| u.scrolled.iter().cloned())
                 .collect();
@@ -279,6 +318,7 @@ impl TerminalState {
             .expect("display sequence exhausted");
         self.screen = display_bytes(self.parser.screen());
         let mut update = self.display();
+        update.reset = std::mem::take(&mut self.reset);
         update.scrolled = std::mem::take(&mut self.parser.callbacks_mut().rows);
         update.control = std::mem::take(&mut self.parser.callbacks_mut().control);
         for row in &update.scrolled {
@@ -550,6 +590,117 @@ mod tests {
             );
             assert_markers(&all_text(&mut outer));
         }
+    }
+
+    fn assert_revised_markers(outer: &mut vt100::Parser) {
+        let text = all_text(outer);
+        assert_markers(&text);
+        assert!(!text.contains("old-"), "{text}");
+        assert!(!text.contains("discard-"), "{text}");
+        assert_eq!(text.matches("revised-marker-").count(), 80, "{text}");
+    }
+
+    #[test]
+    fn terminal_clear_fragmented_pi_redraw_replaces_native_history() {
+        let physical = size(12, 30);
+        let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
+        let mut renderer = DisplayRenderer::new(physical);
+        let mut outer = parser(physical, 400);
+        let first = state
+            .feed(bulk().replace("marker-", "old-marker-").as_bytes())
+            .unwrap();
+        outer.process(&renderer.render(&first).unwrap());
+        for part in [b"\x1b[2J\x1b[H\x1b[".as_slice(), b"3", b"J"] {
+            let update = state.feed(part).unwrap();
+            assert_eq!(update.reset, part == b"J");
+            outer.process(&renderer.render(&update).unwrap());
+        }
+        for line in bulk()
+            .replace("marker-", "revised-marker-")
+            .split_inclusive('\n')
+        {
+            let update = state.feed(line.as_bytes()).unwrap();
+            outer.process(&renderer.render(&update).unwrap());
+        }
+        assert_revised_markers(&mut outer);
+    }
+
+    #[test]
+    fn terminal_clear_same_chunk_discards_pending_rows_before_latest_clear() {
+        let physical = size(12, 30);
+        let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
+        let input = format!(
+            "{}\x1b[2J\x1b[H\x1b[3J{}\x1b[2J\x1b[H\x1b[3J{}",
+            bulk().replace("marker-", "old-marker-"),
+            bulk().replace("marker-", "discard-marker-"),
+            bulk().replace("marker-", "revised-marker-")
+        );
+        let update = state.feed(input.as_bytes()).unwrap();
+        let mut outer = parser(physical, 400);
+        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        assert_revised_markers(&mut outer);
+        assert!(update.reset);
+        let mut restored = parser(physical, 400);
+        restored.process(
+            &DisplayRenderer::new(physical)
+                .render(&state.snapshot(None))
+                .unwrap(),
+        );
+        assert_revised_markers(&mut restored);
+    }
+
+    #[test]
+    fn terminal_clear_reconnect_snapshots_preserve_reset_and_new_rows_only() {
+        for budget in [100_000, 8_000] {
+            let physical = size(12, 30);
+            let mut state = TerminalState::new(size(5, 20), budget).unwrap();
+            let first = state
+                .feed(bulk().replace("marker-", "old-marker-").as_bytes())
+                .unwrap();
+            let before_clear = state.feed(b"\x1b[2J\x1b[H\x1b[3").unwrap();
+            let clear = state.feed(b"J").unwrap();
+            assert!(clear.sequence > before_clear.sequence);
+            state
+                .feed(bulk().replace("marker-", "revised-marker-").as_bytes())
+                .unwrap();
+            for after in [first.sequence, before_clear.sequence] {
+                let mut renderer = DisplayRenderer::new(physical);
+                let mut outer = parser(physical, 400);
+                outer.process(&renderer.render(&first).unwrap());
+                let snapshot = state.snapshot(Some(after));
+                assert!(snapshot.sequence > clear.sequence);
+                outer.process(&renderer.render(&snapshot).unwrap());
+                assert_revised_markers(&mut outer);
+                assert!(snapshot.reset);
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_clear_text_in_osc_and_dcs_does_not_clear_history() {
+        let physical = size(12, 30);
+        let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
+        let mut renderer = DisplayRenderer::new(physical);
+        let mut outer = parser(physical, 200);
+        outer.process(
+            &renderer
+                .render(&state.feed(bulk().as_bytes()).unwrap())
+                .unwrap(),
+        );
+        // Leave DCS open: its payload is ignored, and snapshots do not serialize it.
+        for byte in b"\x1b]2;literal [3J text\x07\x1bPqliteral [3J text" {
+            let update = state.feed(&[*byte]).unwrap();
+            assert!(!update.reset);
+            outer.process(&renderer.render(&update).unwrap());
+        }
+        assert_markers(&all_text(&mut outer));
+        let mut restored = parser(physical, 200);
+        restored.process(
+            &DisplayRenderer::new(physical)
+                .render(&state.snapshot(None))
+                .unwrap(),
+        );
+        assert_markers(&all_text(&mut restored));
     }
 
     #[test]
