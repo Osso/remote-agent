@@ -16,6 +16,7 @@ import re
 import select
 import shlex
 import shutil
+import socket
 import stat
 import struct
 import subprocess
@@ -95,7 +96,7 @@ class NativeRustAttachTests(unittest.TestCase):
             [
                 cls.node,
                 "-e",
-                "require('@xterm/headless'); if(Number(process.versions.node.split('.')[0])<22)process.exit(1)",
+                "require('@xterm/headless'); const [major,minor]=process.versions.node.split('.').map(Number); if(major<22 || (major===22 && minor<18))process.exit(1)",
             ],
             env=cls.fixture_env,
             capture_output=True,
@@ -104,7 +105,7 @@ class NativeRustAttachTests(unittest.TestCase):
         )
         if probe.returncode:
             raise unittest.SkipTest(
-                f"Node >=22 with @xterm/headless required: {probe.stderr}"
+                f"Node >=22.18 with @xterm/headless required: {probe.stderr}"
             )
 
     def setUp(self):
@@ -413,7 +414,9 @@ class NativeRustAttachTests(unittest.TestCase):
                 result = self.cli("cancel", "bulk-proof", check=False)
                 if result.returncode and "refusing to signal" not in result.stderr:
                     errors.append(f"CLI cancellation failed: {result.stderr}")
-            deadline = time.monotonic() + 6
+            # A failed server can leave the client in its bounded reconnect loop.
+            # Allow that loop to exit without signalling outside the CLI.
+            deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 self.owned.update(children() - self.baseline_children)
                 for pid in self.owned - self.reaped:
@@ -437,6 +440,13 @@ class NativeRustAttachTests(unittest.TestCase):
                 survivors, [], "owned native process leaked after actual CLI cancel"
             )
             self.assertEqual(sockets, [], "owned session socket leaked")
+            runtime_path = self.state / "runtime.json"
+            if runtime_path.exists():
+                runtime = json.loads(runtime_path.read_text())
+                port = int(runtime["address"].rsplit(":", 1)[1])
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                    probe.bind(("0.0.0.0", port))
+                self.record("quic-socket-released", port=port)
             self.assertEqual(
                 children() - self.baseline_children, set(), "owned children leaked"
             )
