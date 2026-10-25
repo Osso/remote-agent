@@ -312,25 +312,57 @@ mod tests {
             },
         )
         .unwrap();
-        let running = status(home.path(), "test-1").unwrap();
-        // A live PID from an unrelated process must never identify a server.
-        assert_eq!(running["running"], false);
-        assert_eq!(running["server_running"], false);
-        assert_eq!(running["name"], "test-1");
-        assert!(running.get("token").is_none());
+        let runtime_path = state.join("runtime.json");
+        let runtime: Runtime = serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+        assert_eq!(runtime.pid, std::process::id());
+        assert_eq!(runtime.address, "127.0.0.1:1234");
+        assert_eq!(runtime.certificate, vec![1, 2]);
+        assert_eq!(runtime.token, "secret");
+        assert_eq!(runtime.child_pid, None);
+        assert_eq!(runtime.exit_code, None);
         assert_eq!(
-            list_sessions(home.path())
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .len(),
-            1
+            fs::metadata(&runtime_path).unwrap().permissions().mode() & 0o777,
+            0o600
         );
-        write_private_json(&state.join("runtime.json"), &serde_json::json!({"pid":std::process::id(),"address":"127.0.0.1:1234","certificate":[],"token":"secret","child_pid":123,"exit_code":17})).unwrap();
-        let exited = status(home.path(), "test-1").unwrap();
-        assert_eq!(exited["exit_code"], 17);
-        assert_eq!(exited["child_pid"], 123);
-        assert_eq!(exited["running"], false);
+        #[cfg(target_os = "linux")]
+        {
+            let running = status(home.path(), "test-1").unwrap();
+            // A live PID from an unrelated process must never identify a server.
+            assert_eq!(running["running"], false);
+            assert_eq!(running["server_running"], false);
+            assert_eq!(running["name"], "test-1");
+            assert!(running.get("token").is_none());
+            assert_eq!(
+                list_sessions(home.path())
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            write_private_json(&runtime_path, &serde_json::json!({"pid":std::process::id(),"address":"127.0.0.1:1234","certificate":[],"token":"secret","child_pid":123,"exit_code":17})).unwrap();
+            let exited = status(home.path(), "test-1").unwrap();
+            assert_eq!(exited["exit_code"], 17);
+            assert_eq!(exited["child_pid"], 123);
+            assert_eq!(exited["running"], false);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                server_matches_state(std::process::id(), &state)
+                    .unwrap_err()
+                    .to_string(),
+                "session server identity requires Linux"
+            );
+            assert_eq!(
+                status(home.path(), "test-1").unwrap_err().to_string(),
+                "session server identity requires Linux"
+            );
+            assert_eq!(
+                list_sessions(home.path()).unwrap_err().to_string(),
+                "session server identity requires Linux"
+            );
+        }
         assert!(status(home.path(), "absent").is_err());
         fs::write(state.join("runtime.json"), "bad").unwrap();
         assert!(status(home.path(), "test-1").is_err());

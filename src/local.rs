@@ -662,9 +662,58 @@ mod tests {
         unsafe { value.assume_init() }
     }
 
+    fn pty_readable(fd: &OwnedFd, timeout_ms: i32) -> bool {
+        let mut poll = libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut poll, 1, timeout_ms) };
+        assert!(result >= 0, "poll PTY: {}", std::io::Error::last_os_error());
+        if result == 0 {
+            return false;
+        }
+        assert_eq!(poll.revents, libc::POLLIN);
+        true
+    }
+
+    fn write_pty(fd: &OwnedFd, bytes: &[u8]) {
+        assert_eq!(
+            unsafe { libc::write(fd.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) },
+            bytes.len() as isize,
+            "write PTY: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+
+    fn assert_pty_bytes(fd: &OwnedFd, expected: &[u8]) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut received = Vec::new();
+        while received.len() < expected.len() {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(
+                pty_readable(fd, remaining.as_millis() as i32),
+                "PTY read timed out: {received:?}, expected {expected:?}"
+            );
+            let mut buffer = vec![0; expected.len() - received.len()];
+            let count =
+                unsafe { libc::read(fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+            assert!(count > 0, "read PTY: {}", std::io::Error::last_os_error());
+            received.extend_from_slice(&buffer[..count as usize]);
+        }
+        assert_eq!(received, expected);
+    }
+
     #[test]
     fn terminal_guard_uses_raw_mode_reads_size_and_restores_on_drop() {
-        let (_master, slave) = pty();
+        let (master, slave) = pty();
+        let mut configured = termios(&slave);
+        configured.c_lflag |= libc::ICANON | libc::ECHO;
+        configured.c_oflag |= libc::OPOST | libc::ONLCR;
+        assert_eq!(
+            unsafe { libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &configured) },
+            0
+        );
         let before = termios(&slave);
         let size = libc::winsize {
             ws_row: 31,
@@ -685,24 +734,48 @@ mod tests {
         assert_eq!(raw.c_iflag & (libc::IXON | libc::ICRNL), 0);
         assert_eq!(raw.c_oflag & libc::OPOST, 0);
         assert_eq!(guard.size().unwrap(), Size { rows: 31, cols: 97 });
+        write_pty(&master, b"raw");
+        assert_pty_bytes(&slave, b"raw");
+        assert!(!pty_readable(&master, 50), "raw input must not echo");
         drop(guard);
         let after = termios(&slave);
+        // Apple XNU bsd/sys/termios.h defines PENDIN as pending-input retype
+        // state, not a configured mode: https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/termios.h
+        #[cfg(target_os = "macos")]
+        let state_flags = libc::PENDIN;
+        #[cfg(not(target_os = "macos"))]
+        let state_flags = 0;
         assert_eq!(
             (
                 after.c_iflag,
                 after.c_oflag,
                 after.c_cflag,
-                after.c_lflag,
+                after.c_lflag & !state_flags,
                 after.c_cc
             ),
             (
                 before.c_iflag,
                 before.c_oflag,
                 before.c_cflag,
-                before.c_lflag,
+                before.c_lflag & !state_flags,
                 before.c_cc
             )
         );
+        assert_eq!(unsafe { libc::cfgetispeed(&after) }, unsafe {
+            libc::cfgetispeed(&before)
+        });
+        assert_eq!(unsafe { libc::cfgetospeed(&after) }, unsafe {
+            libc::cfgetospeed(&before)
+        });
+        write_pty(&master, b"restored");
+        assert_pty_bytes(&master, b"restored");
+        assert!(
+            !pty_readable(&slave, 50),
+            "canonical input must wait for a newline"
+        );
+        write_pty(&master, b"\n");
+        assert_pty_bytes(&slave, b"restored\n");
+        assert_pty_bytes(&master, b"\r\n");
         assert!(TerminalGuard::enter_fd(-1).is_err());
     }
 }
