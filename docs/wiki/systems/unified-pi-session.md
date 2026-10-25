@@ -1,6 +1,6 @@
 # Unified Pi session design notes
 
-Status: proposed, not implemented. The [specification](../../specs/unified-pi-session.md) owns requirements and open scope decisions.
+Status: product scope approved; architecture proposed, not implemented. The [specification](../../specs/unified-pi-session.md) owns requirements and open scope decisions.
 
 ## Observed loss boundary
 
@@ -43,4 +43,16 @@ The user selected simultaneous clients with the shared PTY using the smallest at
 
 Pi's `packages/coding-agent/src/modes/interactive/interactive-mode.ts` maps the editor's image-paste action to `handleClipboardImagePaste()`, which invokes `readClipboardImage()`. On headless Linux, `packages/coding-agent/src/utils/clipboard-image.ts` reads image types and bytes through `wl-paste`.
 
-The existing worker's `wl_paste()` helper serves a PNG previously uploaded by `remote-agent paste`. It does not fetch the local clipboard automatically. The new design must replace that manual staging step and establish image availability before Pi reads it. The exact integration remains open; it must not depend on timing a separate upload against forwarded keyboard input.
+The existing worker's `wl_paste()` helper serves a PNG previously uploaded by `remote-agent paste`. It does not fetch the local clipboard automatically. The new design must replace that manual staging step. It must not depend on timing a separate upload against forwarded keyboard input.
+
+Pi's existing `handleClipboardImagePaste()` writes a unique `pi-clipboard-<UUID>` image file and inserts its path at the editor cursor. A simpler candidate for the unified client is an explicit image-paste message: read the initiating client's clipboard, transfer the image, create a unique private remote file, then insert its path as one bracketed-paste input operation. This avoids a shared clipboard cache or choosing which attached client's clipboard a later `wl-paste` invocation should read. It is a proposal, not a proven integration. Tests must cover Pi editor behavior, concurrent pastes, terminal key encodings, cleanup, and failure without stale-image insertion.
+
+## Architecture candidates
+
+- One binary supplies local client, SSH control commands, and a detached per-session Linux process. The session process owns the PTY, retained output, and network endpoint; a client does not own its lifetime.
+- Use SSH for existing host/account authentication and bootstrap. A proposed QUIC data connection carries ordered output, input, resize, and image-paste messages. Quinn is a candidate, not a selected dependency: its official documentation describes ordered streams and endpoint socket rebinding. A dead connection still needs application-level authenticated resume and retained output positions.
+- Record output positions independently for each client. Bound retained output and keep a valid terminal-state baseline at replay boundaries. Do not substitute screen snapshots for live output. A terminal-state library needs a Pi-specific capability probe before selection; formatted screen output alone does not prove complete state restoration.
+- Serialize input actions at the PTY boundary, including image-path insertion; preserve each paste's client identity and unique remote file. Size the shared PTY to the smallest attached client. Provider login remains delegated to Pi rather than creating a second credential store.
+- Validate fixed-size bulk output, reconnection replay, expired history, joins/leaves/resizes, concurrent input/paste, provider login, and native Linux/macOS client behavior before migration. Existing sessions stay on the current stack until a separate preservation-safe migration is agreed.
+
+Primary references for candidate evaluation: `quinn-rs.github.io/quinn/quinn/data-transfer.html`, `docs.rs/quinn/latest/quinn/struct.Endpoint.html`, and `docs.rs/vt100/latest/vt100/struct.Screen.html`. These document library capabilities, not proof that a candidate meets this project's acceptance criteria.
