@@ -31,25 +31,25 @@ Tokei counted 9,560 production C++/header code lines across 63 files, excluding 
 
 `remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. Python controller/workers, detach and Mosh remain operational; this prototype has not been deployed. See the [build and CLI guide](../../../README.md#rust-prototype).
 
-SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
+SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. Byte fields require base64 strings. The server limits the unauthenticated frame to 8192 bytes from its length header before payload allocation; authenticated frames allow at most 80 MiB. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
 
 ### Output and retention
 
 The server keeps one authoritative, persistent `vt100` parser. Each PTY output chunk produces **every scrolled row**, the current formatted frame and supported control events. This is ordered QUIC delivery, not Mosh's screen-only synchronization or raw PTY-byte replay. The native client writes captured rows into the outer terminal's scrollback, then repaints the shared viewport. Its temporary display parsers do not own the application's hidden VT state.
 
-History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216, but the budget must fit the current display checkpoint. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. A private JSONL disk journal separately enforces the configured serialized-byte limit; ordinary deltas append, while reset or overflow writes an atomic checkpoint and trims oldest archived rows if needed. Byte payloads use base64 rather than numeric arrays.
+History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216, but the budget must fit the current display checkpoint. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. A private JSONL disk journal uses explicit reader/writer locks and separately enforces the configured serialized-byte limit; ordinary deltas append, while reset or overflow writes an atomic checkpoint and trims oldest archived rows if needed. Byte payloads use base64 rather than numeric arrays.
 
 Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set. Expired history is marked, including a fresh attachment after retained rows were evicted; the client inserts `[earlier output expired]` into native scrollback. Reset clears existing outer-terminal scrollback and is idempotent for duplicate delivery. `history.jsonl` persists bounded checkpoints/deltas, not hidden parser state; it has no per-delta fsync or power-loss guarantee. The parser stays authoritative in the live server; archived display data cannot restore a dead server or PTY. `logs` reconstructs plain text without repainting the caller's terminal.
 
-Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-read queries and application-requested resize can fail the parser; the library also silently ignores some unsupported modes/strings. This is neither general terminal compatibility nor a terminal sanitizer. Actual Pi capability coverage remains unproven.
+Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-read queries and application-requested resize can fail the parser; the library also silently ignores some unsupported modes/strings. This is neither general terminal compatibility nor a terminal sanitizer. Earlier offline native Pi capability tests passed within the boundaries below; full VT compatibility and current-revision acceptance remain open.
 
 ### Clients, input and images
 
 Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Reconnect retries exist; loopback tests do not establish real network roaming or all retry/error cases.
 
-Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty Ctrl+V encodings. It reads the initiating client's clipboard on demand and sends PNG bytes as a sequenced image action. The server creates a unique private image file, then inserts its path as one bracketed paste. No shared clipboard cache or manual staging command is used. Linux selects `wl-paste` for Wayland or `xclip` for X11; macOS uses `osascript` with AppKit and base64 PNG output. Empty/failed clipboard reads report an error before an image is sent. Cleanup and actual Pi editor consumption remain unverified.
+Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty Ctrl+V encodings. It reads the initiating client's clipboard on demand and sends PNG bytes as a sequenced image action. The server creates a unique private image file, then inserts its path as one bracketed paste. No shared clipboard cache or manual staging command is used. Linux selects `wl-paste` for Wayland or `xclip` for X11; macOS uses `osascript` with AppKit and base64 PNG output. Empty/failed clipboard reads report an error before an image is sent. Earlier offline Pi image-editor consumption passed; current-revision and simultaneous real-client acceptance remain open.
 
-Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Actual provider login has not been tested. Prototype `--user` routing uses `authsudo` and `/home/USER`; it does not establish Python's account-directory behavior or cross-user acceptance.
+Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Earlier offline CLI tests covered invalid-provider login, not full OAuth or credentials. Native `__as-user` resolves passwd identity/home and enters that home with a clean environment. Account isolation, launch variables, scope ownership and cancellation policy have one contract in [configuration](../../specs/configuration.md#rust-account-and-launch-policy); installed cross-user acceptance remains open.
 
 The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
 
@@ -85,14 +85,40 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 | `vt100` | Persistent server parsing with scroll callbacks and client display/cell formatting. |
 | `tempfile` (development only) | Isolated directories and executable/process fixtures in tests. |
 
+### Current client and lifecycle work
+
+`6267448` fixes deferred reset/control delivery and retry handling. `5b8f341`
+adds analyzer coverage and two native resize cases. Per-display geometry remains
+pending; shared-PTY minimum dimensions do not prove correct rendering at every
+physical client size. Pending main/protocol/server/PTY and attach-test changes
+are not a completed acceptance revision.
+
+`deploy.sh --rust` selects parallel installation, preserving both accounts' maps,
+private immutable hash versions and a stable link with compare-and-swap checks.
+Python remains the default. No operational Rust deployment or live Pi handoff
+has occurred. Legacy detach has no SCM_RIGHTS transfer mechanism; do not infer
+that installing the new binary transfers an existing PTY. Existing Pi processes
+must not be migrated or cancelled without authorization.
+
 ## Evidence and remaining acceptance
 
-Reported targeted development passes through `28c9a90`: 2 native server tests; earlier 8 configuration/control tests, 9 local tests and 11 terminal tests. This docs audit inspects source only and does not rerun or broaden that proof.
+Evidence below was supplied for this bounded docs audit on 2026-10-25; no tests,
+CI queries or operational commands were run here. It is preliminary,
+revision-scoped evidence, not fresh acceptance of pending source.
 
 | Boundary | Evidence | Remaining gap |
 | --- | --- | --- |
-| Bulk output/reconnect | Real Linux PTY + loopback QUIC + scripted child: all 80 markers once, offline replay, surviving child | Actual Pi, installed SSH path, real interruption/address change |
-| Simultaneous clients | Scripted PTY: minimum size, join/leave changes, distinct private image files | Actual concurrent Pi editing/paste and cross-user attachment |
-| Terminal reconstruction | Targeted fragmentation, scrollback, replay/expiry, resize, wraps and query tests | Actual Pi VT output; alternate screen and unknown callbacks unsupported |
-| Local input/clipboard | Key framing, bracketed paste, restoration and injectable provider fixtures | Real Linux clipboard-to-Pi paste, macOS build/runtime, provider login |
-| Rollout | Source and fixture proof only | Full integration acceptance, safe migration and deployment; no full-suite claim |
+| Real Pi offline CLI | Two tests at `121e38e`: new conversation, image editor, detach and invalid-provider login CLI | Current-revision rerun; no full OAuth, credentials, prompt submission or model call |
+| Native Pi TUI | Two tests at `fca936a`: bulk output, revised output and widgets with real Pi offline | Current-revision rerun, real network roaming and installed attachment |
+| macOS native client | GitHub run `40206416647` macOS job SUCCESS, including native clipboard, PTY and unit tests | Current CI and macOS-to-Linux installed acceptance; not “macOS untested” |
+| Ubuntu CI | Same run failed a fixture readiness race; local fix `81021f2` reported | Fresh current-revision CI, not an all-platform green claim |
+| Auth framing/network target | One targeted GREEN each reported in `/var/tmp/pi-resize-fix/rust-server/auth-*-green.log` | These narrow passes do not establish broad protocol acceptance |
+| Replay and resize | Earlier PTY/QUIC fixtures preserve all 80 markers; `6267448` client fixes and `5b8f341` analyzer/two native resize cases added | Per-display geometry pending; current integration reruns required |
+| Retention | Bounded JSONL, atomic checkpoints, locks/readers and explicit client expiry marker implemented | Current end-to-end replay/reset/control/retry proof |
+| Account/lifecycle/deployment | Native account routing, owned scope cancellation and opt-in install implemented with fixtures | Actual two-account Rust deployment and installed acceptance; no operational deployment yet |
+
+The existing fixed-size Mosh 80-marker regression remains RED; Rust work does not
+repair it. Root process inventories for both accounts were captured at
+`/var/tmp/pi-resize-fix/rust-production/before-{osso,allison}.json`, including
+real Pi/master/wrapper PIDs. These are preservation baselines, not proof of
+migration, deployment or live handoff.

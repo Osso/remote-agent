@@ -96,10 +96,12 @@ selected `desktop` host; native Linux paths do not use WSL translation.
 
 ## Rust prototype
 
-`remote-agent-rs` at `28c9a90` is an undeployed Pi-only prototype. It does **not**
+`remote-agent-rs` is an opt-in Pi-only Rust implementation. It does **not**
 replace the operational Python `remote-agent`, detach or Mosh stack documented
-below. Linux server fixtures have passed; actual Pi login/paste, installed
-attachment and macOS build/runtime acceptance remain open.
+below. No operational Rust deployment has occurred. Source through `5b8f341`
+and pending main/protocol/server/PTY changes extend the early prototype. Earlier
+native Pi and macOS proof does not establish current-revision acceptance. See
+the [proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance).
 
 Build locally with a Rust toolchain that supports edition 2024:
 
@@ -132,9 +134,9 @@ in a temporary directory, with its own Rust toolchain; that Linux binary is then
 sent to all configured accounts. Cargo dependencies must be available from cache
 or the configured registry. No repository clone or build-failure fallback occurs.
 
-Cross-user installation uses existing `authsudo` authorization and the primary
-account's already installed `remote-agent-user.py` environment helper. Provision
-that helper through the existing Python deployment before using this mode.
+Cross-user installation uses existing `authsudo` authorization. Runtime Rust
+account routing uses the native helper described in the
+[configuration contract](docs/specs/configuration.md#rust-account-and-launch-policy).
 
 Each account receives a private, content-addressed executable at
 `~/.local/share/remote-agent-rs/<sha256>/remote-agent-rs`, selected by
@@ -142,7 +144,7 @@ Each account receives a private, content-addressed executable at
 `0500` for each version and binary. Updates retain old versions without rewriting
 them. Unmanaged executables and foreign or dangling symlinks are rejected.
 `tests/test_rust_deploy.py` covers the installation with fixture SSH/build tools;
-it does not establish native macOS builds or live cross-user deployment.
+it does not establish live cross-user deployment.
 
 For a separately provisioned experimental endpoint:
 
@@ -155,9 +157,12 @@ For a separately provisioned experimental endpoint:
 ```
 
 Other commands are `status NAME` and `cancel NAME`; cancel stops the experimental
-server and its owned PTY process. Start accepts `--resume CONVERSATION_ID` and
-`--prompt-file PATH`. `--user USER` uses existing `authsudo` access and assumes
-`/home/USER`; cross-user acceptance is not established. Ctrl+backslash detaches;
+owned session scope, waits for the server to exit, then runs any configured
+conversation cancellation hook. Identity or teardown errors retain state for retry. Start accepts `--resume CONVERSATION_ID` and
+`--prompt-file PATH`. `--user USER` uses native passwd lookup and a clean target-account environment
+through existing `authsudo` authorization; installed cross-user acceptance remains
+open. Rust `projects` queries the selected remote account, unlike Python's
+local-map listing. See [launch policy](docs/specs/configuration.md#rust-account-and-launch-policy). Ctrl+backslash detaches;
 Ctrl+V requests the local image without a separate `paste` command. Clipboard
 providers are `wl-paste` (Wayland), `xclip` (X11), or `osascript` (macOS).
 
@@ -181,8 +186,10 @@ an actual loopback QUIC test peer, including rejection of a different TLS
 certificate. They do not use the Linux production server. Passing macOS CI
 proves native client compilation, loopback transport, and fixture clipboard
 conversion; it does not prove macOS-to-Linux attachment, interactive Pi, SSH,
-terminal repaint, or installed deployment. These CI tests are added but actual
-macOS execution must be confirmed from the workflow results.
+terminal repaint, or installed deployment. GitHub run `40206416647` passed the macOS job, including native clipboard,
+PTY and unit tests. Ubuntu failed a fixture readiness race, fixed locally in
+`81021f2`. Current-revision CI and installed macOS-to-Linux acceptance remain
+pending; the earlier macOS runtime is proven, not untested.
 
 ## Session commands
 

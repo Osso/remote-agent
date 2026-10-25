@@ -48,27 +48,30 @@ The Rust prototype uses one package, `remote-agent-rs`:
 - `src/server.rs`, `src/pty.rs`: QUIC endpoint, persistent Pi PTY, serialized client input and image-file insertion.
 - `src/client.rs`, `src/local.rs`: SSH bootstrap, authenticated attachment, terminal/input lifetime and local clipboard acquisition.
 - `src/terminal.rs`: authoritative terminal parser, every scrolled-row event, bounded replay, and native client scrollback rendering.
-- `src/protocol.rs`: bounded authenticated transport messages, terminal dimensions, session launch and ticket types.
+- `src/protocol.rs`: strict base64 byte fields, pre-authentication and authenticated frame bounds, terminal dimensions, launch and ticket types.
+- `src/account.rs`: native passwd lookup and isolated cross-user dispatch.
+- `src/history.rs`: bounded JSONL journal, locked readers/writers and atomic checkpoints.
 
 The Python controller/workers, separate detach project, and Mosh remain the current operational stack; they are not silently replaced by this prototype.
 
 ## Tests asserting this spec
 
-Reported targeted development passes through `28c9a90`: 2 native server tests; earlier 8 configuration/control, 9 local and 11 terminal tests. This docs-only audit did not rerun them. These establish fixture boundaries, not full CLI/deployment/platform acceptance or a full-suite pass.
+The [proof matrix](../wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance) records revision-specific fixture, native Pi and macOS results. This docs-only audit runs no tests. Current pending code needs fresh acceptance; earlier passes are not a current full-suite or CI claim.
 
 - `src/server_tests.rs`: real PTY plus QUIC bulk/reconnect test retains all 80 markers exactly once and preserves the child; another test covers simultaneous clients, smallest-size changes and separate private image files. The child is an isolated scripted fixture, not real Pi login/paste acceptance.
 - `src/terminal.rs` tests: bulk output at different physical sizes, ANSI/UTF-8 fragmentation, native scrollback, bounded expiry, replay, resize, soft wraps and query replies.
-- `src/local.rs` tests: fragmented keyboard input, bracketed paste, raw terminal restoration and injectable clipboard-provider processes; no macOS runtime proof.
+- `src/local.rs` tests: fragmented keyboard input, bracketed paste, raw terminal restoration and injectable clipboard-provider processes; earlier native macOS clipboard proof is recorded in the wiki.
 - `src/config.rs`, `src/control.rs`, `src/pty.rs` tests: concrete configuration, detached lifecycle, unrelated-PID rejection and PTY size/output.
 - Existing-stack regression `tests/test_mosh_resize.py` at `e34f683` remains RED through Mosh (80 expected markers, only 034–079 delivered at 165×46). Slow streaming passed. Neither observation is a repair of the old stack.
 
 ## Known gaps (current cycle)
 
 - [ ] Prove actual Pi launch/resume, installed SSH/QUIC attachment and real network reconnect/address-change behavior; fixture reconnect is not full acceptance.
-- [ ] Prove transparent clipboard-to-Pi paste, provider login and simultaneous Pi clients on Linux/macOS clients; macOS build/runtime is untested.
-- [ ] Complete explicit expired-output reporting in the client; the protocol flag alone is insufficient. Retention and fresh-attachment reconstruction are implemented as described in the [wiki](../wiki/systems/unified-pi-session.md#output-and-retention).
+- [ ] Rerun native Pi image-editor, detach, resize and CLI acceptance on current code; earlier offline Pi passes do not prove full OAuth, credential handling or a model call.
+- [ ] Prove simultaneous real Pi clients and macOS-to-Linux installed attachment. Earlier macOS native runtime passed; current CI remains pending.
+- [ ] Verify current replay/reset/control/retry behavior and per-display geometry. The client expiry marker is implemented, not still protocol-only; see [retention](../wiki/systems/unified-pi-session.md#output-and-retention).
 - [ ] Establish Pi VT capability coverage; alternate-screen applications and unknown VT callbacks are unsupported, not general terminal compatibility.
-- [ ] Define and verify a migration/deployment approach that preserves conversations, processes and configuration; no Rust deployment has occurred.
+- [ ] Verify opt-in deployment and a user-approved migration approach that preserves conversations, processes and configuration; no operational Rust deployment has occurred. Existing legacy Pi processes are not authorized for migration or cancellation. Legacy detach has no SCM_RIGHTS handoff.
 
 ## Out of scope
 

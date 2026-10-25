@@ -13,6 +13,24 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - [x] Optional selected-host `build_host_scripts` is passed unchanged as `BUILD_HOST_SCRIPTS` to launched and restarted agents through tmux. An absent setting injects no value or personal fallback; an inherited caller value remains unchanged. Asserted by `WorkerTests.test_build_scripts_*`.
 - [ ] Deployment does not install a user-level `periodic-checks.ts` extension or distribute project checklists. Pi owns bundled extension installation, scheduling, and audit policy; see the [canonical contract](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md) and [host-private opt-in instructions](../../README.md#optional-periodic-checks). No checklist means no timer or audit.
 
+## Rust account and launch policy
+
+These requirements apply to `remote-agent-rs`, not the Python defaults above.
+Source is implemented; current-revision installed acceptance remains open.
+
+- [ ] Resolve `projects` and session operations through RPC to the selected host/account, using that account's private maps.
+- [ ] Native Linux `--user` must resolve identity/home through passwd, enter the target home, and execute only the target Rust RPC/login operation through existing `authsudo` authorization. Start with an empty environment plus the 13 explicit account variables; do not inherit administrator credentials.
+- [ ] Require selected-host `cargo_build_jobs` as a positive integer string and pass it as `CARGO_BUILD_JOBS`. Pass optional `build_host_scripts` as `BUILD_HOST_SCRIPTS` without an implicit path. Record launch values explicitly in the launch record's environment field.
+- [ ] Use an existing `agents.slice` in the selected system/user manager without enabling services. Scope identity must include UID and session name; private owned `0600` metadata must retain manager choice and InvocationID.
+- [ ] Cancellation must validate recorded PID, executable, argv and state ownership before stopping the owned unit. Wait for server exit before invoking `pi_cancel_executable` with the conversation ID. Keep errors and saved state available for retry; never run the hook after an identity mismatch or while the server remains alive.
+
+Rust deployment is opt-in through `deploy.sh --rust`. Preserve both existing maps
+for every selected account, including `osso` and `allison`; do not change Python's
+default deployment or existing processes. Install immutable private hash-addressed
+versions and update the stable link with compare-and-swap protection. No operational
+Rust deployment is established by fixture installation tests. See the
+[implementation and proof matrix](../wiki/systems/unified-pi-session.md).
+
 ## Shared Claude credential ownership
 
 - [x] Named accounts use only `~/.config/pi-claude-bridge/profiles/NAME/.credentials.json`; listing reads canonical directories. Native Claude launches use the selected canonical `CLAUDE_CONFIG_DIR` and remove inherited API/OAuth token overrides. Pi keeps caller credential environment. New launches require a selected owned account with a nonempty OAuth access token; no global fallback. Existing sessions remain untouched.
@@ -30,7 +48,9 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 
 - `remote-agent.py` — controller host and project mapping consumption.
 - `remote-agent-worker.py` — worker mapping consumption and selected-host agent environment.
-- `deploy.py` — separate code archive and private mapping transfer.
+- `deploy.py` — separate code archive, private mapping transfer and opt-in Rust installation.
+- `src/account.rs`, `src/config.rs`, `src/main.rs` — native target-account dispatch, Rust map selection and launch environment.
+- `src/control.rs` — scope metadata, identity validation and owned lifecycle.
 
 ## Tests asserting this spec
 
@@ -40,6 +60,11 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 - `tests/test_periodic_runtime.py` with `tests/fixtures/periodic-runtime-provider.ts` — installed-Pi integration acceptance for bundled periodic commands, without explicit `--extension` injection. Uses private state and an offline faux provider during held model/tool turns. Passing proof against the new bundle belongs to the implementation gate.
 
 Native scheduler/dispatch coverage belongs to [Pi's scheduler spec](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md#tests-asserting-this-spec); this spec makes no bundled-runtime verification claim.
+
+Rust behavior is covered by fixtures in `src/account.rs`, `src/config.rs`,
+`src/control.rs`, `src/main.rs`, `tests/test_rust_attach.py` and
+`tests/test_rust_deploy.py`. This docs-only audit runs none of them and does not
+promote fixture evidence to current installed cross-user acceptance.
 
 ## Known gaps (current cycle)
 
