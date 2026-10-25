@@ -238,9 +238,9 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                     Ok(code) => break Ok(code),
                     Err(error) => {
                         state.consecutive_failures += 1;
-                        eprintln!(
-                            "\r\nremote-agent-rs: connection interrupted: {error:#}; reconnecting\r"
-                        );
+                        state.show_status(&format!(
+                            "remote-agent-rs: connection interrupted: {error:#}; reconnecting"
+                        ))?;
                         if state.consecutive_failures > 5 {
                             break Err(error.context("five reconnect attempts failed"));
                         }
@@ -253,7 +253,9 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                         {
                             Ok(ticket) => current = ticket,
                             Err(error) => {
-                                eprintln!("remote-agent-rs: reconnect control: {error:#}\r");
+                                state.show_status(&format!(
+                                    "remote-agent-rs: reconnect control: {error:#}"
+                                ))?;
                                 continue;
                             }
                         }
@@ -295,21 +297,40 @@ impl Attachment {
         }
     }
 
+    /// Show a notice on the bottom physical row without a line feed, so no
+    /// viewport row scrolls into native history. The next display paints over it.
+    fn show_status(&mut self, message: &str) -> Result<()> {
+        let notice = format!(
+            "\x1b7\x1b[{};1H\x1b[0m\x1b[2K\x1b[?7l{message}\x1b[?7h\x1b8",
+            self.size.rows
+        );
+        write_terminal(notice.as_bytes())?;
+        self.renderer.invalidate();
+        Ok(())
+    }
+
     fn prepare_display(&mut self, update: DisplayUpdate) -> Option<DisplayUpdate> {
         // An authorized Hello snapshot confirms recovery even at the same sequence.
         self.consecutive_failures = 0;
-        if self
+        let applied = self
             .after
-            .is_some_and(|sequence| update.sequence <= sequence)
-        {
-            return None;
+            .is_some_and(|sequence| update.sequence <= sequence);
+        if applied {
+            // A duplicate only repaints over a status notice; it is never deferred.
+            // Newer deferred rows repaint the screen themselves once they fit.
+            let repaint = self.renderer.needs_repaint() && self.deferred.is_none();
+            return (repaint && self.fits(&update)).then_some(update);
         }
         let update = fold_deferred_display(self.deferred.take(), update);
-        if update.size.rows > self.size.rows || update.size.cols > self.size.cols {
+        if !self.fits(&update) {
             self.deferred = Some(update);
             return None;
         }
         Some(update)
+    }
+
+    fn fits(&self, update: &DisplayUpdate) -> bool {
+        update.size.rows <= self.size.rows && update.size.cols <= self.size.cols
     }
 
     fn begin_replay(&mut self, token: String) -> ClientFrame {
@@ -422,7 +443,9 @@ impl Attachment {
                     .retain(|frame| input_sequence(frame) > sequence);
             }
             ServerFrame::Exit { code } => return Ok(Some(code)),
-            ServerFrame::Error { message } => eprintln!("\r\nremote-agent-rs: {message}\r"),
+            ServerFrame::Error { message } => {
+                self.show_status(&format!("remote-agent-rs: {message}"))?
+            }
         }
         Ok(None)
     }
@@ -448,7 +471,7 @@ impl Attachment {
                         png,
                     },
                     Err(error) => {
-                        eprintln!("\r\nremote-agent-rs: clipboard paste: {error:#}\r");
+                        self.show_status(&format!("remote-agent-rs: clipboard paste: {error:#}"))?;
                         continue;
                     }
                 },
@@ -536,6 +559,10 @@ mod resize_tests {
     #[test]
     fn duplicate_authorized_snapshot_restores_failure_budget_without_repainting() {
         let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        state
+            .renderer
+            .render(&update(7, 40, "same snapshot"))
+            .unwrap();
         state.after = Some(7);
         state.consecutive_failures = 5;
         state.begin_replay("renewed ticket".into());
@@ -546,6 +573,19 @@ mod resize_tests {
                 .is_none()
         );
         assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.after, Some(7));
+        // After a status notice overwrote the viewport, the duplicate repaints it.
+        state.renderer.invalidate();
+        let repaint = state
+            .prepare_display(update(7, 40, "same snapshot"))
+            .unwrap();
+        let output = state.renderer.render(&repaint).unwrap();
+        let text = native_text(&output);
+        assert!(text.contains("live viewport"), "{text}");
+        assert!(
+            !text.contains("same snapshot"),
+            "duplicate rows re-entered history"
+        );
         assert_eq!(state.after, Some(7));
     }
 

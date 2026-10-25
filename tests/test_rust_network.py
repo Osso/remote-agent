@@ -258,6 +258,39 @@ class NativeRustNetworkTests(native.NativeRustAttachTests):
         self.assertEqual(sum(event["phase"] == "revised" for event in self.events()), 1)
         self.finish_network("recovered", offline_detach=True)
 
+    def test_reconnect_notice_does_not_scroll_rows_into_history(self):
+        # Observed: each outage notice scrolled two viewport rows into native
+        # scrollback; the next non-reset repaint duplicated BULK_LINE_034/035.
+        self.start_network()
+        os.write(self.master, b"b")
+        self.capture("bulk")
+        os.write(self.master, b"r")
+        self.capture("revised")
+        previous_peer = self.proxy.client
+        self.proxy.blocked.set()
+        self.wait_reconnecting("outage")
+        self.proxy.blocked.clear()
+        deadline = time.monotonic() + 10
+        while self.proxy.client == previous_peer:
+            self.assertLess(time.monotonic(), deadline, "client did not reconnect")
+            time.sleep(0.02)
+        self.save_stage("reconnected", self.drain(1))
+        os.write(self.master, b"b")
+        deadline = time.monotonic() + 12
+        while sum(event["phase"] == "bulk" for event in self.events()) < 2:
+            self.assertLess(time.monotonic(), deadline, "second bulk not produced")
+            time.sleep(0.05)
+        self.capture("bulk-after-reconnect", wait_phase=False)
+        report = self.analyze(self.stages, "after-reconnect")[-1]
+        transcript = "\n".join(report["history"] + report["visible"])
+        self.assertEqual(
+            re.findall(r"BULK_LINE_\d{3}", transcript),
+            [f"BULK_LINE_{index:03}" for index in range(80)],
+        )
+        self.assertNotIn("reconnecting", transcript)
+        self.assert_lifetime("after-reconnect")
+        self.detach()
+
     def wait_reconnecting(self, name):
         # Real QUIC's default idle timeout is 30s. Do not replace it with a stub.
         began = time.monotonic()

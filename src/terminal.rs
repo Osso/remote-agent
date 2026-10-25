@@ -418,6 +418,15 @@ impl DisplayRenderer {
         self.repaint = true;
     }
 
+    /// Something outside the renderer wrote over the viewport; repaint even a duplicate.
+    pub fn invalidate(&mut self) {
+        self.repaint = true;
+    }
+
+    pub fn needs_repaint(&self) -> bool {
+        self.repaint
+    }
+
     pub fn render(&mut self, update: &DisplayUpdate) -> Result<Vec<u8>> {
         self.physical.validate()?;
         update.size.validate()?;
