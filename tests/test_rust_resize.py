@@ -133,6 +133,13 @@ class NativeRustResizeTests(fixture.NativeRustAttachTests):
             self.assertEqual(status[field], started[field])
         self.assertEqual({event["pid"] for event in self.events()}, {started["child_pid"]})
         self.detach_peer()
+        if pinned:
+            # A detached client must stop pinning the PTY promptly, not after a QUIC idle timeout.
+            for _ in range(40):
+                if self.child_size(started["child_pid"]) == (165, 46):
+                    break
+                self.drain(0.05)
+            self.assertEqual(self.child_size(started["child_pid"]), (165, 46))
         self.detach()
         self.record("resize-behavior", result="passed", pinned=pinned)
 

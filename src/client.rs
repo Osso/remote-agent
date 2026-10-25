@@ -106,14 +106,14 @@ pub async fn connect(ticket: &Ticket, host: &str) -> Result<(Endpoint, Connectio
 
 /// Read the running server's retained output without attaching to the session.
 pub async fn fetch_snapshot(ticket: &Ticket) -> Result<DisplayUpdate> {
-    let (_endpoint, connection) = connect(ticket, "127.0.0.1").await?;
+    let (endpoint, connection) = connect(ticket, "127.0.0.1").await?;
     let (mut writer, mut reader) = connection.open_bi().await?;
     let request = ClientFrame::Logs {
         token: ticket.token.clone(),
     };
     send_frame(&mut writer, &request).await?;
     let reply: ServerFrame = read_frame(&mut reader).await?;
-    connection.close(0u32.into(), b"logs read");
+    close_endpoint(endpoint, b"logs read").await;
     match reply {
         ServerFrame::Display { update } => Ok(update),
         other => bail!("unexpected logs reply: {other:?}"),
@@ -195,6 +195,17 @@ impl Drop for InputReader {
     }
 }
 
+/// Send QUIC CONNECTION_CLOSE before the process exits; otherwise the server keeps
+/// the peer, and its terminal size, until the idle timeout. Bounded for offline exits.
+async fn close_endpoint(endpoint: Endpoint, reason: &[u8]) {
+    endpoint.close(0u32.into(), reason);
+    let drained =
+        tokio::time::timeout(std::time::Duration::from_millis(500), endpoint.wait_idle()).await;
+    if drained.is_err() {
+        eprintln!("remote-agent-rs: server did not acknowledge close within 500 ms");
+    }
+}
+
 struct NetworkPump {
     connection: Connection,
     reader: tokio::task::JoinHandle<()>,
@@ -218,6 +229,8 @@ struct Attachment {
     decoder: InputDecoder,
     deferred: Option<DisplayUpdate>,
     consecutive_failures: u32,
+    /// The latest connection's endpoint, closed explicitly on exit.
+    endpoint: Option<Endpoint>,
 }
 
 async fn fetch_ticket(
@@ -283,6 +296,9 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
     drop(input);
     drop(reader);
     drop(terminal);
+    if let Some(endpoint) = state.endpoint.take() {
+        close_endpoint(endpoint, b"client detached").await;
+    }
     result
 }
 
@@ -299,6 +315,7 @@ impl Attachment {
             decoder: InputDecoder::new(),
             deferred: None,
             consecutive_failures: 0,
+            endpoint: None,
         }
     }
 
@@ -357,7 +374,8 @@ impl Attachment {
         input: &mut mpsc::Receiver<Vec<u8>>,
     ) -> Result<i32> {
         let hello = self.begin_replay(ticket.token.clone());
-        let (_endpoint, connection) = connect(ticket, host).await?;
+        let (endpoint, connection) = connect(ticket, host).await?;
+        self.endpoint = Some(endpoint);
         let (mut writer, reader) = connection.open_bi().await?;
         send_frame(&mut writer, &hello).await?;
         for frame in &self.pending {
