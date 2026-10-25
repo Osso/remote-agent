@@ -229,9 +229,8 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 size: Size { rows: 24, cols: 80 },
                 history_bytes,
             };
-            let child = control::spawn_session(&std::env::current_exe()?, &launch, &state)?;
+            let child = control::start_session_unit(&launch, &state)?;
             wait_for_runtime(&state, child).await?;
-            control::record_scope_identity(&state, &launch.name)?;
             control::status(home, &launch.name)
         }
         ControlRequest::List => Ok(json!({"sessions":control::list_sessions(home)?})),
@@ -323,7 +322,7 @@ async fn cancel_session(home: &Path, config: &Config, name: &str) -> Result<Valu
             );
         }
     }
-    control::stop_session_scope(&state, name)?;
+    control::stop_session_unit(name)?;
     if let Some(runtime) = runtime {
         wait_for_session_exit(runtime.pid).await?;
     }
@@ -360,7 +359,7 @@ async fn wait_for_session_exit(pid: u32) -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     bail!(
-        "session scope stopped but its recorded process remains alive; teardown hook was not invoked"
+        "session unit stopped but its recorded process remains alive; teardown hook was not invoked"
     )
 }
 

@@ -60,79 +60,63 @@ def ssh_bootstrap():
     os.execv(command[0], command)
 
 
-def scope_fixture_state(unit):
-    prefix = f"remote-agent-rs-{os.geteuid()}-"
-    unit = unit.removesuffix(".scope")
-    if not unit.startswith(prefix):
-        raise RuntimeError(f"scope is outside the owned UID namespace: {unit}")
-    name = unit.removeprefix(prefix)
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
-        raise RuntimeError("invalid fixture scope name")
+UNIT = re.compile(r"remote-agent-rs@([A-Za-z0-9][A-Za-z0-9_-]*)\.service")
+
+
+def unit_fixture_state(unit):
+    match = UNIT.fullmatch(unit)
+    if not match:
+        raise RuntimeError(f"unexpected session unit: {unit}")
     return (
         Path(os.environ["RUST_ATTACH_HOME"])
         / ".local/state/remote-agent-rs/sessions"
-        / name
+        / match[1]
     )
 
 
-def systemd_bootstrap():
-    arguments = sys.argv[2:]
-    boundary = arguments.index("--")
-    command = arguments[boundary + 1 :]
-    state = Path(command[command.index("--state") + 1])
-    unit = next(
-        value.removeprefix("--unit=")
-        for value in arguments[:boundary]
-        if value.startswith("--unit=")
-    )
-    if not unit.endswith(".scope"):
-        unit += ".scope"
-    if scope_fixture_state(unit) != state:
-        raise RuntimeError("scope and state identify different fixtures")
-    (state / "fixture-scope.json").write_text(
-        json.dumps(
-            {"unit": unit, "pid": os.getpid(), "invocation": os.urandom(16).hex()}
+def start_unit_fixture(state):
+    """Run the server as the installed remote-agent-rs@.service template does."""
+    home = Path(os.environ["RUST_ATTACH_HOME"])
+    command = [home / ".local/bin/remote-agent-rs", "__serve", "--state", state]
+    with (state / "server.log").open("ab") as log:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            env={**os.environ, "HOME": str(home)},
         )
+    (state / "fixture-unit.json").write_text(
+        json.dumps({"enabled": True, "pid": process.pid})
     )
-    os.execv(command[0], command)
 
 
 def systemctl_bootstrap():
-    arguments = [value for value in sys.argv[2:] if value != "--user"]
-    action, unit = arguments[:2]
-    if action == "show" and unit == "agents.slice":
-        print("")
-        return
-    state = scope_fixture_state(unit)
-    path = state / "fixture-scope.json"
+    """User-manager substitute for enable/disable --now and boot-time start."""
+    arguments = sys.argv[2:]
+    if len(arguments) not in (3, 4) or arguments[0] != "--user":
+        raise RuntimeError(f"unexpected fixture manager call: {arguments}")
+    action, unit = arguments[1], arguments[-1]
+    state = unit_fixture_state(unit)
+    path = state / "fixture-unit.json"
     info = json.loads(path.read_text()) if path.exists() else None
-    if action == "show":
-        values = {
-            "LoadState": "loaded" if info else "not-found",
-            "ActiveState": "active"
-            if info and process_exists(info["pid"])
-            else "inactive",
-            "InvocationID": info["invocation"] if info else "",
-        }
-        if "--value" in arguments:
-            properties = [
-                arguments[index + 1]
-                for index, value in enumerate(arguments[:-1])
-                if value in ("-p", "--property")
-            ]
-            print("\n".join(values.get(key, "") for key in properties))
-        else:
-            print("\n".join(f"{key}={value}" for key, value in values.items()))
-        return
-    if action == "stop":
+    if arguments[1:3] == ["enable", "--now"]:
+        start_unit_fixture(state)
+    elif action == "start" and info and info["enabled"]:
+        start_unit_fixture(state)
+    elif arguments[1:3] == ["disable", "--now"]:
         if info and process_exists(info["pid"]):
             command = Path(f"/proc/{info['pid']}/cmdline").read_bytes().split(b"\0")
-            if command and command[0]:
+            # An exited, not yet reaped server has an empty command line.
+            if command[0]:
                 if command[1:4] != [b"__serve", b"--state", os.fsencode(state)]:
                     raise RuntimeError("refusing to stop an unrelated fixture process")
                 os.kill(info["pid"], signal.SIGTERM)
-        return
-    raise RuntimeError(f"unexpected fixture manager action: {arguments}")
+        if info:
+            path.write_text(json.dumps({**info, "enabled": False}))
+    else:
+        raise RuntimeError(f"unexpected fixture manager call: {arguments}")
 
 
 def process_exists(pid):
@@ -264,17 +248,13 @@ class NativeRustAttachTests(unittest.TestCase):
             "runpy.run_path(sys.argv[0], run_name='__main__')\n"
         )
         ssh.chmod(0o700)
-        for executable, mode in (
-            ("systemctl", "--systemctl"),
-            ("systemd-run", "--systemd-run"),
-        ):
-            program = bindir / executable
-            program.write_text(
-                f"#!{sys.executable}\nimport runpy,sys\n"
-                f"sys.argv = [{str(Path(__file__).resolve())!r}, {mode!r}, *sys.argv[1:]]\n"
-                "runpy.run_path(sys.argv[0], run_name='__main__')\n"
-            )
-            program.chmod(0o700)
+        program = bindir / "systemctl"
+        program.write_text(
+            f"#!{sys.executable}\nimport runpy,sys\n"
+            f"sys.argv = [{str(Path(__file__).resolve())!r}, '--systemctl', *sys.argv[1:]]\n"
+            "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+        )
+        program.chmod(0o700)
         self.env["PATH"] = str(bindir) + os.pathsep + os.environ["PATH"]
         (config / "remote-hosts.json").write_text(
             json.dumps(
@@ -578,7 +558,7 @@ class NativeRustAttachTests(unittest.TestCase):
         if fail_once:
             (self.root / "hook-fail-once").touch()
 
-    def test_cancel_hook_runs_after_scope_stop_and_can_retry(self):
+    def test_cancel_hook_runs_after_unit_stop_and_can_retry(self):
         self.configure_cancel_hook(fail_once=True)
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
@@ -600,7 +580,7 @@ class NativeRustAttachTests(unittest.TestCase):
             )
         )
 
-    def test_cancel_refuses_unrelated_pid_before_scope_or_hook(self):
+    def test_cancel_refuses_unrelated_pid_before_unit_stop_or_hook(self):
         self.configure_cancel_hook()
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
@@ -617,6 +597,56 @@ class NativeRustAttachTests(unittest.TestCase):
             self.assertTrue(process_exists(started["pid"]))
         finally:
             path.write_text(original)
+
+    def test_enabled_session_unit_restores_after_simulated_reboot(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        launch = (self.state / "launch.json").read_bytes()
+        # Power loss: the server and Pi die without cancel; the unit stays enabled.
+        for pid in (started["child_pid"], started["pid"]):
+            os.kill(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while any(
+            process_exists(pid) for pid in (started["pid"], started["child_pid"])
+        ):
+            self.assertLess(time.monotonic(), deadline, "killed session survived")
+            for pid in (started["pid"], started["child_pid"]):
+                try:
+                    if os.waitpid(pid, os.WNOHANG)[0]:
+                        self.reaped.add(pid)
+                except ChildProcessError:
+                    pass
+            time.sleep(0.02)
+        self.assertFalse(self.cli("status", "bulk-proof")["running"])
+        # Boot: the user manager starts every enabled session unit.
+        subprocess.run(
+            [
+                self.root / ".local/bin/systemctl",
+                "--user",
+                "start",
+                "remote-agent-rs@bulk-proof.service",
+            ],
+            env=self.env,
+            check=True,
+            timeout=10,
+        )
+        deadline = time.monotonic() + 10
+        while True:
+            restored = self.cli("status", "bulk-proof")
+            if restored["running"] and restored["pid"] != started["pid"]:
+                break
+            self.assertLess(time.monotonic(), deadline, "session did not restart")
+            time.sleep(0.05)
+        self.owned.update((restored["pid"], restored["child_pid"]))
+        self.assertEqual(restored["conversation"], started["conversation"])
+        self.assertEqual(restored["project"], started["project"])
+        self.assertEqual((self.state / "launch.json").read_bytes(), launch)
+        self.attach()
+        self.capture("ready")
+        os.write(self.master, b"b")
+        self.capture("bulk")
+        self.assert_bulk(self.analyze(self.stages, "restored")[-1], "bulk")
+        self.detach()
 
     def cleanup_session(self):
         errors = []
@@ -678,7 +708,5 @@ if __name__ == "__main__":
         ssh_bootstrap()
     elif sys.argv[1:2] == ["--systemctl"]:
         systemctl_bootstrap()
-    elif sys.argv[1:2] == ["--systemd-run"]:
-        systemd_bootstrap()
     else:
         unittest.main()

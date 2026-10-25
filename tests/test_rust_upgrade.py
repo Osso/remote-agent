@@ -120,8 +120,8 @@ class NativeRustUpgradeTests(native.NativeRustAttachTests):
             logs = self.cli("logs", "bulk-proof", check=False)
             self.assertEqual(logs.returncode, 0, logs.stderr)
             self.assertIn("BULK_LINE_079", logs.stdout)
-            scope = json.loads((self.state / "fixture-scope.json").read_text())
-            self.assertEqual(scope["pid"], started["pid"])
+            unit = json.loads((self.state / "fixture-unit.json").read_text())
+            self.assertEqual(unit["pid"], started["pid"])
             cancelled = self.cli("cancel", "bulk-proof")
             self.assertEqual(cancelled["cancelled"], "bulk-proof")
             deadline = time.monotonic() + 5
@@ -137,7 +137,7 @@ class NativeRustUpgradeTests(native.NativeRustAttachTests):
                     break
                 time.sleep(0.05)
             survivors = [pid for pid in self.owned if native.process_exists(pid)]
-            self.record("cancelled-by-b", survivors=survivors, scope=scope)
+            self.record("cancelled-by-b", survivors=survivors, unit=unit)
             self.assertEqual(survivors, [])
             self.assertFalse(self.cli("status", "bulk-proof")["running"])
             self.assertEqual(runtime_path.read_bytes(), runtime_before)
