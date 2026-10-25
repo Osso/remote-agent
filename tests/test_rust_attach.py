@@ -53,6 +53,9 @@ def ssh_bootstrap():
     expected = [str(root / ".local/bin/remote-agent-rs"), "__rpc"]
     if command != expected:
         raise RuntimeError(f"unexpected remote command: {command!r}")
+    if (root / "ssh-offline").exists():
+        print("fixture SSH control transport is unavailable", file=sys.stderr)
+        sys.exit(255)
     os.environ["HOME"] = str(root)
     os.execv(command[0], command)
 
@@ -527,22 +530,28 @@ class NativeRustAttachTests(unittest.TestCase):
             "behavior", result="passed", phases=[stage["name"] for stage in self.stages]
         )
 
-    def test_detach_remains_responsive_during_reconnection(self):
+    def test_detach_remains_responsive_while_ssh_control_is_unavailable(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
-        self.attach()
-        self.capture("ready")
-        cancelled = self.cli("cancel", "bulk-proof")
-        self.assertEqual(cancelled["cancelled"], "bulk-proof")
-        output = self.drain(0.5)
-        self.assertIn(b"reconnecting", output)
-        began = time.monotonic()
-        self.detach()
-        self.assertLess(
-            time.monotonic() - began,
-            2,
-            "offline detach must not wait for network retries",
-        )
+        offline = self.root / "ssh-offline"
+        offline.touch()
+        try:
+            self.attach()
+            output = self.drain(0.5)
+            self.assertIn(b"reconnecting", output)
+            began = time.monotonic()
+            self.detach()
+            self.assertLess(
+                time.monotonic() - began,
+                2,
+                "offline detach must not wait for network retries",
+            )
+        finally:
+            offline.unlink()
+        after = self.cli("status", "bulk-proof")
+        for field in ("pid", "child_pid", "conversation"):
+            self.assertEqual(after[field], started[field])
+        self.assertTrue(after["running"])
 
     def configure_cancel_hook(self, fail_once=False):
         hook = self.root / "cancel-hook"
