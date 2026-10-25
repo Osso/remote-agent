@@ -1,6 +1,7 @@
 pub mod client;
 pub mod config;
 pub mod control;
+pub mod history;
 pub mod local;
 pub mod protocol;
 #[cfg(target_os = "linux")]
