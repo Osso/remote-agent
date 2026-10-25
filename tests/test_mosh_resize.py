@@ -236,7 +236,7 @@ class NativeMoshResizeTests(unittest.TestCase):
             "PI_TUI_SOURCE": str(Path(os.environ["PI_TUI_SOURCE"]).resolve()),
         }
 
-    def start_attachment(self):
+    def start_attachment(self, *, live=False, bulk=False):
         session = self.root / "session.sock"
         self.daemon = subprocess.Popen(
             [
@@ -247,7 +247,7 @@ class NativeMoshResizeTests(unittest.TestCase):
                 "winch",
                 "node",
                 str(FIXTURE),
-                "tui",
+                "bulk-tui" if bulk else "live-tui" if live else "tui",
                 str(self.root / "input.jsonl"),
             ],
             env=self.env,
@@ -266,6 +266,13 @@ class NativeMoshResizeTests(unittest.TestCase):
         ).resolve()
         pid, self.master = pty.fork()
         if pid == 0:
+            if live or bulk:
+                set_size(1, 165, 46)
+                os.execve(
+                    sys.executable,
+                    [sys.executable, str(Path(__file__).resolve()), "--mosh"],
+                    self.env,
+                )
             set_size(1, 70, 16)
             os.execve(
                 sys.executable,
@@ -402,6 +409,123 @@ class NativeMoshResizeTests(unittest.TestCase):
         self.assertNotIn(
             "connection lost", "".join(stage["output"] for stage in stages).lower()
         )
+
+    def capture_live_phase(self, phase, output):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            output.extend(self.drain(0.1))
+            events_path = self.root / "input.jsonl"
+            events = (
+                [json.loads(line) for line in events_path.read_text().splitlines()]
+                if events_path.exists()
+                else []
+            )
+            if any(event["phase"] == phase for event in events):
+                output.extend(self.drain(1))
+                return {"name": phase, "output": output.decode(errors="replace")}
+        self.fail(f"live assistant phase {phase!r} did not complete")
+
+    def test_native_fixed_size_streaming_assistant_preserves_all_live_lines(self):
+        evidence = Path("/var/tmp/pi-resize-fix/long-live-red")
+        evidence.mkdir(parents=True, exist_ok=True)
+        self.start_attachment(live=True)
+        stages = [self.capture_live_phase("ready", bytearray())]
+        os.write(self.master, b"s")
+        stages.append(self.capture_live_phase("streamed", bytearray()))
+        # A separate input after a quiet interval appends to the same message.
+        stages[-1]["output"] += self.drain(1).decode(errors="replace")
+        os.write(self.master, b"d")
+        stages.append(self.capture_live_phase("delayed", bytearray()))
+        (evidence / "stages.json").write_text(json.dumps(stages))
+        events = read_events(self.root)
+        (evidence / "transport.json").write_text(json.dumps(events))
+        analysis = subprocess.run(
+            ["node", str(FIXTURE), "analyze-live"],
+            input=json.dumps(stages),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=self.env,
+        )
+        (evidence / "terminal.json").write_text(analysis.stdout)
+        reports = json.loads(analysis.stdout)
+        self.assertEqual([event["action"] for event in events], ["server", "client"])
+        client = events[-1]
+        self.assertEqual((client["columns"], client["rows"]), (165, 46))
+        self.assertEqual(os.get_terminal_size(self.master), (165, 46))
+        for report, count in zip(reports[1:], (80, 96), strict=True):
+            with self.subTest(phase=report["name"]):
+                history = "\n".join(report["history"])
+                visible = "\n".join(report["visible"])
+                markers = re.findall(r"LIVE_LINE_(\d{3})", history + "\n" + visible)
+                expected = [f"{index:03d}" for index in range(count)]
+                self.assertEqual(
+                    markers,
+                    expected,
+                    f"{report['name']}: live assistant lines must occur exactly once "
+                    "in order across native Mosh scrollback and viewport",
+                )
+                self.assertIn("LIVE_LINE_000", history)
+                self.assertIn(f"LIVE_LINE_{count - 1:03d}", visible)
+
+    def test_native_fixed_size_bulk_revisions_and_widget_repaint_preserve_history(self):
+        evidence = Path("/var/tmp/pi-resize-fix/long-live-red/bulk")
+        evidence.mkdir(parents=True, exist_ok=True)
+        self.start_attachment(bulk=True)
+        stages = [self.capture_live_phase("ready", bytearray())]
+        for key, phase in (
+            (b"b", "bulk"),
+            (b"r", "revised"),
+            (b"w", "widgets"),
+            (b"p", "partial"),
+        ):
+            os.write(self.master, key)
+            stages.append(self.capture_live_phase(phase, bytearray()))
+        (evidence / "stages.json").write_text(json.dumps(stages))
+        events = read_events(self.root)
+        (evidence / "transport.json").write_text(json.dumps(events))
+        analysis = subprocess.run(
+            ["node", str(FIXTURE), "analyze-live"],
+            input=json.dumps(stages),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=self.env,
+        )
+        (evidence / "terminal.json").write_text(analysis.stdout)
+        self.assertEqual([event["action"] for event in events], ["server", "client"])
+        self.assertEqual((events[-1]["columns"], events[-1]["rows"]), (165, 46))
+        self.assertEqual(os.get_terminal_size(self.master), (165, 46))
+        reports = json.loads(analysis.stdout)
+        expected_lines = [f"BULK_LINE_{index:03d}" for index in range(80)]
+        for report in reports[1:]:
+            with self.subTest(phase=report["name"]):
+                history = "\n".join(report["history"])
+                visible = "\n".join(report["visible"])
+                transcript = history + "\n" + visible
+                widgets = report["name"] in ("widgets", "partial")
+                expected = expected_lines + (
+                    ["TOOL_WIDGET", "EVENT_WIDGET"] if widgets else []
+                )
+                markers = re.findall(
+                    r"BULK_LINE_\d{3}|TOOL_WIDGET|EVENT_WIDGET", transcript
+                )
+                self.assertEqual(
+                    markers,
+                    expected,
+                    f"{report['name']}: bulk assistant and later widget markers must "
+                    "occur exactly once in order across native scrollback and viewport",
+                )
+                self.assertIn("BULK_LINE_000", history)
+                self.assertIn("EVENT_WIDGET" if widgets else "BULK_LINE_079", visible)
+                if report["name"] != "bulk":
+                    self.assertIn("TABLE_EXPANDED", transcript)
+                    self.assertNotIn("TABLE_PENDING", transcript)
+                if report["name"] == "partial":
+                    self.assertIn("TOOL_WIDGET complete", visible)
+                    self.assertNotIn("TOOL_WIDGET pending", transcript)
 
     def stop_owned_processes(self):
         self.owned.update(
