@@ -15,7 +15,7 @@ impl Fixture {
     async fn start() -> Self {
         let root = tempfile::tempdir().unwrap();
         let pi = root.path().join("pi");
-        std::fs::write(&pi, "#!/usr/bin/python3\nimport sys,tty,time\ntty.setraw(0)\nprint('READY',flush=True)\nfor command in sys.stdin:\n if command.strip()=='bulk':\n  for i in range(80): print(f'BULK_LINE_{i:03}\\r',flush=True)\n if command.strip()=='offline':\n  time.sleep(.2)\n  print('OFFLINE_REPLY\\r',flush=True)\n").unwrap();
+        std::fs::write(&pi, "#!/usr/bin/python3\nimport sys,tty,time\ntime.sleep(.05)\ntty.setraw(0)\nprint('READY',flush=True)\nfor command in sys.stdin:\n if command.strip()=='bulk':\n  for i in range(80): print(f'BULK_LINE_{i:03}\\r',flush=True)\n if command.strip()=='offline':\n  time.sleep(.2)\n  print('OFFLINE_REPLY\\r',flush=True)\n").unwrap();
         std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o700)).unwrap();
         let launch = Launch {
             name: "test".into(),
@@ -148,6 +148,10 @@ async fn quic_bulk_output_and_reconnect_preserve_every_line_and_child() {
     );
     let initial = next_display(&mut reader).await;
     terminal.process(&renderer.render(&initial).unwrap());
+    while !terminal_text(&terminal).contains("READY") {
+        let update = next_display(&mut reader).await;
+        terminal.process(&renderer.render(&update).unwrap());
+    }
     send_frame(
         &mut writer,
         &ClientFrame::Input {
