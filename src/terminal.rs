@@ -350,12 +350,7 @@ impl TerminalState {
         let base = self.sequence;
         self.sequence = base.checked_add(1).expect("display sequence exhausted");
         let previous = std::mem::replace(&mut self.published, self.parser.screen().clone());
-        let (base, screen) = if previous.size() == self.published.size() {
-            let diff = self.published.state_diff(&previous);
-            (Some(base), diff.into_bytes())
-        } else {
-            (None, display_bytes(&self.published))
-        };
+        let (base, screen) = encode_display(&self.published, &previous, base);
         let update = DisplayUpdate {
             sequence: self.sequence,
             size: self.size,
@@ -386,6 +381,20 @@ impl TerminalState {
                 update_bytes(&self.journal.pop_front().expect("journal bytes accounted"));
         }
         update
+    }
+}
+
+/// Returns `screen` as a diff from `previous` (published as sequence `base`),
+/// or as a complete display when the size changed.
+fn encode_display(
+    screen: &vt100::Screen,
+    previous: &vt100::Screen,
+    base: u64,
+) -> (Option<u64>, Vec<u8>) {
+    if screen.size() == previous.size() {
+        (Some(base), screen.state_diff(previous).into_bytes())
+    } else {
+        (None, display_bytes(screen))
     }
 }
 
