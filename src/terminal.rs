@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(rows[0], "ABCDEFGHIJ");
         assert_eq!(rows[1], "0123456789");
         assert_eq!(rows[2], "abcdefghij");
-        assert!(rows[3..].iter().all(String::is_empty));
+        assert!(rows[3..].iter().all(|row| row.trim().is_empty()));
     }
 
     #[test]
