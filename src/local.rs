@@ -359,10 +359,10 @@ fn read_command_bounded(mut command: Command, limit: usize) -> Result<Vec<u8>> {
         .expect("piped stdout")
         .take(limit as u64 + 1)
         .read_to_end(&mut output);
-    if read.is_err() || output.len() > limit {
-        if let Err(error) = child.kill() {
-            eprintln!("remote-agent: stop clipboard provider {description}: {error}");
-        }
+    if (read.is_err() || output.len() > limit)
+        && let Err(error) = child.kill()
+    {
+        eprintln!("remote-agent: stop clipboard provider {description}: {error}");
     }
     let status = child
         .wait()

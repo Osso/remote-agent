@@ -16,7 +16,9 @@ fn decode_rgba(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
     let rgba = match frame.color_type {
         png::ColorType::Rgba => pixels,
         png::ColorType::Rgb => pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
             .collect(),
         other => panic!("expected RGB or RGBA pixels, got {other:?}"),

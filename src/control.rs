@@ -215,7 +215,6 @@ fn start_session_unit_with(systemctl: &Path, launch: &Launch, state: &Path) -> R
     write_private_json(&state.join("launch.json"), launch)?;
     // The unit appends server output here; create it private first.
     let log = OpenOptions::new()
-        .write(true)
         .append(true)
         .create_new(true)
         .mode(0o600)

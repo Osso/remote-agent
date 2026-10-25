@@ -441,10 +441,10 @@ impl DisplayRenderer {
         if duplicate && !reset && !self.repaint {
             return Ok(Vec::new());
         }
-        if let Some(sequence) = self.sequence {
-            if update.sequence < sequence {
-                return Ok(Vec::new());
-            }
+        if let Some(sequence) = self.sequence
+            && update.sequence < sequence
+        {
+            return Ok(Vec::new());
         }
         let mut output = b"\x1b[?6l\x1b[r\x1b[0m\x1b[?7l".to_vec();
         let mut native_rows = self.native_rows;

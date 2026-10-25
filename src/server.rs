@@ -351,18 +351,16 @@ impl Session {
                 {
                     return Ok(());
                 }
-                if let Err(error) = self.apply_input(&id, frame) {
-                    if let Some(peer) = self.peers.get(&id) {
-                        if peer
-                            .sender
-                            .try_send(ServerFrame::Error {
-                                message: format!("{error:#}"),
-                            })
-                            .is_err()
-                        {
-                            self.peers.remove(&id);
-                        }
-                    }
+                if let Err(error) = self.apply_input(&id, frame)
+                    && let Some(peer) = self.peers.get(&id)
+                    && peer
+                        .sender
+                        .try_send(ServerFrame::Error {
+                            message: format!("{error:#}"),
+                        })
+                        .is_err()
+                {
+                    self.peers.remove(&id);
                 }
                 Ok(())
             }

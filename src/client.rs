@@ -187,10 +187,10 @@ impl InputReader {
 impl Drop for InputReader {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                eprintln!("terminal reader panicked");
-            }
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            eprintln!("terminal reader panicked");
         }
     }
 }
@@ -412,10 +412,11 @@ impl Attachment {
         self.size = size;
         self.renderer.resize_physical(size);
         send_frame(writer, &ClientFrame::Resize { size }).await?;
-        if let Some(update) = &self.latest {
-            if update.size.rows <= size.rows && update.size.cols <= size.cols {
-                write_terminal(&self.renderer.render(update)?)?;
-            }
+        if let Some(update) = &self.latest
+            && update.size.rows <= size.rows
+            && update.size.cols <= size.cols
+        {
+            write_terminal(&self.renderer.render(update)?)?;
         }
         Ok(())
     }
@@ -529,6 +530,13 @@ fn fold_deferred_display(
     pending.control.extend(update.control);
     update.control = pending.control;
     update
+}
+
+fn write_terminal(bytes: &[u8]) -> Result<()> {
+    let mut output = std::io::stdout().lock();
+    output.write_all(bytes)?;
+    output.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -722,11 +730,4 @@ mod resize_tests {
         let text = native_text(&bytes);
         assert_eq!(text.matches("once only").count(), 1, "{text}");
     }
-}
-
-fn write_terminal(bytes: &[u8]) -> Result<()> {
-    let mut output = std::io::stdout().lock();
-    output.write_all(bytes)?;
-    output.flush()?;
-    Ok(())
 }

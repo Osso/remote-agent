@@ -250,11 +250,11 @@ async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Resul
         if state.join("runtime.json").is_file() {
             return Ok(());
         }
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                let log = std::fs::read_to_string(state.join("server.log"))?;
-                bail!("session launcher exited {status}: {log}");
-            }
+        if let Some(status) = child.try_wait()?
+            && !status.success()
+        {
+            let log = std::fs::read_to_string(state.join("server.log"))?;
+            bail!("session launcher exited {status}: {log}");
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -314,13 +314,13 @@ async fn cancel_session(home: &Path, config: &Config, name: &str) -> Result<Valu
     } else {
         None
     };
-    if let Some(runtime) = &runtime {
-        if process_is_live(runtime.pid)? {
-            ensure!(
-                control::server_matches_state(runtime.pid, &state)?,
-                "refusing to signal a PID that does not own this session"
-            );
-        }
+    if let Some(runtime) = &runtime
+        && process_is_live(runtime.pid)?
+    {
+        ensure!(
+            control::server_matches_state(runtime.pid, &state)?,
+            "refusing to signal a PID that does not own this session"
+        );
     }
     control::stop_session_unit(name)?;
     if let Some(runtime) = runtime {
