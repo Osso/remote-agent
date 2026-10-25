@@ -5,6 +5,7 @@ is used. Evidence remains in /var/tmp/pi-resize-fix/rust-retry/.
 """
 
 import os
+import re
 import time
 import unittest
 from pathlib import Path
@@ -73,7 +74,15 @@ class NativeRustRetryBudgetTests(NativeRustNetworkTests):
                 os.write(self.master, key)
             self.wait_acknowledged_output(phase, previous_count, cycle)
             self.assert_lifetime(f"recovered-{cycle}")
-        self.assert_bulk(self.analyze(self.stages, "six-recoveries")[-1], "bulk")
+        # Direct-PTY reference for b,r,b,r,b,r,b: 80 markers once; Pi keeps the
+        # revised heading, so this is not compared with the first bulk render.
+        report = self.analyze(self.stages, "six-recoveries")[-1]
+        transcript = "\n".join(report["history"] + report["visible"])
+        self.assertEqual(
+            re.findall(r"BULK_LINE_\d{3}", transcript),
+            [f"BULK_LINE_{index:03}" for index in range(80)],
+        )
+        self.assertNotIn("reconnecting", transcript)
         self.assertTrue(all(self.proxy.dropped), "outages must drop both directions")
         self.detach()
         status = self.cli("status", "bulk-proof")

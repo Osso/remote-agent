@@ -241,7 +241,15 @@ class NativeRustNetworkTests(native.NativeRustAttachTests):
         self.assertNotIn(b"BULK_LINE_", output)
         self.assertTrue(all(self.proxy.dropped), "blackhole must drop both directions")
         self.assert_lifetime("reconnecting")
-        logs = self.cli("logs", "bulk-proof", check=False)
+        # logs runs on the server host against the real local port; only the
+        # attached client's ticket points through the blackholed proxy.
+        runtime_path = self.state / "runtime.json"
+        proxied_runtime = runtime_path.read_text()
+        runtime_path.write_text(self.original_runtime)
+        try:
+            logs = self.cli("logs", "bulk-proof", check=False)
+        finally:
+            runtime_path.write_text(proxied_runtime)
         self.assertEqual(logs.returncode, 0, logs.stderr)
         self.assertEqual(
             re.findall(r"BULK_LINE_(\d{3})", logs.stdout),
