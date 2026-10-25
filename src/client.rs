@@ -233,6 +233,7 @@ struct Attachment {
     size: Size,
     decoder: InputDecoder,
     deferred: Option<DisplayUpdate>,
+    consecutive_failures: u32,
 }
 
 pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str) -> Result<i32> {
@@ -247,24 +248,22 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
     let (cancel, mut cancelled) = watch::channel(None);
     let reader = InputReader::spawn(sender, cancel);
     let mut current = ticket;
-    let mut attempts = 0;
     let result = {
         let network = async {
             loop {
                 match state.run(&current, &hostname, &terminal, &mut input).await {
                     Ok(code) => break Ok(code),
                     Err(error) => {
-                        attempts += 1;
+                        state.consecutive_failures += 1;
                         eprintln!(
                             "\r\nremote-agent-rs: connection interrupted: {error:#}; reconnecting\r"
                         );
-                        if attempts > 5 {
+                        if state.consecutive_failures > 5 {
                             break Err(error.context("five reconnect attempts failed"));
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            250 * (1 << attempts.min(4)),
-                        ))
-                        .await;
+                        let entropy = uuid::Uuid::new_v4().as_u128();
+                        tokio::time::sleep(reconnect_delay(state.consecutive_failures, entropy))
+                            .await;
                         match query_remote_async(config, host, user, &request)
                             .await
                             .and_then(|reply| Ok(serde_json::from_value(reply)?))
@@ -309,10 +308,13 @@ impl Attachment {
             size,
             decoder: InputDecoder::new(),
             deferred: None,
+            consecutive_failures: 0,
         }
     }
 
     fn prepare_display(&mut self, update: DisplayUpdate) -> Option<DisplayUpdate> {
+        // An authorized Hello snapshot confirms recovery even at the same sequence.
+        self.consecutive_failures = 0;
         if self
             .after
             .is_some_and(|sequence| update.sequence <= sequence)
@@ -486,6 +488,13 @@ async fn receive_frames(mut reader: quinn::RecvStream, sender: mpsc::Sender<Resu
     }
 }
 
+fn reconnect_delay(failures: u32, entropy: u128) -> std::time::Duration {
+    let ceiling_ms = 250_u64 * (1 << failures.min(4));
+    let jitter_window_ms = ceiling_ms / 10;
+    let jitter_ms = (entropy % u128::from(jitter_window_ms + 1)) as u64;
+    std::time::Duration::from_millis(ceiling_ms - jitter_window_ms + jitter_ms)
+}
+
 fn input_sequence(frame: &ClientFrame) -> u64 {
     match frame {
         ClientFrame::Input { sequence, .. } | ClientFrame::Image { sequence, .. } => *sequence,
@@ -539,6 +548,49 @@ mod resize_tests {
         parser.screen_mut().set_scrollback(0);
         lines.push(parser.screen().contents());
         lines.join("\n")
+    }
+
+    #[test]
+    fn duplicate_authorized_snapshot_restores_failure_budget_without_repainting() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        state.after = Some(7);
+        state.consecutive_failures = 5;
+        state.begin_replay("renewed ticket".into());
+        assert_eq!(state.consecutive_failures, 5);
+        assert!(
+            state
+                .prepare_display(update(7, 40, "same snapshot"))
+                .is_none()
+        );
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.after, Some(7));
+    }
+
+    #[test]
+    fn deferred_authorized_snapshot_restores_failure_budget_before_resize() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        state.consecutive_failures = 5;
+        assert!(
+            state
+                .prepare_display(update(1, 80, "wide snapshot"))
+                .is_none()
+        );
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.after, None);
+        assert!(state.deferred.is_some());
+    }
+
+    #[test]
+    fn reconnect_backoff_grows_exponentially_with_bounded_jitter() {
+        for (failures, ceiling_ms) in [(1, 500), (2, 1000), (3, 2000), (4, 4000), (5, 4000)] {
+            let floor_ms = ceiling_ms * 9 / 10;
+            let window = ceiling_ms - floor_ms;
+            assert_eq!(reconnect_delay(failures, 0).as_millis(), floor_ms);
+            assert_eq!(reconnect_delay(failures, window).as_millis(), ceiling_ms);
+            assert_eq!(reconnect_delay(failures, window + 1).as_millis(), floor_ms);
+            let delay_ms = reconnect_delay(failures, u128::MAX).as_millis();
+            assert!((floor_ms..=ceiling_ms).contains(&delay_ms));
+        }
     }
 
     #[test]
