@@ -305,7 +305,7 @@ struct ScopeMetadata {
 fn session_scope_unit(name: &str) -> Result<String> {
     validate_session_name(name)?;
     Ok(format!("remote-agent-rs-{}-{name}.scope", unsafe {
-        libc::getuid()
+        libc::geteuid()
     }))
 }
 
@@ -322,7 +322,7 @@ fn read_scope_metadata(state: &Path, name: &str) -> Result<ScopeMetadata> {
     ensure!(
         metadata.is_file()
             && metadata.mode() & 0o777 == 0o600
-            && metadata.uid() == unsafe { libc::getuid() },
+            && metadata.uid() == unsafe { libc::geteuid() },
         "scope metadata must be an owned private 0600 file"
     );
     let scope: ScopeMetadata = serde_json::from_slice(&fs::read(&path)?)
@@ -668,7 +668,7 @@ mod tests {
                     "--quiet",
                     "--collect",
                     &format!("--unit=remote-agent-rs-{}-test-1.scope", unsafe {
-                        libc::getuid()
+                        libc::geteuid()
                     }),
                     "--",
                 ]
@@ -755,7 +755,7 @@ config = json.loads((root / 'config.json').read_text())
 if pathlib.Path(__file__).name == 'systemd-run':
     expected = ['--user'] if config['user_manager'] else []
     expected += ['--scope', '--slice=agents.slice', '--quiet', '--collect',
-                 '--unit=remote-agent-rs-' + str(os.getuid()) + '-test-1.scope',
+                 '--unit=remote-agent-rs-' + str(os.geteuid()) + '-test-1.scope',
                  '--', '/bin/true', '__serve', '--state',
                  str(root / '.local/state/remote-agent-rs/sessions/test-1')]
     assert args == expected, args
@@ -768,7 +768,7 @@ if args == ['show', 'agents.slice', '-p', 'FragmentPath', '--value']:
 prefix = ['--user'] if config['user_manager'] else []
 assert args[:len(prefix)] == prefix, args
 args = args[len(prefix):]
-unit = 'remote-agent-rs-' + str(os.getuid()) + '-test-1.scope'
+unit = 'remote-agent-rs-' + str(os.geteuid()) + '-test-1.scope'
 status = json.loads((root / 'unit.json').read_text())
 if args == ['show', unit, '-p', 'LoadState', '-p', 'ActiveState', '-p', 'InvocationID']:
     if config.get('query_failure'):
@@ -858,7 +858,7 @@ status.update(LoadState='not-found', ActiveState='inactive', InvocationID='', jo
             assert_eq!(
                 fixture.metadata(),
                 serde_json::json!({
-                    "unit":format!("remote-agent-rs-{}-test-1.scope", unsafe { libc::getuid() }),
+                    "unit":format!("remote-agent-rs-{}-test-1.scope", unsafe { libc::geteuid() }),
                     "user_manager":fixture.user_manager, "invocation_id":null
                 })
             );
