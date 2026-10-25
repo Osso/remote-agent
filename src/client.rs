@@ -232,7 +232,7 @@ struct Attachment {
     latest: Option<DisplayUpdate>,
     size: Size,
     decoder: InputDecoder,
-    deferred_rows: Vec<Vec<u8>>,
+    deferred: Option<DisplayUpdate>,
 }
 
 pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str) -> Result<i32> {
@@ -242,17 +242,7 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
     let hostname = query_ssh_hostname(config, host)?;
     let terminal = TerminalGuard::enter()?;
     let size = terminal.size()?;
-    let mut state = Attachment {
-        id: uuid::Uuid::new_v4().to_string(),
-        after: None,
-        next_input: 1,
-        pending: VecDeque::new(),
-        renderer: DisplayRenderer::new(size),
-        latest: None,
-        size,
-        decoder: InputDecoder::new(),
-        deferred_rows: Vec::new(),
-    };
+    let mut state = Attachment::new(size);
     let (sender, mut input) = mpsc::channel(128);
     let (cancel, mut cancelled) = watch::channel(None);
     let reader = InputReader::spawn(sender, cancel);
@@ -308,6 +298,46 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
 }
 
 impl Attachment {
+    fn new(size: Size) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            after: None,
+            next_input: 1,
+            pending: VecDeque::new(),
+            renderer: DisplayRenderer::new(size),
+            latest: None,
+            size,
+            decoder: InputDecoder::new(),
+            deferred: None,
+        }
+    }
+
+    fn prepare_display(&mut self, update: DisplayUpdate) -> Option<DisplayUpdate> {
+        if self
+            .after
+            .is_some_and(|sequence| update.sequence <= sequence)
+        {
+            return None;
+        }
+        let update = fold_deferred_display(self.deferred.take(), update);
+        if update.size.rows > self.size.rows || update.size.cols > self.size.cols {
+            self.deferred = Some(update);
+            return None;
+        }
+        Some(update)
+    }
+
+    fn begin_replay(&mut self, token: String) -> ClientFrame {
+        // The server replays everything after the last applied sequence.
+        self.deferred = None;
+        ClientFrame::Hello {
+            token,
+            client: self.id.clone(),
+            size: self.size,
+            after: self.after,
+        }
+    }
+
     async fn run(
         &mut self,
         ticket: &Ticket,
@@ -317,16 +347,7 @@ impl Attachment {
     ) -> Result<i32> {
         let (_endpoint, connection) = connect(ticket, host).await?;
         let (mut writer, reader) = connection.open_bi().await?;
-        send_frame(
-            &mut writer,
-            &ClientFrame::Hello {
-                token: ticket.token.clone(),
-                client: self.id.clone(),
-                size: self.size,
-                after: self.after,
-            },
-        )
-        .await?;
+        send_frame(&mut writer, &self.begin_replay(ticket.token.clone())).await?;
         for frame in &self.pending {
             send_frame(&mut writer, frame).await?;
         }
@@ -383,16 +404,10 @@ impl Attachment {
         writer: &mut quinn::SendStream,
     ) -> Result<Option<i32>> {
         match frame {
-            ServerFrame::Display { mut update } => {
-                if update.size.rows > self.size.rows || update.size.cols > self.size.cols {
-                    self.deferred_rows.extend(update.scrolled);
+            ServerFrame::Display { update } => {
+                let Some(update) = self.prepare_display(update) else {
                     return Ok(None);
-                }
-                if !self.deferred_rows.is_empty() {
-                    let mut rows = std::mem::take(&mut self.deferred_rows);
-                    rows.extend(update.scrolled);
-                    update.scrolled = rows;
-                }
+                };
                 write_terminal(&self.renderer.render(&update)?)?;
                 self.after = Some(update.sequence);
                 self.latest = Some(update);
@@ -462,6 +477,157 @@ fn input_sequence(frame: &ClientFrame) -> u64 {
     match frame {
         ClientFrame::Input { sequence, .. } | ClientFrame::Image { sequence, .. } => *sequence,
         _ => 0,
+    }
+}
+
+fn fold_deferred_display(
+    pending: Option<DisplayUpdate>,
+    mut update: DisplayUpdate,
+) -> DisplayUpdate {
+    let Some(mut pending) = pending else {
+        return update;
+    };
+    if !update.reset {
+        pending.scrolled.extend(update.scrolled);
+        update.scrolled = pending.scrolled;
+        update.reset = pending.reset;
+        update.expired |= pending.expired;
+    }
+    pending.control.extend(update.control);
+    update.control = pending.control;
+    update
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+
+    fn update(sequence: u64, cols: u16, row: &str) -> DisplayUpdate {
+        DisplayUpdate {
+            sequence,
+            size: Size { rows: 4, cols },
+            scrolled: vec![row.as_bytes().to_vec()],
+            screen: b"\x1b[Hlive viewport".to_vec(),
+            control: Vec::new(),
+            reset: false,
+            expired: false,
+        }
+    }
+
+    fn native_text(bytes: &[u8]) -> String {
+        let mut parser = vt100::Parser::new(6.try_into().unwrap(), 40.try_into().unwrap(), 100);
+        parser.process(bytes);
+        let count = parser.screen().scrollback_len();
+        let mut lines = Vec::new();
+        for offset in (1..=count).rev() {
+            parser.screen_mut().set_scrollback(offset);
+            lines.push(parser.screen().rows(0, 40).next().unwrap());
+        }
+        parser.screen_mut().set_scrollback(0);
+        lines.push(parser.screen().contents());
+        lines.join("\n")
+    }
+
+    #[test]
+    fn deferred_reset_discards_rows_before_the_reset() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        assert!(
+            state
+                .prepare_display(update(1, 80, "obsolete row"))
+                .is_none()
+        );
+        let mut reset = update(2, 80, "replacement row");
+        reset.reset = true;
+        assert!(state.prepare_display(reset).is_none());
+        let ready = state.prepare_display(update(3, 40, "later row")).unwrap();
+        let bytes = state.renderer.render(&ready).unwrap();
+        let text = native_text(&bytes);
+        assert!(!text.contains("obsolete row"), "{text}");
+        assert!(text.contains("replacement row"), "{text}");
+        assert!(text.contains("later row"), "{text}");
+        assert!(bytes.windows(4).any(|part| part == b"\x1b[3J"));
+    }
+
+    #[test]
+    fn deferred_reset_expiration_and_control_reach_native_terminal() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let mut reset = update(1, 80, "retained row");
+        reset.reset = true;
+        reset.expired = true;
+        reset.control = b"\x1b]2;deferred title\x07".to_vec();
+        assert!(state.prepare_display(reset).is_none());
+        let mut next = update(2, 80, "next row");
+        next.control = b"\x07".to_vec();
+        assert!(state.prepare_display(next).is_none());
+        let ready = state
+            .prepare_display(update(3, 40, "compatible row"))
+            .unwrap();
+        let bytes = state.renderer.render(&ready).unwrap();
+        let text = native_text(&bytes);
+        assert!(text.contains("[earlier output expired]"), "{text}");
+        assert!(text.contains("retained row"), "{text}");
+        assert!(bytes.ends_with(b"\x1b]2;deferred title\x07\x07"));
+    }
+
+    #[test]
+    fn a_later_reset_replaces_expired_snapshot_metadata() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let mut expired = update(1, 80, "expired snapshot");
+        expired.reset = true;
+        expired.expired = true;
+        expired.control = b"\x07".to_vec();
+        assert!(state.prepare_display(expired).is_none());
+        let mut reset = update(2, 80, "new snapshot");
+        reset.reset = true;
+        assert!(state.prepare_display(reset).is_none());
+        let ready = state
+            .prepare_display(update(3, 40, "compatible row"))
+            .unwrap();
+        let bytes = state.renderer.render(&ready).unwrap();
+        let text = native_text(&bytes);
+        assert!(!text.contains("expired snapshot"), "{text}");
+        assert!(!text.contains("earlier output expired"), "{text}");
+        assert!(bytes.ends_with(b"\x07"));
+    }
+
+    #[test]
+    fn reconnect_replays_only_unapplied_rows_once() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let first = state.prepare_display(update(1, 40, "applied row")).unwrap();
+        let mut bytes = state.renderer.render(&first).unwrap();
+        state.after = Some(first.sequence);
+        assert!(
+            state
+                .prepare_display(update(2, 80, "unapplied row"))
+                .is_none()
+        );
+        let hello = state.begin_replay("new ticket".into());
+        assert!(matches!(hello, ClientFrame::Hello { after: Some(1), .. }));
+        assert!(
+            state
+                .prepare_display(update(2, 80, "unapplied row"))
+                .is_none()
+        );
+        let ready = state
+            .prepare_display(update(3, 40, "compatible row"))
+            .unwrap();
+        bytes.extend(state.renderer.render(&ready).unwrap());
+        let text = native_text(&bytes);
+        assert_eq!(text.matches("applied row").count(), 2, "{text}");
+        assert_eq!(text.matches("unapplied row").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn applied_duplicate_is_ignored_before_it_can_be_deferred() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let first = state.prepare_display(update(1, 40, "once only")).unwrap();
+        let mut bytes = state.renderer.render(&first).unwrap();
+        state.after = Some(first.sequence);
+        assert!(state.prepare_display(update(1, 80, "once only")).is_none());
+        let next = state.prepare_display(update(2, 40, "new row")).unwrap();
+        bytes.extend(state.renderer.render(&next).unwrap());
+        let text = native_text(&bytes);
+        assert_eq!(text.matches("once only").count(), 1, "{text}");
     }
 }
 
