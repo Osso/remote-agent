@@ -1,6 +1,6 @@
-# Unified Rust Pi sessions — draft
+# Unified Rust Pi sessions
 
-A proposed single Rust project replaces the needed remote-agent, detach, and Mosh behavior for Pi sessions. This is a design draft, not an implemented replacement. Source for the replacement does not exist yet. The existing implementations remain in service. See [design notes](../wiki/systems/unified-pi-session.md).
+The user-approved product scope is a single Rust project replacing the needed remote-agent, detach, and Mosh behavior for Pi sessions. Architecture and detailed acceptance remain design work, not an implemented replacement. Source for the replacement does not exist yet. The existing implementations remain in service. See [design notes](../wiki/systems/unified-pi-session.md).
 
 ## What it must do
 
