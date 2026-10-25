@@ -248,15 +248,24 @@ async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Resul
 
 fn read_logs(home: &Path, name: &str) -> Result<Value> {
     let state = control::session_dir(home, name)?;
-    let update: DisplayUpdate =
-        serde_json::from_slice(&std::fs::read(state.join("history.json"))?)?;
-    let mut logs = Vec::new();
-    for row in update.scrolled {
-        logs.extend(row);
-        logs.extend_from_slice(b"\r\n");
+    let update = remote_agent_rs::history::read(&state.join("history.jsonl"))?;
+    let mut lines = Vec::new();
+    if update.expired {
+        lines.push("[earlier output expired]".to_string());
     }
-    logs.extend(update.screen);
-    Ok(json!({"logs":String::from_utf8(logs)?}))
+    for row in update.scrolled {
+        let mut parser = vt100::Parser::new(1.try_into()?, 1000.try_into()?, 0);
+        parser.process(&row);
+        lines.push(parser.screen().contents());
+    }
+    let mut parser = vt100::Parser::new(
+        update.size.rows.try_into()?,
+        update.size.cols.try_into()?,
+        0,
+    );
+    parser.process(&update.screen);
+    lines.push(parser.screen().contents());
+    Ok(json!({"logs":format!("{}\n", lines.join("\n"))}))
 }
 
 async fn cancel_session(home: &Path, name: &str) -> Result<Value> {

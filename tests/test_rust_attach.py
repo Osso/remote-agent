@@ -401,6 +401,23 @@ class NativeRustAttachTests(unittest.TestCase):
         reports = self.analyze(self.stages, "live")
         for report in reports[1:]:
             self.assert_bulk(report, report["name"])
+        logs = subprocess.run(
+            [str(self.binary), "logs", "bulk-proof"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout
+        self.assertNotIn("\x1b", logs, "logs must not repaint the caller's terminal")
+        self.assertEqual(
+            re.findall(r"BULK_LINE_(\d{3})", logs),
+            [f"{index:03}" for index in range(80)],
+        )
+        self.assertIn("TOOL_WIDGET complete", logs)
+        self.assertLessEqual(
+            (self.state / "history.jsonl").stat().st_size, 16 * 1024 * 1024
+        )
         self.detach()
         detached = self.cli("status", "bulk-proof")
         for field in ("pid", "child_pid", "conversation"):

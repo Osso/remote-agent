@@ -50,6 +50,7 @@ impl Drop for Acceptor {
 struct Session {
     state: PathBuf,
     terminal: TerminalState,
+    history: crate::history::HistoryStore,
     pty: Pty,
     peers: HashMap<String, Peer>,
     input_positions: HashMap<String, u64>,
@@ -85,16 +86,21 @@ pub async fn serve(state: PathBuf) -> Result<()> {
         child_pid: None,
         exit_code: None,
     };
+    let terminal = TerminalState::new(launch.size, launch.history_bytes)?;
+    let mut history =
+        crate::history::HistoryStore::open(&state.join("history.jsonl"), launch.history_bytes)?;
+    let initial = terminal.snapshot(None);
+    history.append(&initial, || terminal.snapshot(None))?;
     let (output_sender, output) = mpsc::channel(64);
     let pty = Pty::spawn(&launch, output_sender)?;
     write_private_json(
         &state.join("runtime.json"),
         &json!({"pid":runtime.pid,"address":runtime.address,"certificate":runtime.certificate,"token":runtime.token,"child_pid":pty.child.id(),"exit_code":null}),
     )?;
-    let terminal = TerminalState::new(launch.size, launch.history_bytes)?;
     let mut session = Session {
         state,
         terminal,
+        history,
         pty,
         peers: HashMap::new(),
         input_positions: HashMap::new(),
@@ -254,8 +260,9 @@ impl Session {
         if !responses.is_empty() {
             self.pty.write_input(&responses)?;
         }
+        self.persist_update(&update)?;
         self.broadcast(ServerFrame::Display { update });
-        self.persist_history()
+        Ok(())
     }
 
     fn broadcast(&mut self, frame: ServerFrame) {
@@ -263,9 +270,9 @@ impl Session {
             .retain(|_, peer| !peer.ready || peer.sender.try_send(frame.clone()).is_ok());
     }
 
-    fn persist_history(&self) -> Result<()> {
-        let snapshot = self.terminal.snapshot(None);
-        write_private_json(&self.state.join("history.json"), &snapshot)
+    fn persist_update(&mut self, update: &DisplayUpdate) -> Result<()> {
+        let terminal = &self.terminal;
+        self.history.append(update, || terminal.snapshot(None))
     }
 
     fn poll_exit(&mut self) -> Result<()> {
@@ -393,6 +400,7 @@ impl Session {
         self.pty.resize(size)?;
         self.size = size;
         let update = self.terminal.resize(size)?;
+        self.persist_update(&update)?;
         self.broadcast(ServerFrame::Display { update });
         Ok(())
     }

@@ -92,7 +92,7 @@ impl Fixture {
             -1,
             "owned PTY child leaked"
         );
-        assert!(self.root.path().join("history.json").exists());
+        assert!(self.root.path().join("history.jsonl").exists());
     }
 }
 

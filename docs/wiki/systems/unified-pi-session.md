@@ -37,9 +37,9 @@ SSH uses existing private host/project maps and returns a ticket containing the 
 
 The server keeps one authoritative, persistent `vt100` parser. Each PTY output chunk produces **every scrolled row**, the current formatted frame and supported control events. This is ordered QUIC delivery, not Mosh's screen-only synchronization or raw PTY-byte replay. The native client writes captured rows into the outer terminal's scrollback, then repaints the shared viewport. Its temporary display parsers do not own the application's hidden VT state.
 
-History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. Current frame storage, transient messages and JSON disk size are not capped by that queue budget.
+History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216, but the budget must fit the current display checkpoint. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. A private JSONL disk journal separately enforces the configured serialized-byte limit; ordinary deltas append, while reset or overflow writes an atomic checkpoint and trims oldest archived rows if needed. Byte payloads use base64 rather than numeric arrays.
 
-Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set; unavailable positions also set expired. Reset clears existing outer-terminal scrollback. `history.json` persists the current history/display snapshot, not the journal or serialized hidden parser state. The parser stays authoritative in the live server; the snapshot cannot restore a dead server or PTY. The client does not yet display a distinct expired-history warning.
+Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set. Expired history is marked, including a fresh attachment after retained rows were evicted; the client inserts `[earlier output expired]` into native scrollback. Reset clears existing outer-terminal scrollback and is idempotent for duplicate delivery. `history.jsonl` persists bounded checkpoints/deltas, not hidden parser state; it has no per-delta fsync or power-loss guarantee. The parser stays authoritative in the live server; archived display data cannot restore a dead server or PTY. `logs` reconstructs plain text without repainting the caller's terminal.
 
 Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-read queries and application-requested resize can fail the parser; the library also silently ignores some unsupported modes/strings. This is neither general terminal compatibility nor a terminal sanitizer. Actual Pi capability coverage remains unproven.
 
@@ -70,7 +70,8 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 | Dependency | Purpose |
 | --- | --- |
 | `anyhow` | Contextual errors and explicit validation failures. |
-| `base64` | Decode macOS clipboard PNG output. |
+| `base64` | Decode macOS clipboard PNG output and encode transport/journal byte payloads. |
+| `vte` | Observe CSI 3 J with a real parser, preserving clear-history ordering alongside the authoritative vt100 parser. |
 | `clap` (`derive`) | Parse public CLI and hidden control/server commands. |
 | `libc` | Unix PTY, termios, polling, process groups, signals and sizing. |
 | `quinn` (`runtime-tokio`, `rustls-ring`) | Ordered QUIC client/server streams with Tokio and TLS integration. |

@@ -77,11 +77,28 @@ class InstalledPiAcceptance(unittest.TestCase):
             output.extend(harness.drain(0.1))
             if b"\x1b[3J" in output:
                 break
-        output.extend(harness.drain(1))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            output.extend(harness.drain(0.1))
+            logs = subprocess.run(
+                [str(harness.binary), "logs", "bulk-proof"],
+                env=harness.env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            status = harness.cli("status", "bulk-proof")
+            if not status["running"] or "gpt-4o-mini" in logs.stdout:
+                break
         status = harness.cli("status", "bulk-proof")
         self.assertTrue(
             status["running"],
             f"installed Pi exited: {status}\n{output.decode(errors='replace')}\n{harness.server_log()}",
+        )
+        self.assertIn(
+            "gpt-4o-mini",
+            logs.stdout,
+            "wait for the actual Pi editor, not an initial blank transport frame",
         )
         os.write(harness.master, b"\x16")
         deadline = time.monotonic() + 8
