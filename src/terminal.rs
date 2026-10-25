@@ -396,6 +396,11 @@ pub struct DisplayRenderer {
     repaint: bool,
     native_rows: usize,
     restore_rows: usize,
+    /// The virtual display at `sequence`.
+    display: Option<vt100::Parser>,
+    /// Formatted virtual rows on the physical viewport since it was last
+    /// cleared; an empty row has not been painted.
+    painted: Vec<Vec<u8>>,
 }
 
 impl DisplayRenderer {
@@ -406,6 +411,8 @@ impl DisplayRenderer {
             repaint: true,
             native_rows: 0,
             restore_rows: 0,
+            display: None,
+            painted: Vec::new(),
         }
     }
 
@@ -428,12 +435,7 @@ impl DisplayRenderer {
     }
 
     pub fn render(&mut self, update: &DisplayUpdate) -> Result<Vec<u8>> {
-        self.physical.validate()?;
-        update.size.validate()?;
-        ensure!(
-            self.physical.rows >= update.size.rows && self.physical.cols >= update.size.cols,
-            "physical terminal is smaller than the negotiated PTY size"
-        );
+        self.ensure_fits(update)?;
         let duplicate = self
             .sequence
             .is_some_and(|sequence| update.sequence <= sequence);
@@ -447,25 +449,20 @@ impl DisplayRenderer {
             return Ok(Vec::new());
         }
         let mut output = b"\x1b[?6l\x1b[r\x1b[0m\x1b[?7l".to_vec();
-        let mut native_rows = self.native_rows;
-        if reset {
-            output.extend_from_slice(b"\x1b[3J\x1b[2J\x1b[H");
-            native_rows = 0;
-            if update.expired {
-                native_rows += self.push_history_row(&mut output, b"[earlier output expired]")?;
-            }
+        let native_rows = self.write_native_history(&mut output, update, reset, duplicate)?;
+        let resized = self.display.as_ref().map(|display| display.screen().size())
+            != Some(dimensions(update.size));
+        if !duplicate {
+            self.apply_display(update);
+        }
+        if reset || resized || self.repaint {
+            self.clear_viewport(&mut output);
         } else {
-            for _ in 0..self.restore_rows {
-                self.scroll_physical(&mut output);
-            }
+            // Each native history row scrolled the physical viewport up by one.
+            let scrolled = native_rows - self.native_rows;
+            self.painted.drain(..scrolled.min(self.painted.len()));
         }
-        if reset || !duplicate {
-            for row in &update.scrolled {
-                native_rows += self.push_history_row(&mut output, row)?;
-            }
-        }
-        output.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J\x1b[?7h");
-        repaint_screen(&mut output, update);
+        self.write_changed_rows(&mut output);
         if !duplicate || reset {
             output.extend_from_slice(&update.control);
         }
@@ -474,6 +471,72 @@ impl DisplayRenderer {
         self.restore_rows = 0;
         self.repaint = false;
         Ok(output)
+    }
+
+    fn ensure_fits(&self, update: &DisplayUpdate) -> Result<()> {
+        self.physical.validate()?;
+        update.size.validate()?;
+        ensure!(
+            self.physical.rows >= update.size.rows && self.physical.cols >= update.size.cols,
+            "physical terminal is smaller than the negotiated PTY size"
+        );
+        Ok(())
+    }
+
+    /// Returns the native history row count after pushing this update's rows.
+    fn write_native_history(
+        &self,
+        output: &mut Vec<u8>,
+        update: &DisplayUpdate,
+        reset: bool,
+        duplicate: bool,
+    ) -> Result<usize> {
+        let mut native_rows = self.native_rows;
+        if reset {
+            output.extend_from_slice(b"\x1b[3J\x1b[2J\x1b[H");
+            native_rows = 0;
+            if update.expired {
+                native_rows += self.push_history_row(output, b"[earlier output expired]")?;
+            }
+        } else {
+            for _ in 0..self.restore_rows {
+                self.scroll_physical(output);
+            }
+        }
+        if reset || !duplicate {
+            for row in &update.scrolled {
+                native_rows += self.push_history_row(output, row)?;
+            }
+        }
+        Ok(native_rows)
+    }
+
+    fn apply_display(&mut self, update: &DisplayUpdate) {
+        let (rows, cols) = dimensions(update.size);
+        let mut display = vt100::Parser::new(rows, cols, 0);
+        display.process(&update.screen);
+        self.display = Some(display);
+    }
+
+    fn clear_viewport(&mut self, output: &mut Vec<u8>) {
+        output.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
+        self.painted.clear();
+    }
+
+    /// Paints only virtual rows that differ from the physical viewport.
+    fn write_changed_rows(&mut self, output: &mut Vec<u8>) {
+        output.extend_from_slice(b"\x1b[0m\x1b[?7h");
+        let screen = self.display.as_ref().expect("display applied").screen();
+        let rows = format_rows(screen);
+        self.painted.resize(rows.len(), Vec::new());
+        for (index, (row, painted)) in rows.into_iter().zip(&mut self.painted).enumerate() {
+            if row != *painted {
+                output.extend_from_slice(format!("\x1b[{};1H", index + 1).as_bytes());
+                output.extend_from_slice(&row);
+                *painted = row;
+            }
+        }
+        write_cursor_and_modes(output, screen);
     }
 
     fn scroll_physical(&self, output: &mut Vec<u8>) {
@@ -492,23 +555,24 @@ impl DisplayRenderer {
     }
 }
 
-fn repaint_screen(output: &mut Vec<u8>, update: &DisplayUpdate) {
-    let (rows, cols) = dimensions(update.size);
-    let mut parser = vt100::Parser::new(rows, cols, 0);
-    parser.process(&update.screen);
-    let screen = parser.screen();
-    // Virtual soft wraps must not depend on the larger physical width.
-    for row in 0..update.size.rows {
-        output.extend_from_slice(format!("\x1b[{};1H", row + 1).as_bytes());
-        for col in 0..update.size.cols {
-            let cell = screen.cell(row, col).expect("cell within virtual screen");
-            if !cell.is_wide_continuation() {
-                output.extend_from_slice(&format_cell(cell));
-            }
-        }
-    }
+/// Formats every cell of each virtual row, so soft wraps do not depend on the
+/// larger physical width.
+fn format_rows(screen: &vt100::Screen) -> Vec<Vec<u8>> {
+    let (rows, cols) = screen.size();
+    let format_row = |row| {
+        (0..cols.get())
+            .map(|col| screen.cell(row, col).expect("cell within virtual screen"))
+            .filter(|cell| !cell.is_wide_continuation())
+            .flat_map(format_cell)
+            .collect()
+    };
+    (0..rows.get()).map(format_row).collect()
+}
+
+fn write_cursor_and_modes(output: &mut Vec<u8>, screen: &vt100::Screen) {
+    let (_, cols) = screen.size();
     let (row, col) = screen.cursor_position();
-    let col = col.min(update.size.cols - 1);
+    let col = col.min(cols.get() - 1);
     output.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
     output.extend_from_slice(if screen.hide_cursor() {
         b"\x1b[?25l"
@@ -616,6 +680,146 @@ mod tests {
         for n in 0..80 {
             let marker = format!("marker-{n:03}");
             assert_eq!(text.matches(&marker).count(), 1, "{marker}: {text}");
+        }
+    }
+
+    const PI_SIZE: Size = Size {
+        rows: 46,
+        cols: 165,
+    };
+    const PI_EDITOR_ROW: u16 = 40;
+
+    fn pi_chat_text(index: usize) -> String {
+        let text = format!("chat-{index:03} {}", "assistant output ".repeat(10));
+        let red = index * 5 % 256;
+        format!("\x1b[38;2;{red};140;220m{text:<165.165}\x1b[0m")
+    }
+    fn pi_editor_text(text: &str) -> String {
+        format!("\x1b[48;2;40;40;52m\x1b[38;5;250m{text:<165}\x1b[0m")
+    }
+    fn at_row(row: u16, text: &str) -> String {
+        format!("\x1b[{};1H{text}", row + 1)
+    }
+    /// A full-width Pi-like frame: truecolor chat above a filled editor box.
+    fn pi_frame() -> String {
+        let chat = (0..PI_EDITOR_ROW).map(|row| at_row(row, &pi_chat_text(row.into())));
+        let editor = (PI_EDITOR_ROW..PI_SIZE.rows).map(|row| at_row(row, &pi_editor_text("> ")));
+        chat.chain(editor).collect()
+    }
+    /// Pi appends one chat row and redraws the editor below it, scrolling once.
+    fn pi_append_chat(index: usize) -> String {
+        let editor = vec![pi_editor_text("> "); usize::from(PI_SIZE.rows - PI_EDITOR_ROW)];
+        let rows = [vec![pi_chat_text(index)], editor].concat();
+        at_row(PI_EDITOR_ROW, &rows.join("\r\n"))
+    }
+
+    fn wire_bytes(update: &DisplayUpdate) -> usize {
+        serde_json::to_vec(update).unwrap().len()
+    }
+
+    #[derive(Debug)]
+    struct RenderCost {
+        live_output: usize,
+        reference_output: usize,
+        live_wire: usize,
+        reference_wire: usize,
+    }
+
+    /// Renders each live update beside a reference client that receives a full
+    /// snapshot and repaints the whole display; both native terminals must match.
+    struct RenderComparison {
+        sequence: u64,
+        live: DisplayRenderer,
+        live_terminal: vt100::Parser,
+        reference: DisplayRenderer,
+        reference_terminal: vt100::Parser,
+    }
+
+    impl RenderComparison {
+        fn attach(state: &TerminalState, physical: Size) -> Self {
+            let snapshot = state.snapshot(None);
+            let mut comparison = Self {
+                sequence: snapshot.sequence,
+                live: DisplayRenderer::new(physical),
+                live_terminal: parser(physical, 400),
+                reference: DisplayRenderer::new(physical),
+                reference_terminal: parser(physical, 400),
+            };
+            let live = comparison.live.render(&snapshot).unwrap();
+            comparison.live_terminal.process(&live);
+            let reference = comparison.reference.render(&snapshot).unwrap();
+            comparison.reference_terminal.process(&reference);
+            comparison
+        }
+
+        fn render(&mut self, state: &TerminalState, update: &DisplayUpdate) -> RenderCost {
+            let snapshot = state.snapshot(Some(self.sequence));
+            assert_eq!(
+                snapshot.sequence, update.sequence,
+                "compare the latest update"
+            );
+            self.sequence = update.sequence;
+            let live = self.live.render(update).unwrap();
+            self.live_terminal.process(&live);
+            self.reference.invalidate();
+            let reference = self.reference.render(&snapshot).unwrap();
+            self.reference_terminal.process(&reference);
+            assert_eq!(
+                self.live_terminal.screen().contents_formatted(),
+                self.reference_terminal.screen().contents_formatted()
+            );
+            assert_eq!(
+                all_text(&mut self.live_terminal),
+                all_text(&mut self.reference_terminal)
+            );
+            RenderCost {
+                live_output: live.len(),
+                reference_output: reference.len(),
+                live_wire: wire_bytes(update),
+                reference_wire: wire_bytes(&snapshot),
+            }
+        }
+    }
+
+    /// Types into one editor row of a full Pi frame and returns that update's cost.
+    fn typed_editor_row_cost(physical: Size) -> RenderCost {
+        let mut state = TerminalState::new(PI_SIZE, 1_000_000).unwrap();
+        let mut comparison = RenderComparison::attach(&state, physical);
+        let frame = state.feed(pi_frame().as_bytes()).unwrap();
+        comparison.render(&state, &frame);
+        let typed = at_row(PI_EDITOR_ROW + 1, &pi_editor_text("> hello"));
+        let typed = state.feed(typed.as_bytes()).unwrap();
+        comparison.render(&state, &typed)
+    }
+
+    #[test]
+    fn one_changed_pi_row_repaints_one_native_row() {
+        for physical in [PI_SIZE, size(50, 170)] {
+            let cost = typed_editor_row_cost(physical);
+            assert!(cost.live_output * 20 < cost.reference_output, "{cost:?}");
+        }
+    }
+
+
+    #[test]
+    fn scrolled_pi_chat_repaints_only_rows_that_changed_after_the_scroll() {
+        let mut state = TerminalState::new(PI_SIZE, 1_000_000).unwrap();
+        let mut comparison = RenderComparison::attach(&state, size(50, 170));
+        let frame = state.feed(pi_frame().as_bytes()).unwrap();
+        comparison.render(&state, &frame);
+        for index in 40..43 {
+            let appended = state.feed(pi_append_chat(index).as_bytes()).unwrap();
+            assert_eq!(appended.scrolled.len(), 1);
+            let cost = comparison.render(&state, &appended);
+            assert!(cost.live_output * 4 < cost.reference_output, "{cost:?}");
+        }
+        let text = all_text(&mut comparison.live_terminal);
+        for index in 0..43 {
+            assert_eq!(
+                text.matches(&format!("chat-{index:03}")).count(),
+                1,
+                "{text}"
+            );
         }
     }
 
