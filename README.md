@@ -113,8 +113,36 @@ The prototype reads the same private host/project maps described above on each
 account. Remote commands require the matching Rust executable already available
 at the selected account's `~/.local/bin/remote-agent-rs`, Pi, the mapped project,
 SSH access and direct UDP reachability to the server's dynamically selected QUIC
-port. Current deployment instructions below do not establish a Rust installation.
-Do not replace existing sessions to try it.
+port. Do not replace existing sessions to try it.
+
+### Parallel Rust installation
+
+Run `./deploy.sh --rust [--host HOST]` to install only `remote-agent-rs`, beside
+Python `remote-agent`. The default deployment mode remains unchanged. Rust mode
+preserves both maps on the local, default SSH, and configured `deploy_users`
+accounts; missing maps fail instead of copying the operator's configuration.
+It does not change Python workers, detach/Mosh, services, or running sessions.
+
+The local client requires Cargo/rustc with edition 2024 support. Supported native
+platforms are Linux GNU and macOS, on x86_64 or aarch64/arm64; the server must be
+unwrapped Linux GNU. Each build uses the explicit native rustc host target and
+`Cargo.lock`. A matching Linux client/server OS and architecture builds once
+locally. Otherwise, the primary SSH account builds the bundled source and lockfile
+in a temporary directory, with its own Rust toolchain; that Linux binary is then
+sent to all configured accounts. Cargo dependencies must be available from cache
+or the configured registry. No repository clone or build-failure fallback occurs.
+
+Cross-user installation uses existing `authsudo` authorization and the primary
+account's already installed `remote-agent-user.py` environment helper. Provision
+that helper through the existing Python deployment before using this mode.
+
+Each account receives a private, content-addressed executable at
+`~/.local/share/remote-agent-rs/<sha256>/remote-agent-rs`, selected by
+`~/.local/bin/remote-agent-rs`. Directory/file modes are `0700` for the store and
+`0500` for each version and binary. Updates retain old versions without rewriting
+them. Unmanaged executables and foreign or dangling symlinks are rejected.
+`tests/test_rust_deploy.py` covers the installation with fixture SSH/build tools;
+it does not establish native macOS builds or live cross-user deployment.
 
 For a separately provisioned experimental endpoint:
 

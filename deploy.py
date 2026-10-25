@@ -106,6 +106,179 @@ except (KeyError,OSError,subprocess.CalledProcessError) as error:
 """
 
 
+# Shared by the native client installer and the SSH deployment payload.
+RUST_SUPPORT = r"""import base64,hashlib,io,json,os,pathlib,platform,re,subprocess,sys,tarfile,tempfile
+
+def native_platform():
+    system = platform.system()
+    machine = platform.machine()
+    arch = {'x86_64': 'x86_64', 'amd64': 'x86_64',
+            'aarch64': 'aarch64', 'arm64': 'aarch64'}.get(machine.lower())
+    if system not in ('Linux', 'Darwin') or arch is None:
+        raise RuntimeError('Unsupported native platform: '+system+'/'+machine)
+    return {'os': system, 'arch': arch}
+
+def validate_target(target, native):
+    suffix = '-unknown-linux-gnu' if native['os'] == 'Linux' else '-apple-darwin'
+    if target != native['arch']+suffix:
+        raise RuntimeError('Rust target '+target+' does not match native platform '+str(native))
+
+def native_target():
+    metadata = subprocess.check_output(['rustc', '-vV'], text=True)
+    hosts = [line[6:] for line in metadata.splitlines() if line.startswith('host: ')]
+    if len(hosts) != 1:
+        raise RuntimeError('Missing unique rustc host target metadata')
+    validate_target(hosts[0], native_platform())
+    return hosts[0]
+
+def require_maps(home):
+    for name in ('remote-hosts.json', 'remote-projects.json'):
+        (home/'.config/remote-agent'/name).read_bytes()
+
+def build_binary(source):
+    target = native_target()
+    subprocess.run(['cargo', 'build', '--locked', '--release', '--bin',
+                    'remote-agent-rs', '--target', target], cwd=source,
+                   stdout=sys.stderr, check=True,
+                   env={**os.environ, 'CARGO_TARGET_DIR': str(source/'target')})
+    content = (source/'target'/target/'release/remote-agent-rs').read_bytes()
+    return {'target': target, 'binary': base64.b64encode(content).decode(),
+            'sha256': hashlib.sha256(content).hexdigest()}
+
+def check_link(link, root):
+    if link.is_symlink():
+        old = link.readlink()
+        if (old.parent.parent != root or old.name != 'remote-agent-rs'
+                or not re.fullmatch('[0-9a-f]{64}', old.parent.name)
+                or old.parent.is_symlink() or old.is_symlink() or not old.is_file()
+                or hashlib.sha256(old.read_bytes()).hexdigest() != old.parent.name):
+            raise RuntimeError('Not replacing foreign symlink '+str(link))
+    elif link.exists():
+        raise RuntimeError('Not replacing unmanaged '+str(link))
+
+def install_binary(home, payload):
+    require_maps(home)
+    validate_target(payload['target'], native_platform())
+    content = base64.b64decode(payload['binary'], validate=True)
+    digest = hashlib.sha256(content).hexdigest()
+    if digest != payload['sha256']:
+        raise RuntimeError('Rust binary content hash mismatch')
+    root = home/'.local/share/remote-agent-rs'
+    link = home/'.local/bin/remote-agent-rs'
+    if root.is_symlink():
+        raise RuntimeError('Not replacing foreign symlink '+str(root))
+    check_link(link, root)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    version = root/digest
+    binary = version/'remote-agent-rs'
+    if version.is_symlink():
+        raise RuntimeError('Not replacing foreign symlink '+str(version))
+    if version.exists():
+        if (binary.is_symlink() or binary.read_bytes() != content
+                or version.stat().st_mode & 0o777 != 0o500
+                or binary.stat().st_mode & 0o777 != 0o500):
+            raise RuntimeError('Invalid immutable Rust installation '+str(version))
+    else:
+        version.mkdir(mode=0o700)
+        with binary.open('xb') as output:
+            output.write(content)
+        binary.chmod(0o500)
+        version.chmod(0o500)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix='.remote-agent-rs-', dir=link.parent)
+    os.close(descriptor)
+    temporary = pathlib.Path(temporary)
+    temporary.unlink()
+    try:
+        temporary.symlink_to(binary)
+        check_link(link, root)
+        temporary.replace(link)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {'installed': str(binary)}
+"""
+
+RUST_PROGRAM = (
+    RUST_SUPPORT
+    + r"""
+request = json.load(sys.stdin)
+home = pathlib.Path.home()
+if home != pathlib.Path(request['home']):
+    raise RuntimeError('Unexpected remote home '+str(home))
+require_maps(home)
+native = native_platform()
+if native['os'] != 'Linux':
+    raise RuntimeError('Rust server deployment requires native Linux')
+if request['action'] == 'probe':
+    result = native
+elif request['action'] == 'build':
+    with tempfile.TemporaryDirectory(prefix='remote-agent-rs-build-') as directory:
+        source = pathlib.Path(directory)
+        with tarfile.open(fileobj=io.BytesIO(base64.b64decode(request['source'])), mode='r:') as archive:
+            archive.extractall(source, filter='data')
+        result = build_binary(source)
+elif request['action'] == 'install':
+    result = install_binary(home, request['payload'])
+else:
+    raise RuntimeError('Unknown Rust deployment action '+request['action'])
+print(json.dumps(result))
+"""
+)
+
+
+def bundle_rust_source():
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as bundle:
+        for name in ("Cargo.toml", "Cargo.lock", "src"):
+            bundle.add(ROOT / name, arcname=name)
+    return base64.b64encode(archive.getvalue()).decode()
+
+
+def deploy_rust(host):
+    profile = HOSTS[host]
+    users = profile.get("deploy_users", [])
+    if not isinstance(users, list) or any(
+        not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]*\$?", user)
+        for user in users
+    ):
+        raise ValueError("deploy_users must be a list of Unix usernames")
+    if profile["wrap"] or profile["windows_shell"]:
+        raise ValueError(
+            "Rust deployment requires a native Linux server without wrapping"
+        )
+    key = "REMOTE_AGENT_" + host.upper().replace("-", "_") + "_SSH"
+    target = os.environ.get(key, profile["ssh"])
+    native = {}
+    exec(RUST_SUPPORT, native)
+    home = Path.home()
+    native["require_maps"](home)
+
+    def remote(action, user=None, **values):
+        request = {"home": profile["home"], "action": action, **values}
+        program = RUST_PROGRAM
+        if user is not None:
+            request.update(user=user, program=program)
+            program = USER_DEPLOY_PROGRAM
+        output = deploy_remote(profile, target, program, request, capture_output=True)
+        return json.loads(output)
+
+    server = remote("probe")
+    for user in users:
+        if remote("probe", user) != server:
+            raise RuntimeError("Configured accounts have different server platforms")
+    client = native["native_platform"]()
+    payload = native["build_binary"](ROOT)
+    server_payload = (
+        payload if client == server else remote("build", source=bundle_rust_source())
+    )
+    native["install_binary"](home, payload)
+    remote("install", payload=server_payload)
+    for user in users:
+        remote("install", user, payload=server_payload)
+    print("remote-agent-rs installed locally and on " + host)
+
+
 def bundle_files():
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as bundle:
@@ -161,7 +334,7 @@ def deploy_worker(host=DEFAULT_HOST):
         )
 
 
-def deploy_remote(profile, target, program, request):
+def deploy_remote(profile, target, program, request, capture_output=False):
     encoded = base64.b64encode(program.encode()).decode()
     argv = [
         *profile["wrap"],
@@ -172,12 +345,14 @@ def deploy_remote(profile, target, program, request):
     remote = (
         subprocess.list2cmdline(argv) if profile["windows_shell"] else shlex.join(argv)
     )
-    subprocess.run(
+    result = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, remote],
         input=json.dumps(request),
         text=True,
         check=True,
+        stdout=subprocess.PIPE if capture_output else None,
     )
+    return result.stdout
 
 
 def link_controller():
@@ -192,5 +367,14 @@ def link_controller():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
-    deploy_worker(parser.parse_args().host)
-    link_controller()
+    parser.add_argument(
+        "--rust",
+        action="store_true",
+        help="Install the parallel native remote-agent-rs client and Linux server",
+    )
+    args = parser.parse_args()
+    if args.rust:
+        deploy_rust(args.host)
+    else:
+        deploy_worker(args.host)
+        link_controller()
