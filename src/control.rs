@@ -6,7 +6,8 @@ use std::{
     fs::{self, DirBuilder, OpenOptions},
     io::Write,
     os::unix::{
-        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         process::CommandExt,
     },
     process::Stdio,
@@ -22,6 +23,10 @@ pub struct Runtime {
     pub address: String,
     pub certificate: Vec<u8>,
     pub token: String,
+    #[serde(default)]
+    pub child_pid: Option<u32>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
 }
 pub fn validate_session_name(name: &str) -> Result<()> {
     ensure!(
@@ -128,17 +133,73 @@ pub fn status(home: &Path, name: &str) -> Result<Value> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error).context("read session runtime"),
     };
-    let running = runtime.as_ref().is_some_and(|runtime| {
-        if runtime.pid == 0 || runtime.pid > i32::MAX as u32 {
-            return false;
+    let server_running = match runtime.as_ref() {
+        Some(runtime) => server_matches_state(runtime.pid, &state)?,
+        None => false,
+    };
+    let running = server_running && runtime.as_ref().is_some_and(|r| r.exit_code.is_none());
+    Ok(serde_json::json!({
+        "name":name,"project":launch.project,"cwd":launch.cwd,"conversation":launch.conversation,
+        "server_running":server_running,"running":running,
+        "pid":runtime.as_ref().map(|r|r.pid),"address":runtime.as_ref().map(|r|&r.address),
+        "child_pid":runtime.as_ref().and_then(|r|r.child_pid),"exit_code":runtime.as_ref().and_then(|r|r.exit_code)
+    }))
+}
+
+pub fn server_matches_state(pid: u32, state: &Path) -> Result<bool> {
+    ensure!(
+        cfg!(target_os = "linux"),
+        "session server identity requires Linux"
+    );
+    ensure!(state.is_absolute(), "session state path must be absolute");
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Ok(false);
+    }
+    let proc = PathBuf::from(format!("/proc/{pid}"));
+    let Some(cmdline) = read_process_file(&proc.join("cmdline"))? else {
+        return Ok(false);
+    };
+    let args: Vec<_> = cmdline
+        .strip_suffix(&[0])
+        .unwrap_or(&cmdline)
+        .split(|b| *b == 0)
+        .collect();
+    if args.len() != 4
+        || args[1] != b"__serve"
+        || args[2] != b"--state"
+        || args[3] != state.as_os_str().as_bytes()
+    {
+        return Ok(false);
+    }
+    let expected = fs::metadata(std::env::current_exe()?)?;
+    let actual = match fs::metadata(proc.join("exe")) {
+        Ok(actual) => actual,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("inspect session server executable"),
+    };
+    let program = Path::new(std::ffi::OsStr::from_bytes(args[0]));
+    if !program.is_absolute() {
+        return Ok(false);
+    }
+    let command_exe = match fs::metadata(program) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("inspect recorded server executable"),
+    };
+    Ok(actual.dev() == expected.dev()
+        && actual.ino() == expected.ino()
+        && actual.dev() == command_exe.dev()
+        && actual.ino() == command_exe.ino())
+}
+
+fn read_process_file(path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("read process identity {}", path.display()))
         }
-        // Signal zero probes existence without changing the server process.
-        let result = unsafe { libc::kill(runtime.pid as i32, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    });
-    Ok(
-        serde_json::json!({"name":name,"project":launch.project,"cwd":launch.cwd,"conversation":launch.conversation,"running":running,"pid":runtime.as_ref().map(|r|r.pid),"address":runtime.as_ref().map(|r|&r.address)}),
-    )
+    }
 }
 
 pub fn spawn_session(exe: &Path, launch: &Launch, state: &Path) -> Result<Child> {
@@ -246,11 +307,15 @@ mod tests {
                 address: "127.0.0.1:1234".into(),
                 certificate: vec![1, 2],
                 token: "secret".into(),
+                child_pid: None,
+                exit_code: None,
             },
         )
         .unwrap();
         let running = status(home.path(), "test-1").unwrap();
-        assert_eq!(running["running"], true);
+        // A live PID from an unrelated process must never identify a server.
+        assert_eq!(running["running"], false);
+        assert_eq!(running["server_running"], false);
         assert_eq!(running["name"], "test-1");
         assert!(running.get("token").is_none());
         assert_eq!(
@@ -261,6 +326,11 @@ mod tests {
                 .len(),
             1
         );
+        write_private_json(&state.join("runtime.json"), &serde_json::json!({"pid":std::process::id(),"address":"127.0.0.1:1234","certificate":[],"token":"secret","child_pid":123,"exit_code":17})).unwrap();
+        let exited = status(home.path(), "test-1").unwrap();
+        assert_eq!(exited["exit_code"], 17);
+        assert_eq!(exited["child_pid"], 123);
+        assert_eq!(exited["running"], false);
         assert!(status(home.path(), "absent").is_err());
         fs::write(state.join("runtime.json"), "bad").unwrap();
         assert!(status(home.path(), "test-1").is_err());
