@@ -100,7 +100,8 @@ selected `desktop` host; native Linux paths do not use WSL translation.
 replace the Python `remote-agent`, detach or Mosh stack documented below.
 At `fdaa0d6`, Rust deployment and real SSH/QUIC/Pi attachment were verified on
 agent-server for `osso` and `allison`; legacy sessions remain unchanged.
-An actual host reboot was not performed, and macOS CI for that revision is pending. See
+An actual host reboot was not performed. GitHub run `40226091616` passed the Ubuntu and
+macOS jobs at `fdaa0d6`. See
 the [proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance).
 
 Build locally with a Rust toolchain that supports edition 2024:
@@ -205,9 +206,9 @@ certificate. They do not use the Linux production server. Passing macOS CI
 proves native client compilation, loopback transport, and fixture clipboard
 conversion; it does not prove macOS-to-Linux attachment, interactive Pi, SSH,
 terminal repaint, or installed deployment. GitHub run `40206416647` passed the macOS job, including native clipboard,
-PTY and unit tests. Ubuntu failed a fixture readiness race, fixed locally in
-`81021f2`. Current-revision CI and installed macOS-to-Linux acceptance remain
-pending at `fdaa0d6`; the earlier macOS runtime is proven, not untested.
+PTY and unit tests. Ubuntu failed a fixture readiness race, fixed in `81021f2`.
+Run `40226091616` passed both jobs at `fdaa0d6`. Installed macOS-to-Linux
+acceptance remains open.
 
 ## Session commands
 

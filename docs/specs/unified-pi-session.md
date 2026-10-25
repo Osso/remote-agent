@@ -61,7 +61,7 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 ## Known gaps (current cycle)
 
 - [ ] Actual host reboot: not performed because it would stop legacy sessions.
-- [ ] macOS CI for `fdaa0d6` was pending at time of writing; installed macOS-to-Linux acceptance remains open.
+- [ ] Installed macOS-to-Linux acceptance remains open. (GitHub run `40226091616` passed the Ubuntu and macOS jobs at `fdaa0d6`.)
 - [ ] Full OAuth/model-call, simultaneous real-client image paste, per-display geometry and complete Pi VT acceptance remain open.
 
 ## Out of scope

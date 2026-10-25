@@ -137,7 +137,7 @@ acceptance.
 | Real agent-server, both accounts | At `fdaa0d6`, `osso` and `allison` units enabled and active in user `agents.slice`; correct UID, cwd, PTY 165×46 and `CARGO_BUILD_JOBS`; real SSH/QUIC attach, typed input reaches Pi, clean detach | Installed macOS-to-Linux and simultaneous real Pi clients remain open |
 | Real restore/cancel | Whole-unit SIGKILL then `systemctl --user start` restored the same conversation; osso's resumed transcript visible again; cancel left unit disabled/inactive | Actual reboot deliberately not performed because it would stop legacy sessions; jobs, model turn and editor text do not return |
 | Legacy preservation | Legacy sessions, maps, credentials and legacy code remained byte/PID-identical | Not authorization to migrate them |
-| macOS | Earlier GitHub run `40206416647` passed native clipboard, PTY and unit tests | macOS CI for `fdaa0d6` pending at time of writing; no current all-platform green claim |
+| macOS | GitHub run `40226091616` passed the Ubuntu and macOS jobs (native clipboard fixture, PTY and unit tests) at `fdaa0d6` | Installed macOS-to-Linux attachment not exercised |
 | Earlier Pi/renderer proof | Offline CLI at `121e38e`, native Pi TUI at `fca936a`, PTY/QUIC 80-marker fixtures, resize work at `6267448`/`5b8f341` | Full OAuth/model call, current real image paste, per-display geometry and complete VT coverage remain open |
 
 The existing fixed-size Mosh 80-marker regression remains RED; Rust work does

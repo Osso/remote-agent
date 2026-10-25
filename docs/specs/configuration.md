@@ -74,8 +74,8 @@ on one client over 193 seconds, and real two-account SSH/QUIC/Pi acceptance at
 `fdaa0d6`. Correct UID/cwd/PTY 165×46/`CARGO_BUILD_JOBS`, enabled/active user
 units, input, detach, conversation restore and disabled/inactive cancellation
 were verified; legacy sessions, maps, credentials and code stayed byte/PID-identical.
-This docs-only update ran none of these checks. Actual reboot was not performed;
-macOS CI for `fdaa0d6` was pending. See the wiki proof matrix for remaining gaps.
+Actual reboot was not performed. GitHub run `40226091616` passed the Ubuntu and
+macOS jobs at `fdaa0d6`. See the wiki proof matrix for remaining gaps.
 
 ## Known gaps (current cycle)
 
