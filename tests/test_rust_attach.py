@@ -236,8 +236,10 @@ class NativeRustAttachTests(unittest.TestCase):
         project = self.root / "project"
         project.mkdir()
         wrapper = bindir / "pi-fixture"
+        # Records the Pi arguments of every launch, then runs the TUI fixture.
         wrapper.write_text(
-            f"#!{sys.executable}\nimport os\n"
+            f"#!{sys.executable}\nimport json,os,sys\n"
+            f"open({str(self.root / 'pi-argv.jsonl')!r},'a').write(json.dumps(sys.argv[1:])+'\\n')\n"
             f"os.execv({self.node!r}, [{self.node!r}, {str(FIXTURE)!r}, 'bulk-tui', {str(self.root / 'input.jsonl')!r}])\n"
         )
         wrapper.chmod(0o700)
@@ -599,7 +601,11 @@ class NativeRustAttachTests(unittest.TestCase):
             path.write_text(original)
 
     def test_enabled_session_unit_restores_after_simulated_reboot(self):
-        started = self.cli("start", "demo", "bulk-proof")
+        # Verifier counterexample: a prompted session failed to restart (prompt.txt
+        # EEXIST); restarting must also never submit the initial prompt again.
+        prompt = self.root / "initial-prompt.txt"
+        prompt.write_text("fixture prompt; no provider request\n")
+        started = self.cli("start", "demo", "bulk-proof", "--prompt-file", str(prompt))
         self.owned.update((started["pid"], started["child_pid"]))
         launch = (self.state / "launch.json").read_bytes()
         # Power loss: the server and Pi die without cancel; the unit stays enabled.
@@ -638,9 +644,22 @@ class NativeRustAttachTests(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "session did not restart")
             time.sleep(0.05)
         self.owned.update((restored["pid"], restored["child_pid"]))
+        launches = [
+            json.loads(line)
+            for line in (self.root / "pi-argv.jsonl").read_text().splitlines()
+        ]
+        prompt_argument = "@" + str(self.state / "prompt.txt")
+        self.assertEqual(
+            launches,
+            [
+                ["--session-id", started["conversation"], prompt_argument],
+                ["--session-id", started["conversation"]],
+            ],
+        )
         self.assertEqual(restored["conversation"], started["conversation"])
         self.assertEqual(restored["project"], started["project"])
         self.assertEqual((self.state / "launch.json").read_bytes(), launch)
+        self.assertIsNone(json.loads(launch)["prompt"])
         self.attach()
         self.capture("ready")
         os.write(self.master, b"b")

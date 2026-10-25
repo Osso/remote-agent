@@ -63,7 +63,7 @@ struct Session {
 pub async fn serve(state: PathBuf) -> Result<()> {
     ensure!(cfg!(target_os = "linux"), "session servers require Linux");
     let mut launch = read_launch(&state)?;
-    if let Some(prompt) = &launch.prompt {
+    if let Some(prompt) = launch.prompt.take() {
         let path = state.join("prompt.txt");
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -71,6 +71,9 @@ pub async fn serve(state: PathBuf) -> Result<()> {
             .mode(0o600)
             .open(&path)?;
         file.write_all(prompt.as_bytes())?;
+        // The initial prompt belongs to the first launch only. A unit restart
+        // (e.g. at boot) must reopen the conversation without submitting it again.
+        write_private_json(&state.join("launch.json"), &launch)?;
         launch.prompt = Some(format!("@{}", path.display()));
     }
     launch.size.validate()?;
