@@ -763,7 +763,7 @@ if pathlib.Path(__file__).name == 'systemd-run':
         'InvocationID':'first-instance', 'jobs':['server', 'separate-process-group-job']}))
     sys.exit(0)
 if args == ['show', 'agents.slice', '-p', 'FragmentPath', '--value']:
-    print('' if config['user_manager'] else '/etc/systemd/system/agents.slice')
+    print('' if config.get('fragment_user_manager', config['user_manager']) else '/etc/systemd/system/agents.slice')
     sys.exit(0)
 prefix = ['--user'] if config['user_manager'] else []
 assert args[:len(prefix)] == prefix, args
@@ -771,10 +771,16 @@ args = args[len(prefix):]
 unit = 'remote-agent-rs-' + str(os.getuid()) + '-test-1.scope'
 status = json.loads((root / 'unit.json').read_text())
 if args == ['show', unit, '-p', 'LoadState', '-p', 'ActiveState', '-p', 'InvocationID']:
+    if config.get('query_failure'):
+        print('fixture query failure', file=sys.stderr)
+        sys.exit(7)
     for key in ['LoadState', 'ActiveState', 'InvocationID']:
         print(key + '=' + status[key])
     sys.exit(1 if status['LoadState'] == 'not-found' else 0)
 assert args == ['stop', unit], args
+if config.get('stop_failure'):
+    print('fixture stop failure', file=sys.stderr)
+    sys.exit(7)
 assert status['LoadState'] != 'not-found'
 status.update(LoadState='not-found', ActiveState='inactive', InvocationID='', jobs=[])
 (root / 'unit.json').write_text(json.dumps(status))
@@ -826,6 +832,13 @@ status.update(LoadState='not-found', ActiveState='inactive', InvocationID='', jo
             .unwrap();
         }
 
+        fn configure(&self, key: &str, value: bool) {
+            let path = self.home.path().join("config.json");
+            let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            config[key] = value.into();
+            fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+        }
+
         fn stop_count(&self) -> usize {
             fs::read_to_string(self.home.path().join("events.jsonl"))
                 .unwrap()
@@ -857,6 +870,8 @@ status.update(LoadState='not-found', ActiveState='inactive', InvocationID='', jo
                     & 0o777,
                 0o600
             );
+            // A changed fragment must not change the previously chosen manager.
+            fixture.configure("fragment_user_manager", !user_manager);
             fixture.action("record").unwrap();
             assert_eq!(fixture.metadata()["invocation_id"], "first-instance");
             fixture.action("stop").unwrap();
@@ -936,6 +951,53 @@ status.update(LoadState='not-found', ActiveState='inactive', InvocationID='', jo
             assert_eq!(fixture.stop_count(), 0);
             assert!(fixture.action("bad-name").is_err());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scope_lifecycle_rejects_empty_runtime_identity() {
+        let fixture = ScopeFixture::new(true);
+        fixture.action("spawn").unwrap();
+        let mut unit = fixture.unit();
+        unit["InvocationID"] = "".into();
+        fixture.set_unit(&unit);
+        assert!(
+            fixture
+                .action("record")
+                .unwrap_err()
+                .contains("empty InvocationID")
+        );
+        assert_eq!(fixture.metadata()["invocation_id"], Value::Null);
+        assert!(fixture.action("stop").is_err());
+        assert_eq!(fixture.stop_count(), 0);
+        assert_eq!(fixture.unit(), unit);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scope_lifecycle_manager_failure_preserves_identity_for_retry() {
+        let fixture = ScopeFixture::new(false);
+        fixture.action("spawn").unwrap();
+        fixture.action("record").unwrap();
+        let metadata = fixture.metadata();
+        let unit = fixture.unit();
+        fixture.configure("query_failure", true);
+        assert!(fixture.action("stop").is_err());
+        assert_eq!(fixture.stop_count(), 0);
+        fixture.configure("query_failure", false);
+        fixture.configure("stop_failure", true);
+        assert!(
+            fixture
+                .action("stop")
+                .unwrap_err()
+                .contains("fixture stop failure")
+        );
+        assert_eq!(fixture.unit(), unit);
+        assert_eq!(fixture.metadata(), metadata);
+        fixture.configure("stop_failure", false);
+        fixture.action("stop").unwrap();
+        assert_eq!(fixture.unit()["jobs"], serde_json::json!([]));
+        assert_eq!(fixture.metadata(), metadata);
     }
 
     #[test]
