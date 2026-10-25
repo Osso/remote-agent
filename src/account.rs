@@ -191,7 +191,8 @@ mod tests {
 [ "$(/usr/bin/id -u)" = "{}" ] || exit 14
 [ "$1" = __rpc ] && [ "$2" = "a'b; \$(literal)" ] || exit 12
 unset PWD SHLVL
-exec /usr/bin/env -0
+/usr/bin/env -0
+exit $?
 "#,
                 account.uid
             ),
