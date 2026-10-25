@@ -111,12 +111,7 @@ impl Config {
         Ok("agent-server".into())
     }
 
-    pub fn build_ssh_command(
-        &self,
-        host: &str,
-        user: Option<&str>,
-        args: &[String],
-    ) -> Result<Command> {
+    pub fn ssh_target(&self, host: &str) -> Result<String> {
         let profile = self
             .hosts
             .get(host)
@@ -141,6 +136,17 @@ impl Config {
                 && !target.contains('\0'),
             "invalid SSH destination"
         );
+        Ok(target)
+    }
+
+    pub fn build_ssh_command(
+        &self,
+        host: &str,
+        user: Option<&str>,
+        args: &[String],
+    ) -> Result<Command> {
+        let target = self.ssh_target(host)?;
+        let profile = &self.hosts[host];
         let mut remote = Vec::new();
         let home = if let Some(user) = user {
             ensure!(
@@ -250,6 +256,18 @@ mod tests {
             .unwrap();
             assert!(load(home.path()).unwrap().remote_project("demo").is_err());
         }
+    }
+
+    #[test]
+    fn exposes_configured_ssh_target_for_network_resolution() {
+        let home = fixture();
+        let config = load(home.path()).unwrap();
+        assert_eq!(
+            config.ssh_target("agent-server").unwrap(),
+            "operator@example"
+        );
+        assert!(config.ssh_target("missing").is_err());
+        assert!(config.ssh_target("desktop").is_err());
     }
 
     #[test]
