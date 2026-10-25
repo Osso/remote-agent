@@ -163,33 +163,15 @@ pub fn server_matches_state(pid: u32, state: &Path) -> Result<bool> {
         .strip_suffix(&[0])
         .unwrap_or(&cmdline)
         .split(|b| *b == 0)
+        .skip(1)
         .collect();
-    if args.len() != 4
-        || args[1] != b"__serve"
-        || args[2] != b"--state"
-        || args[3] != state.as_os_str().as_bytes()
-    {
-        return Ok(false);
-    }
-    let expected = fs::metadata(std::env::current_exe()?)?;
-    let actual = match fs::metadata(proc.join("exe")) {
-        Ok(actual) => actual,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error).context("inspect session server executable"),
-    };
-    let program = Path::new(std::ffi::OsStr::from_bytes(args[0]));
-    if !program.is_absolute() {
-        return Ok(false);
-    }
-    let command_exe = match fs::metadata(program) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error).context("inspect recorded server executable"),
-    };
-    Ok(actual.dev() == expected.dev()
-        && actual.ino() == expected.ino()
-        && actual.dev() == command_exe.dev()
-        && actual.ino() == command_exe.ino())
+    // The executable may be an older installed version; the exact state argument identifies it.
+    Ok(args
+        == [
+            b"__serve".as_slice(),
+            b"--state",
+            state.as_os_str().as_bytes(),
+        ])
 }
 
 fn read_process_file(path: &Path) -> Result<Option<Vec<u8>>> {
