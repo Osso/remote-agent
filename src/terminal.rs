@@ -28,6 +28,7 @@ struct Capture {
     rows: Vec<Vec<u8>>,
     control: Vec<u8>,
     title: Vec<u8>,
+    cwd: Vec<u8>,
     keyboard: Vec<u8>,
     responses: Vec<u8>,
     failure: Option<String>,
@@ -132,12 +133,19 @@ impl vt100::Callbacks for Capture {
     }
 
     fn unhandled_escape(&mut self, _: &mut vt100::Screen, a: Option<u8>, b: Option<u8>, c: u8) {
+        if a.is_none() && b.is_none() && c == b'\\' {
+            return;
+        }
         self.failure = Some(format!("unsupported terminal escape: {a:?} {b:?} {c}"));
     }
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
         match params {
             // The virtual endpoint has no native background color to report.
             [b"11", b"?"] => {}
+            [b"7", cwd] => {
+                self.cwd = cwd.to_vec();
+                self.osc(b"7", cwd);
+            }
             // Pi appends a hyperlink close to every row, including plain text.
             [b"8", b"", b""] => {}
             // These advisory shell zones carry no cell data. Reframed clients
@@ -291,6 +299,12 @@ impl TerminalState {
         let title = &self.parser.callbacks().title;
         if !title.is_empty() {
             snapshot.control = [b"\x1b]2;".as_slice(), title, b"\x1b\\"].concat();
+        }
+        let cwd = &self.parser.callbacks().cwd;
+        if !cwd.is_empty() {
+            snapshot
+                .control
+                .extend_from_slice(&[b"\x1b]7;".as_slice(), cwd, b"\x1b\\"].concat());
         }
         snapshot
             .control
@@ -954,6 +968,28 @@ mod tests {
             vt100::Color::Idx(1)
         );
         assert_markers(&all_text(&mut outer));
+    }
+
+    #[test]
+    fn installed_pi_cwd_and_string_terminator_preserve_visible_text() {
+        let mut state = TerminalState::new(size(10, 80), 10000).unwrap();
+        state
+            .feed(b"before\x1b]7;file://host/project\x1b\\after")
+            .unwrap();
+        let snapshot = state.snapshot(None);
+        assert!(
+            snapshot
+                .control
+                .windows(b"file://host/project".len())
+                .any(|bytes| bytes == b"file://host/project")
+        );
+        let mut outer = parser(size(10, 80), 100);
+        outer.process(
+            &DisplayRenderer::new(size(10, 80))
+                .render(&snapshot)
+                .unwrap(),
+        );
+        assert!(outer.screen().contents().contains("beforeafter"));
     }
 
     #[test]
