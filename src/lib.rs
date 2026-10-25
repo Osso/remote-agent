@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod account;
 pub mod client;
 pub mod config;
 pub mod control;

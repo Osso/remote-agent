@@ -148,7 +148,15 @@ impl Config {
         let target = self.ssh_target(host)?;
         let profile = &self.hosts[host];
         let mut remote = Vec::new();
-        let home = if let Some(user) = user {
+        let home = PathBuf::from(field(profile, "home")?);
+        ensure!(home.is_absolute(), "remote home must be absolute");
+        remote.push(
+            home.join(".local/bin/remote-agent-rs")
+                .to_str()
+                .context("remote home is not UTF-8")?
+                .into(),
+        );
+        if let Some(user) = user {
             ensure!(
                 !user.is_empty()
                     && user
@@ -157,25 +165,8 @@ impl Config {
                     && !user.starts_with('-'),
                 "invalid target account"
             );
-            remote.extend([
-                "authsudo".to_owned(),
-                "-u".into(),
-                user.into(),
-                "env".into(),
-                format!("HOME=/home/{user}"),
-            ]);
-            PathBuf::from(format!("/home/{user}"))
-        } else {
-            let home = PathBuf::from(field(profile, "home")?);
-            ensure!(home.is_absolute(), "remote home must be absolute");
-            home
-        };
-        remote.push(
-            home.join(".local/bin/remote-agent-rs")
-                .to_str()
-                .context("remote home is not UTF-8")?
-                .into(),
-        );
+            remote.extend(["__as-user".to_owned(), user.into()]);
+        }
         remote.extend_from_slice(args);
         let remote = remote
             .iter()
@@ -274,7 +265,7 @@ mod tests {
     fn routes_accounts_and_quotes_remote_arguments() {
         let home = fixture();
         let config = load(home.path()).unwrap();
-        let args = vec!["__control".into(), "a'b; $(touch nope)".into()];
+        let args = vec!["__rpc".into(), "a'b; $(touch nope)".into()];
         let command = config
             .build_ssh_command("agent-server", Some("alice"), &args)
             .unwrap();
@@ -288,7 +279,7 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8(output.stdout).unwrap(),
-            "authsudo\n-u\nalice\nenv\nHOME=/home/alice\n/home/alice/.local/bin/remote-agent-rs\n__control\na'b; $(touch nope)\n"
+            "/srv/operator/.local/bin/remote-agent-rs\n__as-user\nalice\n__rpc\na'b; $(touch nope)\n"
         );
         let normal = config.build_ssh_command("agent-server", None, &[]).unwrap();
         assert_eq!(
