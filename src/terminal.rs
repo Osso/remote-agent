@@ -138,6 +138,8 @@ impl vt100::Callbacks for Capture {
         match params {
             // The virtual endpoint has no native background color to report.
             [b"11", b"?"] => {}
+            // Pi appends a hyperlink close to every row, including plain text.
+            [b"8", b"", b""] => {}
             [b"9", b"4", b"3"] => self.osc(b"9", b"4;3"),
             [b"9", b"4", b"0", b""] => self.osc(b"9", b"4;0;"),
             _ => self.failure = Some(format!("unsupported terminal OSC: {params:?}")),
@@ -842,6 +844,17 @@ mod tests {
             outer.screen().cell(0, 0).unwrap().fgcolor(),
             vt100::Color::Idx(1)
         );
+        assert_markers(&all_text(&mut outer));
+    }
+
+    #[test]
+    fn pi_line_resets_preserve_long_bulk_text_and_native_history() {
+        let mut state = TerminalState::new(size(16, 30), 100000).unwrap();
+        let text = bulk().replace("\r\n", "\x1b[0m\x1b]8;;\x07\r\n");
+        let update = state.feed(text.as_bytes()).unwrap();
+        let physical = size(30, 60);
+        let mut outer = parser(physical, 200);
+        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
         assert_markers(&all_text(&mut outer));
     }
 
