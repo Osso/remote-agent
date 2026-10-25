@@ -117,6 +117,15 @@ with user approval on 2026-10-25. The restarted server launches Pi with the same
 jobs, an in-progress model turn and unsent editor text do not. Output retention
 starts empty because it is in memory only. An actual host reboot was not tested.
 
+An initial prompt (`start --prompt-file`) applies to the first launch only: the
+server writes it to `prompt.txt` and removes it from `launch.json` before
+launching Pi, so a restart neither fails on the existing file nor submits the
+prompt again.
+
+Each session server binds its own random UDP port for QUIC. A client-side
+firewall must allow UDP to the server host on any port; on aso, appfw has one
+rule for this in `~/.config/appfw/rules.d/remote-agent-rs.toml`.
+
 `deploy.sh --rust` preserves each account's maps and installs private immutable
 hash-addressed binaries through a stable link. Python remains the default.
 Installation does not transfer a legacy PTY. Legacy detach has no SCM_RIGHTS
