@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{
     ffi::OsStr,
-    io::Read,
+    io::{Read, Write},
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     path::Path,
     process::{Command, Stdio},
@@ -92,9 +92,9 @@ impl InputDecoder {
         if (0x40..=0x7e).contains(&byte) {
             if self.pending == PASTE_START {
                 self.bracketed_paste = true;
-            } else if is_kitty_ctrl_v(&self.pending) {
+            } else if let Some(action) = control_shortcut(&self.pending) {
                 emit_bytes(bytes, actions);
-                actions.push(InputAction::PasteImage);
+                actions.push(action);
                 self.pending.clear();
                 return;
             }
@@ -111,7 +111,19 @@ fn emit_bytes(bytes: &mut Vec<u8>, actions: &mut Vec<InputAction>) {
     }
 }
 
-fn is_kitty_ctrl_v(sequence: &[u8]) -> bool {
+fn control_shortcut(sequence: &[u8]) -> Option<InputAction> {
+    if matches!(sequence, b"\x1b[27;5;118~" | b"\x1b[27;5;86~")
+        || is_kitty_control_key(sequence, &["118", "86"])
+    {
+        Some(InputAction::PasteImage)
+    } else if sequence == b"\x1b[27;5;92~" || is_kitty_control_key(sequence, &["92"]) {
+        Some(InputAction::Detach)
+    } else {
+        None
+    }
+}
+
+fn is_kitty_control_key(sequence: &[u8], keys: &[&str]) -> bool {
     let Some(body) = sequence
         .strip_prefix(b"\x1b[")
         .and_then(|s| s.strip_suffix(b"u"))
@@ -125,7 +137,7 @@ fn is_kitty_ctrl_v(sequence: &[u8]) -> bool {
         return false;
     };
     let mut key_fields = key.split(':');
-    if !matches!(key_fields.next(), Some("118" | "86")) {
+    if !key_fields.next().is_some_and(|key| keys.contains(&key)) {
         return false;
     }
     let alternatives: Vec<_> = key_fields.collect();
@@ -148,11 +160,24 @@ fn is_kitty_ctrl_v(sequence: &[u8]) -> bool {
 pub struct TerminalGuard {
     fd: OwnedFd,
     original: libc::termios,
+    output: Option<OwnedFd>,
 }
 
 impl TerminalGuard {
     pub fn enter() -> Result<Self> {
-        Self::enter_fd(libc::STDIN_FILENO)
+        let mut terminal = Self::enter_fd(libc::STDIN_FILENO)?;
+        ensure!(
+            unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1,
+            "attachment output must be a terminal"
+        );
+        let output = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_DUPFD_CLOEXEC, 0) };
+        ensure!(
+            output >= 0,
+            "duplicate terminal output: {}",
+            std::io::Error::last_os_error()
+        );
+        terminal.output = Some(unsafe { OwnedFd::from_raw_fd(output) });
+        Ok(terminal)
     }
 
     fn enter_fd(fd: RawFd) -> Result<Self> {
@@ -180,7 +205,11 @@ impl TerminalGuard {
             "enable raw terminal mode: {}",
             std::io::Error::last_os_error()
         );
-        Ok(Self { fd, original })
+        Ok(Self {
+            fd,
+            original,
+            output: None,
+        })
     }
 
     pub fn size(&self) -> Result<Size> {
@@ -202,6 +231,14 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if let Some(output) = &self.output {
+            let reset = output.try_clone().map(std::fs::File::from).and_then(|mut file| {
+                file.write_all(b"\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[>4;0m\x1b[?1l\x1b>\x1b[0 q\x1b[0m\x1b[r\x1b[?6l\x1b[?7h\x1b[?25h\r\n")
+            });
+            if let Err(error) = reset {
+                eprintln!("remote-agent-rs: restore terminal modes: {error}");
+            }
+        }
         // SAFETY: original was captured from this still-open terminal descriptor.
         if unsafe { libc::tcsetattr(self.fd.as_raw_fd(), libc::TCSANOW, &self.original) } != 0 {
             eprintln!(
@@ -419,6 +456,22 @@ mod tests {
     }
 
     #[test]
+    fn xterm_image_paste_and_enhanced_detach_shortcuts_work_at_every_split() {
+        for sequence in [b"\x1b[27;5;118~".as_slice(), b"\x1b[27;5;86~"] {
+            for split in 0..=sequence.len() {
+                let mut decoder = InputDecoder::new();
+                let mut actions = decoder.feed(&sequence[..split]);
+                actions.extend(decoder.feed(&sequence[split..]));
+                assert_eq!(actions, vec![InputAction::PasteImage]);
+            }
+        }
+        for sequence in [b"\x1b[27;5;92~".as_slice(), b"\x1b[92;5u"] {
+            let mut decoder = InputDecoder::new();
+            assert_eq!(decoder.feed(sequence), vec![InputAction::Detach]);
+        }
+    }
+
+    #[test]
     fn kitty_ctrl_v_press_repeat_and_lock_modifiers() {
         for sequence in [
             b"\x1b[118;5u".as_slice(),
@@ -591,8 +644,8 @@ mod tests {
                     &mut master,
                     &mut slave,
                     std::ptr::null_mut(),
-                    std::ptr::null(),
-                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
                 )
             },
             0

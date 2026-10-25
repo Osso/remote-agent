@@ -28,6 +28,7 @@ struct Capture {
     rows: Vec<Vec<u8>>,
     control: Vec<u8>,
     title: Vec<u8>,
+    keyboard: Vec<u8>,
     responses: Vec<u8>,
     failure: Option<String>,
 }
@@ -94,6 +95,19 @@ impl vt100::Callbacks for Capture {
         let parameter = params.first().and_then(|p| p.first()).copied().unwrap_or(0);
         let response = match (i1, i2, c, parameter) {
             (Some(b'?'), None, 'u', 0) => Some("\x1b[?0u".to_string()),
+            // Pi pushes Kitty flags before querying. The virtual endpoint reports
+            // no Kitty enhancement; only xterm modifyOtherKeys is forwarded.
+            (Some(b'>') | Some(b'<'), None, 'u', _) if params.len() <= 1 => None,
+            (Some(b'>'), None, 'm', 4) if params.len() == 2 => {
+                let level = params[1].first().copied().unwrap_or(0);
+                if level <= 2 {
+                    self.keyboard = format!("\x1b[>4;{level}m").into_bytes();
+                    self.control.extend_from_slice(&self.keyboard);
+                } else {
+                    self.failure = Some(format!("unsupported modifyOtherKeys level: {level}"));
+                }
+                None
+            }
             (None, None, 'n', 5) => Some("\x1b[0n".to_string()),
             (None, None, 'n', 6) => {
                 let (row, col) = screen.cursor_position();
@@ -220,6 +234,9 @@ impl TerminalState {
         if !title.is_empty() {
             snapshot.control = [b"\x1b]2;".as_slice(), title, b"\x1b\\"].concat();
         }
+        snapshot
+            .control
+            .extend_from_slice(&self.parser.callbacks().keyboard);
         snapshot
     }
 
@@ -665,6 +682,24 @@ mod tests {
             vt100::Color::Idx(1)
         );
         assert_markers(&all_text(&mut outer));
+    }
+
+    #[test]
+    fn pi_keyboard_startup_and_cleanup_negotiate_without_poisoning_output() {
+        let mut state = TerminalState::new(size(24, 80), 10000).unwrap();
+        let startup = state.feed(b"\x1b[?2004h\x1b[>7u\x1b[?u\x1b[c").unwrap();
+        assert!(startup.control.is_empty());
+        assert_eq!(state.drain_responses(), b"\x1b[?0u\x1b[?1;2c");
+        let keyboard = state.feed(b"\x1b[>4;2m").unwrap();
+        assert_eq!(keyboard.control, b"\x1b[>4;2m");
+        assert!(
+            state
+                .snapshot(None)
+                .control
+                .windows(7)
+                .any(|part| part == b"\x1b[>4;2m")
+        );
+        state.feed(b"\x1b[?2004l\x1b[<u\x1b[>4;0m").unwrap();
     }
 
     #[test]

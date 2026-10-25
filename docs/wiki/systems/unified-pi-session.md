@@ -51,6 +51,12 @@ Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty 
 
 Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Actual provider login has not been tested. Prototype `--user` routing uses `authsudo` and `/home/USER`; it does not establish Python's account-directory behavior or cross-user acceptance.
 
+### Pi keyboard negotiation and detach
+
+The virtual endpoint answers Pi's keyboard/cursor/device queries itself rather than broadcasting queries to all clients. Kitty push/pop requests do not enable physical Kitty mode; the endpoint reports zero Kitty flags and forwards Pi's xterm `modifyOtherKeys` setting. The local input decoder recognizes image paste and detach in legacy, Kitty, and xterm encodings while leaving bracketed-paste content literal.
+
+Local detach is monitored independently of the network loop, including connection establishment and reconnection. Network reads have a dedicated task so a terminal tick or input event cannot cancel a partially read protocol frame. Attachment cleanup aborts that reader, closes its connection, and restores local terminal modes and attributes.
+
 ## Cargo dependency inventory
 
 This is the single justification inventory for direct `Cargo.toml` dependencies. `Cargo.lock` records resolved versions.

@@ -402,6 +402,23 @@ class NativeRustAttachTests(unittest.TestCase):
             "behavior", result="passed", phases=[stage["name"] for stage in self.stages]
         )
 
+    def test_detach_remains_responsive_during_reconnection(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        self.attach()
+        self.capture("ready")
+        cancelled = self.cli("cancel", "bulk-proof")
+        self.assertEqual(cancelled["cancelled"], "bulk-proof")
+        output = self.drain(0.5)
+        self.assertIn(b"reconnecting", output)
+        began = time.monotonic()
+        self.detach()
+        self.assertLess(
+            time.monotonic() - began,
+            2,
+            "offline detach must not wait for network retries",
+        )
+
     def cleanup_session(self):
         errors = []
         try:

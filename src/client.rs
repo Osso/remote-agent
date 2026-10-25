@@ -13,7 +13,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tokio::sync::mpsc;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{mpsc, watch};
 
 pub fn query_remote(
     config: &Config,
@@ -42,6 +43,52 @@ pub fn query_remote(
     let reply: serde_json::Value =
         serde_json::from_slice(&result.stdout).context("decode SSH control reply")?;
     if let Some(error) = reply.get("error").and_then(|v| v.as_str()) {
+        bail!("{error}");
+    }
+    Ok(reply)
+}
+
+async fn query_remote_async(
+    config: &Config,
+    host: &str,
+    user: Option<&str>,
+    request: &ControlRequest,
+) -> Result<serde_json::Value> {
+    let original = config.build_ssh_command(host, user, &["__rpc".into()])?;
+    let mut command = Command::new("ssh");
+    command
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=1",
+        ])
+        .args(original.get_args());
+    let mut command = tokio::process::Command::from(command);
+    let mut child = command
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .context("SSH stdin missing")?
+        .write_all(&serde_json::to_vec(request)?)
+        .await?;
+    let output = child.wait_with_output().await?;
+    ensure!(
+        output.status.success(),
+        "remote control failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if let Some(error) = reply.get("error").and_then(|value| value.as_str()) {
         bail!("{error}");
     }
     Ok(reply)
@@ -95,11 +142,12 @@ struct InputReader {
 }
 
 impl InputReader {
-    fn spawn(sender: mpsc::Sender<Vec<u8>>) -> Self {
+    fn spawn(sender: mpsc::Sender<Vec<u8>>, cancellation: watch::Sender<Option<String>>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let thread = std::thread::spawn(move || {
             let mut input = std::io::stdin();
+            let mut detector = InputDecoder::new();
             while !stopped.load(Ordering::Relaxed) {
                 let mut fd = libc::pollfd {
                     fd: 0,
@@ -116,18 +164,30 @@ impl InputReader {
                     break;
                 }
                 if ready == 0 {
+                    detector.finish();
                     continue;
                 }
                 let mut data = [0; 8192];
                 match input.read(&mut data) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        cancellation.send_replace(Some(String::new()));
+                        break;
+                    }
                     Ok(count) => {
+                        if detector
+                            .feed(&data[..count])
+                            .iter()
+                            .any(|action| matches!(action, InputAction::Detach))
+                        {
+                            cancellation.send_replace(Some(String::new()));
+                            break;
+                        }
                         if sender.blocking_send(data[..count].to_vec()).is_err() {
                             break;
                         }
                     }
                     Err(error) => {
-                        eprintln!("read terminal: {error}");
+                        cancellation.send_replace(Some(format!("read terminal: {error}")));
                         break;
                     }
                 }
@@ -151,6 +211,18 @@ impl Drop for InputReader {
     }
 }
 
+struct NetworkPump {
+    connection: Connection,
+    reader: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for NetworkPump {
+    fn drop(&mut self) {
+        self.reader.abort();
+        self.connection.close(0u32.into(), b"client detached");
+    }
+}
+
 struct Attachment {
     id: String,
     after: Option<u64>,
@@ -165,7 +237,8 @@ struct Attachment {
 
 pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str) -> Result<i32> {
     let request = ControlRequest::Attach { name: name.into() };
-    let ticket: Ticket = serde_json::from_value(query_remote(config, host, user, &request)?)?;
+    let ticket: Ticket =
+        serde_json::from_value(query_remote_async(config, host, user, &request).await?)?;
     let hostname = query_ssh_hostname(config, host)?;
     let terminal = TerminalGuard::enter()?;
     let size = terminal.size()?;
@@ -181,30 +254,49 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
         deferred_rows: Vec::new(),
     };
     let (sender, mut input) = mpsc::channel(128);
-    let reader = InputReader::spawn(sender);
+    let (cancel, mut cancelled) = watch::channel(None);
+    let reader = InputReader::spawn(sender, cancel);
     let mut current = ticket;
     let mut attempts = 0;
-    let result = loop {
-        match state.run(&current, &hostname, &terminal, &mut input).await {
-            Ok(code) => break Ok(code),
-            Err(error) => {
-                attempts += 1;
-                eprintln!("\r\nremote-agent-rs: connection interrupted: {error:#}; reconnecting\r");
-                if attempts > 5 {
-                    break Err(error.context("five reconnect attempts failed"));
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    250 * (1 << attempts.min(4)),
-                ))
-                .await;
-                match query_remote(config, host, user, &request)
-                    .and_then(|reply| Ok(serde_json::from_value(reply)?))
-                {
-                    Ok(ticket) => current = ticket,
+    let result = {
+        let network = async {
+            loop {
+                match state.run(&current, &hostname, &terminal, &mut input).await {
+                    Ok(code) => break Ok(code),
                     Err(error) => {
-                        eprintln!("remote-agent-rs: reconnect control: {error:#}\r");
-                        continue;
+                        attempts += 1;
+                        eprintln!(
+                            "\r\nremote-agent-rs: connection interrupted: {error:#}; reconnecting\r"
+                        );
+                        if attempts > 5 {
+                            break Err(error.context("five reconnect attempts failed"));
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            250 * (1 << attempts.min(4)),
+                        ))
+                        .await;
+                        match query_remote_async(config, host, user, &request)
+                            .await
+                            .and_then(|reply| Ok(serde_json::from_value(reply)?))
+                        {
+                            Ok(ticket) => current = ticket,
+                            Err(error) => {
+                                eprintln!("remote-agent-rs: reconnect control: {error:#}\r");
+                                continue;
+                            }
+                        }
                     }
+                }
+            }
+        };
+        tokio::pin!(network);
+        tokio::select! {
+            result = &mut network => result,
+            changed = cancelled.changed() => {
+                changed.context("terminal cancellation channel closed")?;
+                match cancelled.borrow().as_ref() {
+                    Some(message) if !message.is_empty() => Err(anyhow::anyhow!(message.clone())),
+                    _ => Ok(0),
                 }
             }
         }
@@ -239,10 +331,12 @@ impl Attachment {
             send_frame(&mut writer, frame).await?;
         }
         let (network, mut incoming) = mpsc::channel(16);
-        let receiver = tokio::spawn(receive_frames(reader, network));
+        let network = NetworkPump {
+            connection,
+            reader: tokio::spawn(receive_frames(reader, network)),
+        };
         let result = self.pump(&mut writer, &mut incoming, terminal, input).await;
-        receiver.abort();
-        connection.close(0u32.into(), b"client detached");
+        drop(network);
         result
     }
 

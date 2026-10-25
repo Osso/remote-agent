@@ -75,7 +75,10 @@ async fn run(cli: Cli) -> Result<()> {
         #[cfg(target_os = "linux")]
         return remote_agent_rs::server::serve(state.clone()).await;
         #[cfg(not(target_os = "linux"))]
-        bail!("session servers require Linux; this platform supports the client only");
+        bail!(
+            "session server {} requires Linux; this platform supports the client only",
+            state.display()
+        );
     }
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
     let config = Config::load(&home)?;
