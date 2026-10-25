@@ -34,8 +34,11 @@ pub struct DisplayUpdate {
     pub size: Size,
     #[serde(with = "base64_rows")]
     pub scrolled: Vec<Vec<u8>>,
+    /// Terminal bytes for a fresh parser of `size`, or, when `base` is set,
+    /// for the display at sequence `base`.
     #[serde(with = "base64_bytes")]
     pub screen: Vec<u8>,
+    pub base: Option<u64>,
     #[serde(with = "base64_bytes")]
     pub control: Vec<u8>,
     pub reset: bool,
@@ -233,6 +236,7 @@ mod tests {
             size: Size { rows: 24, cols: 80 },
             scrolled: vec![vec![0xf0, 0x9f], vec![0x98, 0x80, 0x1b, b'[']],
             screen: vec![0, 0xff, b'J'],
+            base: Some(11),
             control: vec![0x1b, b']', 7],
             reset: true,
             expired: false,
@@ -244,6 +248,7 @@ mod tests {
         let decoded: DisplayUpdate = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.scrolled, update.scrolled);
         assert_eq!(decoded.screen, update.screen);
+        assert_eq!(decoded.base, Some(11));
         assert_eq!(decoded.control, update.control);
     }
 

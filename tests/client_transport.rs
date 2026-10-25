@@ -35,6 +35,7 @@ async fn serve_test_peer(endpoint: &Endpoint) -> Result<()> {
                 size: Size { rows: 24, cols: 80 },
                 scrolled: vec![b"history\r\n".to_vec()],
                 screen: b"native client output".to_vec(),
+                base: None,
                 control: Vec::new(),
                 reset: true,
                 expired: false,

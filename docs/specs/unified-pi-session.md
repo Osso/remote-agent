@@ -22,6 +22,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Recover ordered output through tested QUIC outages and NAT port migration without duplicating reconnect-notice rows.
 - [x] End attachment after five consecutive failed reconnect attempts; reset the count on any authenticated display frame. Use backoff ceilings of 500, 1000, 2000 and 4000 ms with 90–100% jitter.
 - [x] Show reconnect, control, clipboard and server notices without scrolling terminal output; repaint over them on the next display, including a duplicate reconnect snapshot.
+- [x] Make steady-state display cost proportional to changed rows: live updates carry a diff from the previous display and the client repaints only rows that differ from its viewport. Fresh attachment, replay and virtual resize carry the complete display; reset, resize and repaint clear the viewport.
 - [x] Limit login frames to 8192 bytes before authentication; retain this limit by user decision.
 - [x] Preserve typed input, PTY dimensions, clean detach and local terminal restoration within the tested native attachment boundaries.
 - [ ] Establish complete Pi VT capability coverage and per-display geometry. Alternate-screen applications and unknown VT callbacks remain unsupported.
@@ -55,7 +56,7 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 - `tests/test_rust_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
 - `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
 - `tests/test_rust_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_rust_deploy.py`: 8/8 deployment cases.
-- Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
+- Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. `terminal::tests::one_changed_pi_row_*` and `scrolled_pi_chat_*` compare live diffs and row repaint at 165×46 against full snapshot repaints for identical screen and scrollback. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
 - Real agent-server acceptance at `fdaa0d6`: both accounts' enabled/active units, launch identity/environment, real SSH/QUIC/Pi input and detach, whole-unit kill/start conversation restore, cancellation and legacy preservation. See the wiki for exact boundaries.
 
 ## Known gaps (current cycle)

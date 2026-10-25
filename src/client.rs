@@ -529,6 +529,12 @@ fn fold_deferred_display(
     }
     pending.control.extend(update.control);
     update.control = pending.control;
+    if update.base.is_some() {
+        // This diff applies on top of the pending display bytes.
+        pending.screen.extend(update.screen);
+        update.screen = pending.screen;
+        update.base = pending.base;
+    }
     update
 }
 
@@ -542,6 +548,7 @@ fn write_terminal(bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod resize_tests {
     use super::*;
+    use crate::terminal::TerminalState;
 
     fn update(sequence: u64, cols: u16, row: &str) -> DisplayUpdate {
         DisplayUpdate {
@@ -549,6 +556,7 @@ mod resize_tests {
             size: Size { rows: 4, cols },
             scrolled: vec![row.as_bytes().to_vec()],
             screen: b"\x1b[Hlive viewport".to_vec(),
+            base: None,
             control: Vec::new(),
             reset: false,
             expired: false,
@@ -716,6 +724,43 @@ mod resize_tests {
         let text = native_text(&bytes);
         assert_eq!(text.matches("applied row").count(), 2, "{text}");
         assert_eq!(text.matches("unapplied row").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn deferred_live_updates_compose_when_the_terminal_fits_again() {
+        let mut terminal = TerminalState::new(Size { rows: 4, cols: 40 }, 10_000).unwrap();
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let attached = state.prepare_display(terminal.snapshot(None)).unwrap();
+        let mut bytes = state.renderer.render(&attached).unwrap();
+        state.after = Some(attached.sequence);
+        // The physical terminal shrinks below the virtual display before the
+        // server resizes the PTY, so these updates wait in `deferred`.
+        state.size = Size { rows: 3, cols: 40 };
+        state.renderer.resize_physical(state.size);
+        for data in [
+            b"a\r\nb\r\nc\r\n".as_slice(),
+            b"d\r\ne\r\n",
+            b"\x1b[1;1Hedited",
+        ] {
+            assert!(
+                state
+                    .prepare_display(terminal.feed(data).unwrap())
+                    .is_none()
+            );
+        }
+        state.size = Size { rows: 6, cols: 40 };
+        state.renderer.resize_physical(state.size);
+        let ready = state
+            .prepare_display(terminal.feed(b" end").unwrap())
+            .unwrap();
+        bytes.extend(state.renderer.render(&ready).unwrap());
+        let reference = DisplayRenderer::new(state.size)
+            .render(&terminal.snapshot(None))
+            .unwrap();
+        let text = native_text(&bytes);
+        assert_eq!(text, native_text(&reference));
+        let rows: Vec<_> = text.lines().map(str::trim_end).collect();
+        assert_eq!(rows[..5], ["a", "b", "edited end", "d", "e"], "{text}");
     }
 
     #[test]

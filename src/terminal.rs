@@ -206,7 +206,8 @@ pub struct TerminalState {
     history_evicted: bool,
     journal: VecDeque<DisplayUpdate>,
     journal_len: usize,
-    screen: Vec<u8>,
+    /// The display at `sequence`; live updates are diffs from its predecessor.
+    published: vt100::Screen,
 }
 
 impl TerminalState {
@@ -214,7 +215,7 @@ impl TerminalState {
         size.validate()?;
         let (rows, cols) = dimensions(size);
         let parser = vt100::Parser::new_with_callbacks(rows, cols, 0, Capture::default());
-        let screen = display_bytes(parser.screen());
+        let published = parser.screen().clone();
         Ok(Self {
             parser,
             sequence_parser: vte::Parser::new(),
@@ -227,7 +228,7 @@ impl TerminalState {
             history_evicted: false,
             journal: VecDeque::new(),
             journal_len: 0,
-            screen,
+            published,
         })
     }
 
@@ -337,7 +338,8 @@ impl TerminalState {
             sequence: self.sequence,
             size: self.size,
             scrolled: Vec::new(),
-            screen: self.screen.clone(),
+            screen: display_bytes(&self.published),
+            base: None,
             control: Vec::new(),
             reset: false,
             expired: false,
@@ -345,15 +347,25 @@ impl TerminalState {
     }
 
     fn publish(&mut self) -> DisplayUpdate {
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .expect("display sequence exhausted");
-        self.screen = display_bytes(self.parser.screen());
-        let mut update = self.display();
-        update.reset = std::mem::take(&mut self.reset);
-        update.scrolled = std::mem::take(&mut self.parser.callbacks_mut().rows);
-        update.control = std::mem::take(&mut self.parser.callbacks_mut().control);
+        let base = self.sequence;
+        self.sequence = base.checked_add(1).expect("display sequence exhausted");
+        let previous = std::mem::replace(&mut self.published, self.parser.screen().clone());
+        let (base, screen) = if previous.size() == self.published.size() {
+            let diff = self.published.state_diff(&previous);
+            (Some(base), diff.into_bytes())
+        } else {
+            (None, display_bytes(&self.published))
+        };
+        let update = DisplayUpdate {
+            sequence: self.sequence,
+            size: self.size,
+            scrolled: std::mem::take(&mut self.parser.callbacks_mut().rows),
+            screen,
+            base,
+            control: std::mem::take(&mut self.parser.callbacks_mut().control),
+            reset: std::mem::take(&mut self.reset),
+            expired: false,
+        };
         for row in &update.scrolled {
             self.history_len += row.len() + 24;
             self.history.push_back(row.clone());
@@ -453,7 +465,7 @@ impl DisplayRenderer {
         let resized = self.display.as_ref().map(|display| display.screen().size())
             != Some(dimensions(update.size));
         if !duplicate {
-            self.apply_display(update);
+            self.apply_display(update)?;
         }
         if reset || resized || self.repaint {
             self.clear_viewport(&mut output);
@@ -511,11 +523,29 @@ impl DisplayRenderer {
         Ok(native_rows)
     }
 
-    fn apply_display(&mut self, update: &DisplayUpdate) {
-        let (rows, cols) = dimensions(update.size);
-        let mut display = vt100::Parser::new(rows, cols, 0);
+    fn apply_display(&mut self, update: &DisplayUpdate) -> Result<()> {
+        let Some(base) = update.base else {
+            let (rows, cols) = dimensions(update.size);
+            let mut display = vt100::Parser::new(rows, cols, 0);
+            display.process(&update.screen);
+            self.display = Some(display);
+            return Ok(());
+        };
+        ensure!(
+            self.sequence == Some(base),
+            "display diff from {base} does not follow rendered display {:?}",
+            self.sequence
+        );
+        let display = self
+            .display
+            .as_mut()
+            .expect("a rendered sequence has a display");
+        ensure!(
+            display.screen().size() == dimensions(update.size),
+            "display diff changes the display size"
+        );
         display.process(&update.screen);
-        self.display = Some(display);
+        Ok(())
     }
 
     fn clear_viewport(&mut self, output: &mut Vec<u8>) {
@@ -682,6 +712,18 @@ mod tests {
             assert_eq!(text.matches(&marker).count(), 1, "{marker}: {text}");
         }
     }
+    /// A client renders the attach snapshot before any live update, as the
+    /// server's reply to Hello guarantees.
+    fn attach_client(
+        state: &TerminalState,
+        physical: Size,
+        history: usize,
+    ) -> (DisplayRenderer, vt100::Parser) {
+        let mut renderer = DisplayRenderer::new(physical);
+        let mut outer = parser(physical, history);
+        outer.process(&renderer.render(&state.snapshot(None)).unwrap());
+        (renderer, outer)
+    }
 
     const PI_SIZE: Size = Size {
         rows: 46,
@@ -737,19 +779,15 @@ mod tests {
 
     impl RenderComparison {
         fn attach(state: &TerminalState, physical: Size) -> Self {
-            let snapshot = state.snapshot(None);
-            let mut comparison = Self {
-                sequence: snapshot.sequence,
-                live: DisplayRenderer::new(physical),
-                live_terminal: parser(physical, 400),
-                reference: DisplayRenderer::new(physical),
-                reference_terminal: parser(physical, 400),
-            };
-            let live = comparison.live.render(&snapshot).unwrap();
-            comparison.live_terminal.process(&live);
-            let reference = comparison.reference.render(&snapshot).unwrap();
-            comparison.reference_terminal.process(&reference);
-            comparison
+            let (live, live_terminal) = attach_client(state, physical, 400);
+            let (reference, reference_terminal) = attach_client(state, physical, 400);
+            Self {
+                sequence: state.snapshot(None).sequence,
+                live,
+                live_terminal,
+                reference,
+                reference_terminal,
+            }
         }
 
         fn render(&mut self, state: &TerminalState, update: &DisplayUpdate) -> RenderCost {
@@ -800,6 +838,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn one_changed_pi_row_sends_a_one_row_wire_update() {
+        let cost = typed_editor_row_cost(PI_SIZE);
+        assert!(cost.live_wire * 20 < cost.reference_wire, "{cost:?}");
+    }
+
+    #[test]
+    fn display_update_after_a_missed_update_fails_explicitly() {
+        let mut state = TerminalState::new(size(5, 20), 10_000).unwrap();
+        let mut renderer = DisplayRenderer::new(size(5, 20));
+        renderer.render(&state.snapshot(None)).unwrap();
+        state.feed(b"missed").unwrap();
+        let next = state.feed(b" next").unwrap();
+        assert!(renderer.render(&next).is_err());
+    }
 
     #[test]
     fn scrolled_pi_chat_repaints_only_rows_that_changed_after_the_scroll() {
@@ -827,10 +880,9 @@ mod tests {
     fn bulk_scrollback_survives_larger_physical_screens_and_dedup() {
         for physical in [size(12, 30), size(24, 50), size(40, 80)] {
             let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
+            let (mut renderer, mut outer) = attach_client(&state, physical, 200);
             let update = state.feed(bulk().as_bytes()).unwrap();
             assert_eq!(update.scrolled.len(), 76);
-            let mut renderer = DisplayRenderer::new(physical);
-            let mut outer = parser(physical, 200);
             outer.process(&renderer.render(&update).unwrap());
             assert!(renderer.render(&update).unwrap().is_empty());
             assert_markers(&all_text(&mut outer));
@@ -855,8 +907,7 @@ mod tests {
     fn terminal_clear_fragmented_pi_redraw_replaces_native_history() {
         let physical = size(12, 30);
         let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
-        let mut renderer = DisplayRenderer::new(physical);
-        let mut outer = parser(physical, 400);
+        let (mut renderer, mut outer) = attach_client(&state, physical, 400);
         let first = state
             .feed(bulk().replace("marker-", "old-marker-").as_bytes())
             .unwrap();
@@ -886,9 +937,9 @@ mod tests {
             bulk().replace("marker-", "discard-marker-"),
             bulk().replace("marker-", "revised-marker-")
         );
+        let (mut renderer, mut outer) = attach_client(&state, physical, 400);
         let update = state.feed(input.as_bytes()).unwrap();
-        let mut outer = parser(physical, 400);
-        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        outer.process(&renderer.render(&update).unwrap());
         assert_revised_markers(&mut outer);
         assert!(update.reset);
         let mut restored = parser(physical, 400);
@@ -905,6 +956,7 @@ mod tests {
         for budget in [100_000, 8_000] {
             let physical = size(12, 30);
             let mut state = TerminalState::new(size(5, 20), budget).unwrap();
+            let attached = state.snapshot(None);
             let first = state
                 .feed(bulk().replace("marker-", "old-marker-").as_bytes())
                 .unwrap();
@@ -917,6 +969,7 @@ mod tests {
             for after in [first.sequence, before_clear.sequence] {
                 let mut renderer = DisplayRenderer::new(physical);
                 let mut outer = parser(physical, 400);
+                outer.process(&renderer.render(&attached).unwrap());
                 outer.process(&renderer.render(&first).unwrap());
                 let snapshot = state.snapshot(Some(after));
                 assert!(snapshot.sequence > clear.sequence);
@@ -931,8 +984,7 @@ mod tests {
     fn terminal_clear_text_in_osc_and_dcs_does_not_clear_history() {
         let physical = size(12, 30);
         let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
-        let mut renderer = DisplayRenderer::new(physical);
-        let mut outer = parser(physical, 200);
+        let (mut renderer, mut outer) = attach_client(&state, physical, 200);
         outer.process(
             &renderer
                 .render(&state.feed(bulk().as_bytes()).unwrap())
@@ -1129,10 +1181,9 @@ mod tests {
     #[test]
     fn soft_wrapped_virtual_rows_stay_at_physical_row_zero() {
         let mut state = TerminalState::new(size(4, 10), 1000).unwrap();
+        let (mut renderer, mut outer) = attach_client(&state, size(12, 30), 100);
         let update = state.feed(b"ABCDEFGHIJ0123456789abcdefghij").unwrap();
-        let physical = size(12, 30);
-        let mut outer = parser(physical, 100);
-        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        outer.process(&renderer.render(&update).unwrap());
         let rows: Vec<_> = outer.screen().rows(0, 30).collect();
         assert_eq!(rows[0], "ABCDEFGHIJ");
         assert_eq!(rows[1], "0123456789");
@@ -1142,10 +1193,8 @@ mod tests {
 
     #[test]
     fn disabling_mouse_and_resetting_cursor_style_restores_supported_modes() {
-        let physical = size(10, 30);
-        let mut outer = parser(physical, 100);
-        let mut renderer = DisplayRenderer::new(physical);
         let mut state = TerminalState::new(size(5, 20), 10_000).unwrap();
+        let (mut renderer, mut outer) = attach_client(&state, size(10, 30), 100);
         let enabled = state.feed(b"\x1b[?1003h\x1b[?1006h\x1b[5 q").unwrap();
         outer.process(&renderer.render(&enabled).unwrap());
         assert_eq!(
@@ -1167,10 +1216,8 @@ mod tests {
 
     #[test]
     fn streaming_each_byte_preserves_native_history_and_style() {
-        let physical = size(12, 30);
         let mut state = TerminalState::new(size(5, 20), 100_000).unwrap();
-        let mut renderer = DisplayRenderer::new(physical);
-        let mut outer = parser(physical, 200);
+        let (mut renderer, mut outer) = attach_client(&state, size(12, 30), 200);
         for byte in format!("\x1b[31m{}", bulk()).bytes() {
             outer.process(&renderer.render(&state.feed(&[byte]).unwrap()).unwrap());
         }
@@ -1212,10 +1259,9 @@ mod tests {
             "\x1b]133;A\x07{}\x1b]133;B\x07\x1b]133;C\x07",
             bulk().replace("\r\n", "\x1b[0m\x1b]8;;\x07\r\n")
         );
+        let (mut renderer, mut outer) = attach_client(&state, size(30, 60), 200);
         let update = state.feed(text.as_bytes()).unwrap();
-        let physical = size(30, 60);
-        let mut outer = parser(physical, 200);
-        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        outer.process(&renderer.render(&update).unwrap());
         assert_markers(&all_text(&mut outer));
     }
 
@@ -1252,10 +1298,9 @@ mod tests {
                 assert!(state.drain_responses().is_empty());
             }
         }
-        let physical = size(12, 30);
+        let (mut renderer, mut outer) = attach_client(&state, size(12, 30), 200);
         let update = state.feed(bulk().as_bytes()).unwrap();
-        let mut outer = parser(physical, 200);
-        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        outer.process(&renderer.render(&update).unwrap());
         assert_markers(&all_text(&mut outer));
     }
 
@@ -1297,7 +1342,8 @@ mod tests {
     #[test]
     fn unsupported_operations_fail_without_publishing_partial_display() {
         let mut state = TerminalState::new(size(5, 20), 1000).unwrap();
-        let before = state.feed(b"valid").unwrap();
+        state.feed(b"valid").unwrap();
+        let before = state.snapshot(None);
         assert!(state.feed(b"partial\x1b[999z").is_err());
         let snapshot = state.snapshot(None);
         assert_eq!(snapshot.screen, before.screen);
