@@ -184,7 +184,19 @@ mod tests {
         let account = fixture_account(directory.path().join("nonstandard-home"));
         let worker = account.home.join(".local/bin/remote-agent-rs");
         fs::create_dir_all(worker.parent().unwrap()).unwrap();
-        fs::write(&worker, "#!/bin/sh\n[ \"$1\" = __rpc ] && [ \"$2\" = \"a'b; $(literal)\" ] || exit 12\nunset PWD\nexec /usr/bin/env -0\n".replace("$(literal)", "\\$(literal)")).unwrap();
+        fs::write(
+            &worker,
+            format!(
+                r#"#!/bin/sh
+[ "$(/usr/bin/id -u)" = "{}" ] || exit 14
+[ "$1" = __rpc ] && [ "$2" = "a'b; \$(literal)" ] || exit 12
+unset PWD SHLVL
+exec /usr/bin/env -0
+"#,
+                account.uid
+            ),
+        )
+        .unwrap();
         fs::set_permissions(&worker, fs::Permissions::from_mode(0o700)).unwrap();
         let provider = directory.path().join("authsudo-fixture");
         fs::write(&provider, "#!/bin/sh\n[ \"$1\" = -u ] && [ \"$2\" = fixture-account ] || exit 13\nshift 2\nexec \"$@\"\n").unwrap();
