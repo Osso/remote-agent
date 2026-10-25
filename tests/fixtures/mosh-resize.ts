@@ -109,6 +109,13 @@ async function renderBulkAssistant(source: string): Promise<void> {
 		fs.appendFileSync(argument, JSON.stringify({ phase, pid: process.pid }) + "\n");
 	};
 	tui.addInputListener((input: string) => {
+		if (input.includes("d")) {
+			recordPhase("bulk-scheduled");
+			setTimeout(() => {
+				updateAssistant(false);
+				recordPhase("bulk");
+			}, 250);
+		}
 		if (input.includes("b")) {
 			updateAssistant(false);
 			recordPhase("bulk");
