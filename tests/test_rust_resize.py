@@ -64,8 +64,8 @@ class NativeRustResizeTests(fixture.NativeRustAttachTests):
                 "XDG_STATE_HOME": str(home / ".local/state"),
             }
             self.attach()
-            fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 80, 0, 0))
             self.peer = (self.master, self.client, self.original_termios)
+            fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 80, 0, 0))
             self.capture_peer_startup()
         finally:
             self.master, self.client, self.original_termios, self.env = original
@@ -89,6 +89,8 @@ class NativeRustResizeTests(fixture.NativeRustAttachTests):
         try:
             self.detach()
         finally:
+            if self.master is not None:
+                os.close(self.master)
             self.peer = None
             self.master, self.client, self.original_termios = original
 
