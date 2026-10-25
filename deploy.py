@@ -202,6 +202,13 @@ def install_binary(home, payload):
 RUST_PROGRAM = (
     RUST_SUPPORT
     + r"""
+def install_session_unit(home, content):
+    # Template for the per-session user units that `start` enables.
+    path = home/'.config/systemd/user/remote-agent-rs@.service'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+
 request = json.load(sys.stdin)
 home = pathlib.Path.home()
 if home != pathlib.Path(request['home']):
@@ -220,6 +227,7 @@ elif request['action'] == 'build':
         result = build_binary(source)
 elif request['action'] == 'install':
     result = install_binary(home, request['payload'])
+    install_session_unit(home, request['unit'])
 else:
     raise RuntimeError('Unknown Rust deployment action '+request['action'])
 print(json.dumps(result))
@@ -273,9 +281,10 @@ def deploy_rust(host):
         payload if client == server else remote("build", source=bundle_rust_source())
     )
     native["install_binary"](home, payload)
-    remote("install", payload=server_payload)
+    unit = (ROOT / "remote-agent-rs@.service").read_text()
+    remote("install", payload=server_payload, unit=unit)
     for user in users:
-        remote("install", user, payload=server_payload)
+        remote("install", user, payload=server_payload, unit=unit)
     print("remote-agent-rs installed locally and on " + host)
 
 

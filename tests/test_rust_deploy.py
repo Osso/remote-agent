@@ -25,7 +25,7 @@ class RustDeployTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        for name in ("deploy.py", "deploy.sh"):
+        for name in ("deploy.py", "deploy.sh", "remote-agent-rs@.service"):
             shutil.copy2(ROOT / name, self.repo / name)
         (self.repo / "Cargo.toml").write_text('[package]\nname="remote-agent-rs"\n')
         (self.repo / "Cargo.lock").write_text("# concrete locked source fixture\n")
@@ -59,6 +59,16 @@ class RustDeployTests(unittest.TestCase):
         shutil.copy2(ROOT / "remote-agent-user.py", helper)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.manager_calls = self.root / "systemctl.jsonl"
+        for home in (self.server, self.other):
+            self.command(
+                home / ".local/bin",
+                "systemctl",
+                f"""import json,os,sys
+with open({str(self.manager_calls)!r},'a') as out:
+ out.write(json.dumps({{'home':os.environ['HOME'],'args':sys.argv[1:]}})+'\\n')
+""",
+            )
         self.command(
             self.bin,
             "rustc",
@@ -183,6 +193,25 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
             self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), expected)
             self.assertEqual(path.read_bytes(), f"native:{LINUX}:one".encode())
         self.assertEqual(self.maps(), self.before)
+
+    def test_server_accounts_get_session_unit_template_and_reload(self):
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        template = (ROOT / "remote-agent-rs@.service").read_bytes()
+        unit = Path(".config/systemd/user/remote-agent-rs@.service")
+        for home in (self.server, self.other):
+            self.assertEqual((home / unit).read_bytes(), template)
+        self.assertFalse((self.client / unit).exists())
+        calls = [
+            json.loads(line) for line in self.manager_calls.read_text().splitlines()
+        ]
+        self.assertEqual(
+            calls,
+            [
+                {"home": str(home), "args": ["--user", "daemon-reload"]}
+                for home in (self.server, self.other)
+            ],
+        )
 
     def test_macos_client_builds_linux_source_once_and_redistributes(self):
         result = self.deploy(mac=True)
