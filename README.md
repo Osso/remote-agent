@@ -118,10 +118,13 @@ at the selected account's `~/.local/bin/remote-agent-rs`, Pi, the mapped project
 SSH access and direct UDP reachability to the server's dynamically selected QUIC
 port. Do not replace existing sessions to try it.
 
-### Parallel Rust installation
+### Rust installation
 
-Run `./deploy.sh --rust [--host HOST]` to install only `remote-agent-rs`, beside
-Python `remote-agent`. The default deployment mode remains unchanged. Rust mode
+Run `./deploy.sh --rust [--host HOST]` to install the Rust client locally as
+`~/.local/bin/remote-agent`; it replaced the Python controller on 2026-10-25, so
+sessions still on the legacy stack are unreachable from the client until migrated.
+Server accounts keep `~/.local/bin/remote-agent-rs`, which the session unit runs.
+The Rust client has no `claude-account`, `paste`, `sync` or `fetch` commands. Rust mode
 preserves both maps on the local, default SSH, and configured `deploy_users`
 accounts; missing maps fail instead of copying the operator's configuration.
 It does not change Python workers, detach/Mosh, or existing running sessions.
@@ -143,7 +146,7 @@ account routing uses the native helper described in the
 
 Each account receives a private, content-addressed executable at
 `~/.local/share/remote-agent-rs/<sha256>/remote-agent-rs`, selected by
-`~/.local/bin/remote-agent-rs`. Directory/file modes are `0700` for the store and
+`~/.local/bin/remote-agent` locally and `~/.local/bin/remote-agent-rs` on servers. Directory/file modes are `0700` for the store and
 `0500` for each version and binary. Updates retain old versions without rewriting
 them. Unmanaged executables and foreign or dangling symlinks are rejected.
 `tests/test_rust_deploy.py` passed 8/8 fixture cases; real two-account deployment
@@ -402,14 +405,12 @@ The remote worker and its deployed `wl-paste` shim remain Linux-side components.
 ./deploy.sh --host agent-server
 ```
 
-`deploy.sh` deploys remotely first, then links the local controller. Local-only
-users should not run it blindly; controller linking is independent of Pi
-extension installation.
+Legacy `deploy.sh` (without `--rust`) updates only the remote worker; it no
+longer links a local controller.
 
 Deploy installs its selected payload under the remote user's
-`~/Projects/cli/remote-agent/`, records the controller revision under
-`~/data/remote-agents/`, and links the controller's
-`~/.local/bin/remote-agent` to this checkout. It copies both local mapping files
+`~/Projects/cli/remote-agent/` and records the controller revision under
+`~/data/remote-agents/`. It copies both local mapping files
 byte-for-byte into the remote user's private configuration directory, enforcing
 `0700`/`0600` permissions. All entries in those files are copied, not just the
 selected host. Maps are excluded from the code archive; old code-directory maps

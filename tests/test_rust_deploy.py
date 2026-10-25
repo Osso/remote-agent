@@ -53,7 +53,8 @@ class RustDeployTests(unittest.TestCase):
                 '{ "project-' + str(index) + '": {} }\n'
             )
             (home / ".local/bin").mkdir(parents=True)
-            (home / ".local/bin/remote-agent").write_bytes(b"legacy untouched")
+            if home != self.client:
+                (home / ".local/bin/remote-agent").write_bytes(b"legacy untouched")
         helper = self.server / "Projects/cli/remote-agent/remote-agent-user.py"
         helper.parent.mkdir(parents=True)
         shutil.copy2(ROOT / "remote-agent-user.py", helper)
@@ -129,6 +130,11 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         }
         self.before = self.maps()
 
+    def command_link(self, home):
+        # The client command is remote-agent; server units run remote-agent-rs.
+        name = "remote-agent" if home == self.client else "remote-agent-rs"
+        return home / ".local/bin" / name
+
     def command(self, directory, name, code):
         path = directory / name
         path.write_text(f"#!{sys.executable}\n" + code)
@@ -165,15 +171,18 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         digest = hashlib.sha256(content).hexdigest()
         root = home / ".local/share/remote-agent-rs"
         binary = root / digest / "remote-agent-rs"
-        link = home / ".local/bin/remote-agent-rs"
+        link = self.command_link(home)
         self.assertEqual(link.readlink(), binary)
         self.assertEqual(binary.read_bytes(), content)
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(binary.parent.stat().st_mode & 0o777, 0o500)
         self.assertEqual(binary.stat().st_mode & 0o777, 0o500)
-        self.assertEqual(
-            (home / ".local/bin/remote-agent").read_bytes(), b"legacy untouched"
-        )
+        if home == self.client:
+            self.assertFalse((home / ".local/bin/remote-agent-rs").exists())
+        else:
+            self.assertEqual(
+                (home / ".local/bin/remote-agent").read_bytes(), b"legacy untouched"
+            )
         return binary
 
     def test_linux_build_once_installs_all_accounts_preserving_maps_and_old_versions(
@@ -255,7 +264,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         for home in self.homes:
             for kind in ("file", "foreign", "dangling"):
                 with self.subTest(home=home, kind=kind):
-                    path = home / ".local/bin/remote-agent-rs"
+                    path = self.command_link(home)
                     if path.is_symlink() or path.exists():
                         path.unlink()
                     foreign = home / "foreign"
@@ -288,7 +297,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(len(self.builds()), expected_count)
                 for account in self.homes:
-                    self.assertFalse((account / ".local/bin/remote-agent-rs").exists())
+                    self.assertFalse(self.command_link(account).exists())
 
     def test_target_metadata_must_match_native_platform(self):
         self.env["CLIENT_TARGET"] = MAC

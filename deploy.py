@@ -156,7 +156,7 @@ def check_link(link, root):
     elif link.exists():
         raise RuntimeError('Not replacing unmanaged '+str(link))
 
-def install_binary(home, payload):
+def install_binary(home, payload, command):
     require_maps(home)
     validate_target(payload['target'], native_platform())
     content = base64.b64decode(payload['binary'], validate=True)
@@ -164,7 +164,7 @@ def install_binary(home, payload):
     if digest != payload['sha256']:
         raise RuntimeError('Rust binary content hash mismatch')
     root = home/'.local/share/remote-agent-rs'
-    link = home/'.local/bin/remote-agent-rs'
+    link = home/'.local/bin'/command
     if root.is_symlink():
         raise RuntimeError('Not replacing foreign symlink '+str(root))
     check_link(link, root)
@@ -226,7 +226,8 @@ elif request['action'] == 'build':
             archive.extractall(source, filter='data')
         result = build_binary(source)
 elif request['action'] == 'install':
-    result = install_binary(home, request['payload'])
+    # The session unit template runs %h/.local/bin/remote-agent-rs.
+    result = install_binary(home, request['payload'], 'remote-agent-rs')
     install_session_unit(home, request['unit'])
 else:
     raise RuntimeError('Unknown Rust deployment action '+request['action'])
@@ -280,12 +281,12 @@ def deploy_rust(host):
     server_payload = (
         payload if client == server else remote("build", source=bundle_rust_source())
     )
-    native["install_binary"](home, payload)
+    native["install_binary"](home, payload, "remote-agent")
     unit = (ROOT / "remote-agent-rs@.service").read_text()
     remote("install", payload=server_payload, unit=unit)
     for user in users:
         remote("install", user, payload=server_payload, unit=unit)
-    print("remote-agent-rs installed locally and on " + host)
+    print("remote-agent installed locally; remote-agent-rs server installed on " + host)
 
 
 def bundle_files():
@@ -364,26 +365,16 @@ def deploy_remote(profile, target, program, request, capture_output=False):
     return result.stdout
 
 
-def link_controller():
-    executable = Path.home() / ".local/bin/remote-agent"
-    if executable.is_symlink():
-        executable.unlink()
-    elif executable.exists():
-        raise FileExistsError(f"Not replacing unrelated executable: {executable}")
-    executable.symlink_to(ROOT / "remote-agent.py")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
     parser.add_argument(
         "--rust",
         action="store_true",
-        help="Install the parallel native remote-agent-rs client and Linux server",
+        help="Install the native client as remote-agent and the Linux server",
     )
     args = parser.parse_args()
     if args.rust:
         deploy_rust(args.host)
     else:
         deploy_worker(args.host)
-        link_controller()

@@ -1365,17 +1365,14 @@ if 'show' in sys.argv:
                 [name for name in names if name.endswith(".md")], ["README.md"]
             )
 
-    def test_deployment_leaves_pi_extensions_untouched_in_both_routes(self):
-        cases = product(
-            ("local", "remote"), (False, True), ("absent", "file", "symlink")
-        )
-        for route, configured, existing in cases:
-            home = self.local_home if route == "local" else self.home
+    def test_deployment_leaves_pi_extensions_untouched(self):
+        for configured, existing in product((False, True), ("absent", "file", "symlink")):
+            home = self.home
             default = home / ".config/pi/agent"
             directory = home / "custom-agent" if configured else default
             extension = directory / "extensions/periodic-checks.ts"
             env = {"PI_CODING_AGENT_DIR": str(directory)} if configured else {}
-            with self.subTest(route=route, configured=configured, existing=existing):
+            with self.subTest(configured=configured, existing=existing):
                 if existing != "absent":
                     extension.parent.mkdir(parents=True, exist_ok=True)
                     if existing == "file":
@@ -1383,20 +1380,12 @@ if 'show' in sys.argv:
                     else:
                         extension.symlink_to(home / "foreign-extension.ts")
                 try:
-                    if route == "local":
-                        with mock.patch.dict(os.environ, env):
-                            self.module.link_controller()
-                        self.assertEqual(
-                            (home / ".local/bin/remote-agent").readlink(),
-                            ROOT / "remote-agent.py",
-                        )
-                    else:
-                        result = self.deploy(**env)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(
-                            (home / ".local/bin/wl-paste").readlink(),
-                            home / "Projects/cli/remote-agent/remote-agent-worker.py",
-                        )
+                    result = self.deploy(**env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(
+                        (home / ".local/bin/wl-paste").readlink(),
+                        home / "Projects/cli/remote-agent/remote-agent-worker.py",
+                    )
                     if existing == "absent":
                         self.assertFalse(directory.exists())
                     elif existing == "file":
@@ -1488,10 +1477,6 @@ if 'show' in sys.argv:
                     base64.b64decode(data["request"]["config"][name]),
                     (self.home / ".config/remote-agent" / name).read_bytes(),
                 )
-            self.assertEqual(
-                (self.home / ".local/bin/remote-agent").resolve(),
-                ROOT / "remote-agent.py",
-            )
 
     def test_system_slice_is_not_shadowed(self):
         result = self.deploy(SYSTEM_SLICE="/etc/systemd/system/agents.slice")
