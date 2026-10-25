@@ -2,7 +2,10 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
 };
 
@@ -24,6 +27,48 @@ pub struct HistoryStore {
     budget: usize,
     length: usize,
     expired: bool,
+}
+
+struct FileLock {
+    file: File,
+    locked: bool,
+}
+
+impl FileLock {
+    fn acquire(file: &File, operation: libc::c_int) -> Result<Self> {
+        let file = file.try_clone().context("clone history lock descriptor")?;
+        flock(&file, operation).context("acquire history lock")?;
+        Ok(Self { file, locked: true })
+    }
+
+    fn release(mut self) -> Result<()> {
+        flock(&self.file, libc::LOCK_UN).context("release history lock")?;
+        self.locked = false;
+        Ok(())
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        if self.locked {
+            if let Err(error) = flock(&self.file, libc::LOCK_UN) {
+                eprintln!("release history lock during cleanup: {error}");
+            }
+        }
+    }
+}
+
+fn flock(file: &File, operation: libc::c_int) -> std::io::Result<()> {
+    loop {
+        // The file owns a valid descriptor for the duration of this call.
+        if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 impl HistoryStore {
@@ -61,6 +106,18 @@ impl HistoryStore {
     /// `snapshot` must describe the terminal after `update`, including all retained rows.
     /// Only persistence is trimmed; neither `update` nor the terminal is modified.
     pub fn append(
+        &mut self,
+        update: &DisplayUpdate,
+        snapshot: impl FnOnce() -> DisplayUpdate,
+    ) -> Result<()> {
+        let lock = FileLock::acquire(&self.file, libc::LOCK_EX)
+            .with_context(|| format!("lock history writer {}", self.path.display()))?;
+        let result = self.append_locked(update, snapshot);
+        lock.release()?;
+        result
+    }
+
+    fn append_locked(
         &mut self,
         update: &DisplayUpdate,
         snapshot: impl FnOnce() -> DisplayUpdate,
@@ -171,6 +228,14 @@ fn replace_private(path: &Path, bytes: &[u8]) -> Result<File> {
 /// The result is a full replacement window (`reset = true`).
 pub fn read(path: &Path) -> Result<DisplayUpdate> {
     let file = File::open(path).with_context(|| format!("read history {}", path.display()))?;
+    let lock = FileLock::acquire(&file, libc::LOCK_SH)
+        .with_context(|| format!("lock history reader {}", path.display()))?;
+    let result = read_locked(path, &file);
+    lock.release()?;
+    result
+}
+
+fn read_locked(path: &Path, file: &File) -> Result<DisplayUpdate> {
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     let mut state: Option<DisplayUpdate> = None;
@@ -230,6 +295,134 @@ mod tests {
             reset: false,
             expired: false,
         }
+    }
+
+    fn native_lock(file: &File, operation: libc::c_int) {
+        use std::os::fd::AsRawFd;
+        assert_eq!(unsafe { libc::flock(file.as_raw_fd(), operation) }, 0);
+    }
+
+    #[test]
+    fn concurrent_read_waits_for_complete_inflight_record() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        let mut store = HistoryStore::open(&path, 4096).unwrap();
+        let first = update(1, &[b"first"]);
+        store.append(&first, || first.clone()).unwrap();
+        let second = update(2, &[b"second", b"third"]);
+        let bytes = encode_line(&Record::Delta(&second)).unwrap();
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        native_lock(&writer, libc::LOCK_EX);
+        let split = bytes.len() / 2;
+        writer.write_all(&bytes[..split]).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let reader_path = path.clone();
+        let reader = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            done_tx.send(read(&reader_path)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let blocked = done_rx.recv_timeout(Duration::from_millis(150));
+        writer.write_all(&bytes[split..]).unwrap();
+        native_lock(&writer, libc::LOCK_UN);
+        reader.join().unwrap();
+        assert!(matches!(blocked, Err(mpsc::RecvTimeoutError::Timeout)));
+        let actual = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual.sequence, 2);
+        assert_eq!(
+            actual.scrolled,
+            vec![b"first".to_vec(), b"second".to_vec(), b"third".to_vec()]
+        );
+        assert_eq!(actual.screen, second.screen);
+    }
+
+    #[test]
+    fn concurrent_append_waits_for_shared_reader_including_compaction() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        for budget in [4096, 300] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("history");
+            let mut store = HistoryStore::open(&path, budget).unwrap();
+            let first = update(1, &[b"first"]);
+            store.append(&first, || first.clone()).unwrap();
+            let mut reader = File::open(&path).unwrap();
+            native_lock(&reader, libc::LOCK_SH);
+            let before = fs::read(&path).unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let (done_tx, done_rx) = mpsc::channel();
+            let writer = thread::spawn(move || {
+                let second = update(2, &[b"second"]);
+                started_tx.send(()).unwrap();
+                let result = store.append(&second, || update(2, &[b"first", b"second"]));
+                done_tx.send(result).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let blocked = done_rx.recv_timeout(Duration::from_millis(150));
+            let during = fs::read(&path).unwrap();
+            native_lock(&reader, libc::LOCK_UN);
+            writer.join().unwrap();
+            assert!(
+                matches!(blocked, Err(mpsc::RecvTimeoutError::Timeout)),
+                "budget {budget}"
+            );
+            assert_eq!(during, before);
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+            let actual = read(&path).unwrap();
+            assert_eq!(actual.sequence, 2);
+            assert_eq!(actual.scrolled, vec![b"first".to_vec(), b"second".to_vec()]);
+            if budget == 300 {
+                use std::io::Read;
+                let mut old_checkpoint = Vec::new();
+                reader.read_to_end(&mut old_checkpoint).unwrap();
+                assert_eq!(
+                    old_checkpoint, before,
+                    "open readers retain the old checkpoint"
+                );
+                assert_eq!(
+                    fs::read(&path)
+                        .unwrap()
+                        .iter()
+                        .filter(|b| **b == b'\n')
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_locks_are_released_after_read_and_checkpoint_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        fs::write(&path, b"{broken}\n").unwrap();
+        assert!(read(&path).is_err());
+        let observer = File::open(&path).unwrap();
+        native_lock(&observer, libc::LOCK_EX | libc::LOCK_NB);
+        native_lock(&observer, libc::LOCK_UN);
+        fs::write(&path, b"").unwrap();
+        let mut store = HistoryStore::open(&path, 600).unwrap();
+        let first = update(1, &[b"retained"]);
+        store.append(&first, || first.clone()).unwrap();
+        let mut huge = update(2, &[]);
+        huge.screen = vec![b'x'; 1000];
+        assert!(store.append(&huge, || huge.clone()).is_err());
+        let observer = File::open(&path).unwrap();
+        native_lock(&observer, libc::LOCK_EX | libc::LOCK_NB);
+        native_lock(&observer, libc::LOCK_UN);
+        assert_eq!(read(&path).unwrap().scrolled, first.scrolled);
+        let second = update(2, &[b"next"]);
+        store.append(&second, || unreachable!()).unwrap();
+        assert_eq!(read(&path).unwrap().sequence, 2);
     }
 
     #[test]
