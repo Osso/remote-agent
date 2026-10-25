@@ -65,8 +65,8 @@ class NativeRustResizeTests(fixture.NativeRustAttachTests):
             }
             self.attach()
             fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 80, 0, 0))
-            self.capture_peer_startup()
             self.peer = (self.master, self.client, self.original_termios)
+            self.capture_peer_startup()
         finally:
             self.master, self.client, self.original_termios, self.env = original
 
@@ -122,7 +122,8 @@ class NativeRustResizeTests(fixture.NativeRustAttachTests):
         self.capture("partial")
         self.assertEqual(self.child_size(started["child_pid"]), (80, 20) if pinned else (165, 46))
         reports = self.analyze(self.stages, "pinned" if pinned else "resize")
-        for report in reports:
+        for report, stage in zip(reports, self.stages, strict=True):
+            self.assertEqual(len(report["visible"]), stage["rows"])
             if report["name"] in ("bulk", "revised", "widgets", "partial"):
                 self.assert_bulk(report, report["name"])
         status = self.cli("status", "bulk-proof")
