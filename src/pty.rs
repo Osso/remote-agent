@@ -67,6 +67,7 @@ fn build_pi_command(launch: &Launch) -> Command {
     if let Some(prompt) = &launch.prompt {
         command.arg(prompt);
     }
+    command.envs(&launch.environment);
     command
         .current_dir(&launch.cwd)
         .env("TERM", "xterm-256color")

@@ -3,6 +3,7 @@ use crate::terminal::DisplayRenderer;
 use std::num::NonZeroU16;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -24,6 +25,7 @@ impl Fixture {
             pi,
             conversation: uuid::Uuid::new_v4().to_string(),
             resume: false,
+            environment: std::collections::BTreeMap::new(),
             prompt: None,
             size: Size {
                 rows: 46,
@@ -218,6 +220,30 @@ async fn quic_bulk_output_and_reconnect_preserve_every_line_and_child() {
         .await
         .unwrap();
     resumed.close(0u32.into(), b"done");
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn oversized_unauthenticated_frame_is_rejected_without_stopping_pi() {
+    let fixture = Fixture::start().await;
+    let (_endpoint, connection) = crate::client::connect(&fixture.ticket, "127.0.0.1")
+        .await
+        .unwrap();
+    let (mut writer, mut reader) = connection.open_bi().await.unwrap();
+    writer.write_u32(8193).await.unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        read_frame::<_, ServerFrame>(&mut reader),
+    )
+    .await;
+    assert!(
+        result
+            .expect("oversized authentication header must be rejected before reading its body")
+            .is_err()
+    );
+    assert!(!fixture.task.is_finished());
+    assert_eq!(unsafe { libc::kill(fixture.child as i32, 0) }, 0);
+    connection.close(0u32.into(), b"test complete");
     fixture.stop().await;
 }
 

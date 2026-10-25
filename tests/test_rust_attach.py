@@ -2,7 +2,8 @@
 
 Run directly with Python on Linux. REMOTE_AGENT_RUST_BIN overrides target/debug/
 remote-agent-rs. NODE_PATH and PI_TUI_SOURCE may override the local Pi checkout.
-Only SSH bootstrap is substituted; no real account, provider, or model is used.
+SSH and systemd-manager bootstrap are substituted; PTYs, QUIC, Rust processes,
+and the Pi TUI are native. No real account, provider, or model is used.
 Evidence, including failed runs, remains in /var/tmp/pi-resize-fix/rust-cli/.
 """
 
@@ -15,6 +16,7 @@ import pty
 import re
 import select
 import shlex
+import signal
 import shutil
 import socket
 import stat
@@ -51,7 +53,83 @@ def ssh_bootstrap():
     expected = [str(root / ".local/bin/remote-agent-rs"), "__rpc"]
     if command != expected:
         raise RuntimeError(f"unexpected remote command: {command!r}")
+    os.environ["HOME"] = str(root)
     os.execv(command[0], command)
+
+
+def scope_fixture_state(unit):
+    prefix = f"remote-agent-rs-{os.geteuid()}-"
+    unit = unit.removesuffix(".scope")
+    if not unit.startswith(prefix):
+        raise RuntimeError(f"scope is outside the owned UID namespace: {unit}")
+    name = unit.removeprefix(prefix)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        raise RuntimeError("invalid fixture scope name")
+    return (
+        Path(os.environ["RUST_ATTACH_HOME"])
+        / ".local/state/remote-agent-rs/sessions"
+        / name
+    )
+
+
+def systemd_bootstrap():
+    arguments = sys.argv[2:]
+    boundary = arguments.index("--")
+    command = arguments[boundary + 1 :]
+    state = Path(command[command.index("--state") + 1])
+    unit = next(
+        value.removeprefix("--unit=")
+        for value in arguments[:boundary]
+        if value.startswith("--unit=")
+    )
+    if not unit.endswith(".scope"):
+        unit += ".scope"
+    if scope_fixture_state(unit) != state:
+        raise RuntimeError("scope and state identify different fixtures")
+    (state / "fixture-scope.json").write_text(
+        json.dumps(
+            {"unit": unit, "pid": os.getpid(), "invocation": os.urandom(16).hex()}
+        )
+    )
+    os.execv(command[0], command)
+
+
+def systemctl_bootstrap():
+    arguments = [value for value in sys.argv[2:] if value != "--user"]
+    action, unit = arguments[:2]
+    if action == "show" and unit == "agents.slice":
+        print("")
+        return
+    state = scope_fixture_state(unit)
+    path = state / "fixture-scope.json"
+    info = json.loads(path.read_text()) if path.exists() else None
+    if action == "show":
+        values = {
+            "LoadState": "loaded" if info else "not-found",
+            "ActiveState": "active"
+            if info and process_exists(info["pid"])
+            else "inactive",
+            "InvocationID": info["invocation"] if info else "",
+        }
+        if "--value" in arguments:
+            properties = [
+                arguments[index + 1]
+                for index, value in enumerate(arguments[:-1])
+                if value in ("-p", "--property")
+            ]
+            print("\n".join(values.get(key, "") for key in properties))
+        else:
+            print("\n".join(f"{key}={value}" for key, value in values.items()))
+        return
+    if action == "stop":
+        if info and process_exists(info["pid"]):
+            command = Path(f"/proc/{info['pid']}/cmdline").read_bytes().split(b"\0")
+            if command and command[0]:
+                if command[1:4] != [b"__serve", b"--state", os.fsencode(state)]:
+                    raise RuntimeError("refusing to stop an unrelated fixture process")
+                os.kill(info["pid"], signal.SIGTERM)
+        return
+    raise RuntimeError(f"unexpected fixture manager action: {arguments}")
 
 
 def process_exists(pid):
@@ -183,6 +261,17 @@ class NativeRustAttachTests(unittest.TestCase):
             "runpy.run_path(sys.argv[0], run_name='__main__')\n"
         )
         ssh.chmod(0o700)
+        for executable, mode in (
+            ("systemctl", "--systemctl"),
+            ("systemd-run", "--systemd-run"),
+        ):
+            program = bindir / executable
+            program.write_text(
+                f"#!{sys.executable}\nimport runpy,sys\n"
+                f"sys.argv = [{str(Path(__file__).resolve())!r}, {mode!r}, *sys.argv[1:]]\n"
+                "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+            )
+            program.chmod(0o700)
         self.env["PATH"] = str(bindir) + os.pathsep + os.environ["PATH"]
         (config / "remote-hosts.json").write_text(
             json.dumps(
@@ -192,6 +281,7 @@ class NativeRustAttachTests(unittest.TestCase):
                         "home": str(self.root),
                         "wrap": [],
                         "windows_shell": False,
+                        "cargo_build_jobs": "2",
                     },
                 }
             )
@@ -454,6 +544,67 @@ class NativeRustAttachTests(unittest.TestCase):
             "offline detach must not wait for network retries",
         )
 
+    def configure_cancel_hook(self, fail_once=False):
+        hook = self.root / "cancel-hook"
+        hook.write_text(
+            f"#!{sys.executable}\nimport json,os,sys\nfrom pathlib import Path\n"
+            f"root=Path({str(self.root)!r})\nstate=Path({str(self.state)!r})\n"
+            "runtime=json.loads((state/'runtime.json').read_text())\n"
+            "path=Path('/proc/'+str(runtime['pid'])+'/stat')\n"
+            "alive=path.exists() and path.read_text().rsplit(')',1)[1].split()[0] not in ('Z','X')\n"
+            "with (root/'hook-calls.jsonl').open('a') as stream: stream.write(json.dumps({'args':sys.argv[1:],'server_alive':alive})+'\\n')\n"
+            "failure=root/'hook-fail-once'\n"
+            "if failure.exists():\n failure.unlink()\n print('fixture teardown rejected',file=sys.stderr)\n sys.exit(1)\n"
+            "print('fixture teardown complete')\n"
+        )
+        hook.chmod(0o700)
+        path = self.root / ".config/remote-agent/remote-projects.json"
+        projects = json.loads(path.read_text())
+        projects["demo"]["pi_cancel_executable"] = str(hook)
+        path.write_text(json.dumps(projects))
+        if fail_once:
+            (self.root / "hook-fail-once").touch()
+
+    def test_cancel_hook_runs_after_scope_stop_and_can_retry(self):
+        self.configure_cancel_hook(fail_once=True)
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        failed = self.cli("cancel", "bulk-proof", check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("fixture teardown rejected", failed.stderr)
+        self.assertTrue((self.state / "launch.json").exists())
+        succeeded = self.cli("cancel", "bulk-proof")
+        self.assertEqual(succeeded["cancelled"], "bulk-proof")
+        calls = [
+            json.loads(line)
+            for line in (self.root / "hook-calls.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(
+            all(
+                call["args"] == [started["conversation"]] and not call["server_alive"]
+                for call in calls
+            )
+        )
+
+    def test_cancel_refuses_unrelated_pid_before_scope_or_hook(self):
+        self.configure_cancel_hook()
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        path = self.state / "runtime.json"
+        original = path.read_text()
+        altered = json.loads(original)
+        altered["pid"] = os.getpid()
+        try:
+            path.write_text(json.dumps(altered))
+            result = self.cli("cancel", "bulk-proof", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not own", result.stderr)
+            self.assertFalse((self.root / "hook-calls.jsonl").exists())
+            self.assertTrue(process_exists(started["pid"]))
+        finally:
+            path.write_text(original)
+
     def cleanup_session(self):
         errors = []
         try:
@@ -512,5 +663,9 @@ class NativeRustAttachTests(unittest.TestCase):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--ssh"]:
         ssh_bootstrap()
+    elif sys.argv[1:2] == ["--systemctl"]:
+        systemctl_bootstrap()
+    elif sys.argv[1:2] == ["--systemd-run"]:
+        systemd_bootstrap()
     else:
         unittest.main()

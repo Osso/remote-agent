@@ -158,7 +158,7 @@ async fn serve_connection(
     let (mut writer, mut reader) = connection.accept_bi().await?;
     let hello = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        read_frame::<_, ClientFrame>(&mut reader),
+        read_frame_limited::<_, ClientFrame>(&mut reader, MAX_AUTH_FRAME_BYTES),
     )
     .await??;
     let ClientFrame::Hello {

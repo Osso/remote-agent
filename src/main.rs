@@ -3,6 +3,8 @@ use clap::{Parser, Subcommand};
 use remote_agent_rs::{client, config::Config, control, protocol::*};
 use serde_json::{Value, json};
 use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -49,6 +51,12 @@ enum Action {
     PiLogin {
         provider: String,
     },
+    #[command(name = "__as-user", hide = true)]
+    AsUser {
+        user: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<String>,
+    },
     #[command(name = "__rpc", hide = true)]
     Rpc,
     #[command(name = "__serve", hide = true)]
@@ -62,7 +70,7 @@ enum Action {
     },
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = run(Cli::parse()).await {
         eprintln!("remote-agent-rs: {error:#}");
@@ -71,6 +79,19 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    if let Action::AsUser { user, arguments } = &cli.command {
+        #[cfg(target_os = "linux")]
+        {
+            let account = remote_agent_rs::account::read_account(user)?;
+            let error = remote_agent_rs::account::build_user_command(&account, arguments)?.exec();
+            return Err(error).context("execute isolated target-account command");
+        }
+        #[cfg(not(target_os = "linux"))]
+        bail!(
+            "target account {user} operation {:?} requires a Linux server",
+            arguments.first()
+        );
+    }
     if let Action::Serve { state } = &cli.command {
         #[cfg(target_os = "linux")]
         return remote_agent_rs::server::serve(state.clone()).await;
@@ -81,6 +102,9 @@ async fn run(cli: Cli) -> Result<()> {
         );
     }
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    if matches!(cli.command, Action::Rpc | Action::Login { .. }) {
+        std::env::set_current_dir(&home).context("enter target account home")?;
+    }
     let config = Config::load(&home)?;
     match cli.command {
         Action::Rpc => {
@@ -101,7 +125,6 @@ async fn run(cli: Cli) -> Result<()> {
             let status = control::build_pi_login_command(&config.find_pi()?, &provider).status()?;
             ensure!(status.success(), "Pi login exited {status}");
         }
-        Action::Projects => println!("{}", json!({"projects":config.list_projects()})),
         action => {
             let host = match cli.host {
                 Some(host) => host,
@@ -146,6 +169,7 @@ async fn run_client_command(
                 .transpose()
                 .context("read initial prompt file")?;
             ControlRequest::Start {
+                host: host.to_owned(),
                 project,
                 name,
                 resume,
@@ -153,6 +177,7 @@ async fn run_client_command(
                 history_bytes,
             }
         }
+        Action::Projects => ControlRequest::Projects,
         Action::List => ControlRequest::List,
         Action::Status { name } => ControlRequest::Status { name },
         Action::Logs { name } => ControlRequest::Logs { name },
@@ -171,6 +196,7 @@ async fn run_client_command(
 async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Result<Value> {
     match request {
         ControlRequest::Start {
+            host,
             project,
             name,
             resume,
@@ -198,12 +224,14 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 pi,
                 conversation,
                 resume: resuming,
+                environment: config.launch_environment(&host)?,
                 prompt,
                 size: Size { rows: 24, cols: 80 },
                 history_bytes,
             };
             let child = control::spawn_session(&std::env::current_exe()?, &launch, &state)?;
             wait_for_runtime(&state, child).await?;
+            control::record_scope_identity(&state, &launch.name)?;
             control::status(home, &launch.name)
         }
         ControlRequest::List => Ok(json!({"sessions":control::list_sessions(home)?})),
@@ -224,7 +252,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 token: runtime.token,
             })?)
         }
-        ControlRequest::Cancel { name } => cancel_session(home, &name).await,
+        ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
         ControlRequest::PiLogin { .. } => bail!("Pi login needs a TTY; use pi-login PROVIDER"),
     }
 }
@@ -235,8 +263,10 @@ async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Resul
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
-            let log = std::fs::read_to_string(state.join("server.log"))?;
-            bail!("session server exited {status}: {log}");
+            if !status.success() {
+                let log = std::fs::read_to_string(state.join("server.log"))?;
+                bail!("session launcher exited {status}: {log}");
+            }
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -268,23 +298,83 @@ fn read_logs(home: &Path, name: &str) -> Result<Value> {
     Ok(json!({"logs":format!("{}\n", lines.join("\n"))}))
 }
 
-async fn cancel_session(home: &Path, name: &str) -> Result<Value> {
+async fn cancel_session(home: &Path, config: &Config, name: &str) -> Result<Value> {
     let state = control::session_dir(home, name)?;
-    let runtime: control::Runtime =
-        serde_json::from_slice(&std::fs::read(state.join("runtime.json"))?)?;
+    let launch = control::read_launch(&state)?;
     ensure!(
-        control::server_matches_state(runtime.pid, &state)?,
-        "refusing to signal a PID that does not own this session"
+        launch.name == name,
+        "session name does not match launch record"
     );
-    // Identity was reconciled against the exact native executable and state path.
-    if unsafe { libc::kill(runtime.pid as i32, libc::SIGTERM) } < 0 {
-        bail!("stop session: {}", std::io::Error::last_os_error());
+    let hook = config.cancel_hook(&launch.project)?;
+    let runtime_path = state.join("runtime.json");
+    let runtime: Option<control::Runtime> = if runtime_path.exists() {
+        Some(serde_json::from_slice(&std::fs::read(runtime_path)?)?)
+    } else {
+        None
+    };
+    if let Some(runtime) = &runtime {
+        if process_is_live(runtime.pid)? {
+            ensure!(
+                control::server_matches_state(runtime.pid, &state)?,
+                "refusing to signal a PID that does not own this session"
+            );
+        }
     }
+    control::stop_session_scope(&state, name)?;
+    if let Some(runtime) = runtime {
+        wait_for_session_exit(runtime.pid).await?;
+    }
+    invoke_cancel_hook(hook.as_deref(), &launch.conversation)?;
+    Ok(json!({"cancelled":name}))
+}
+
+fn process_is_live(pid: u32) -> Result<bool> {
+    ensure!(
+        pid > 0 && pid <= i32::MAX as u32,
+        "invalid recorded server PID"
+    );
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("read recorded server state"),
+    };
+    let fields = stat
+        .rsplit_once(')')
+        .context("invalid server process stat")?
+        .1;
+    let status = fields
+        .split_whitespace()
+        .next()
+        .context("missing process state")?;
+    Ok(status != "Z" && status != "X")
+}
+
+async fn wait_for_session_exit(pid: u32) -> Result<()> {
     for _ in 0..100 {
-        if !control::server_matches_state(runtime.pid, &state)? {
-            return Ok(json!({"cancelled":name}));
+        if !process_is_live(pid)? {
+            return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    bail!("session cancellation timed out; server was not force-killed")
+    bail!(
+        "session scope stopped but its recorded process remains alive; teardown hook was not invoked"
+    )
+}
+
+fn invoke_cancel_hook(hook: Option<&Path>, conversation: &str) -> Result<()> {
+    let Some(hook) = hook else {
+        return Ok(());
+    };
+    let output = Command::new(hook)
+        .arg(conversation)
+        .output()
+        .with_context(|| format!("run Pi cancellation hook {}", hook.display()))?;
+    ensure!(
+        output.status.success(),
+        "Pi cancellation hook failed ({}): {}{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
 }
