@@ -115,6 +115,10 @@ impl vt100::Callbacks for Capture {
             }
             (None, None, 'c', 0) => Some("\x1b[?1;2c".to_string()),
             (Some(b'>'), None, 'c', 0) => Some("\x1b[>0;0;0c".to_string()),
+            // This endpoint does not publish color notifications or know the
+            // native appearance. Pi handles unanswered theme queries by timeout.
+            (Some(b'?'), None, 'h' | 'l', 2031) if params.len() == 1 => None,
+            (Some(b'?'), None, 'n', 996) if params.len() == 1 => None,
             // Synchronized painting does not change the display model.
             (Some(b'?'), None, 'h' | 'l', 2026) if params.len() == 1 => None,
             _ => {
@@ -131,7 +135,13 @@ impl vt100::Callbacks for Capture {
         self.failure = Some(format!("unsupported terminal escape: {a:?} {b:?} {c}"));
     }
     fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
-        self.failure = Some(format!("unsupported terminal OSC: {params:?}"));
+        match params {
+            // The virtual endpoint has no native background color to report.
+            [b"11", b"?"] => {}
+            [b"9", b"4", b"3"] => self.osc(b"9", b"4;3"),
+            [b"9", b"4", b"0", b""] => self.osc(b"9", b"4;0;"),
+            _ => self.failure = Some(format!("unsupported terminal OSC: {params:?}")),
+        }
     }
     fn unhandled_char(&mut self, _: &mut vt100::Screen, c: char) {
         self.failure = Some(format!("unsupported or invalid terminal character: {c:?}"));
@@ -851,6 +861,49 @@ mod tests {
                 .any(|part| part == b"\x1b[>4;2m")
         );
         state.feed(b"\x1b[?2004l\x1b[<u\x1b[>4;0m").unwrap();
+    }
+
+    #[test]
+    fn pi_startup_color_queries_remain_unanswered_without_poisoning_output() {
+        let mut state = TerminalState::new(size(5, 20), 10_000).unwrap();
+        for sequence in [
+            b"\x1b[?2031h".as_slice(),
+            b"\x1b[?996n",
+            b"\x1b]11;?\x07",
+            b"\x1b[?2031l",
+        ] {
+            for byte in sequence {
+                let update = state.feed(&[*byte]).unwrap();
+                assert!(update.control.is_empty());
+                assert!(state.drain_responses().is_empty());
+            }
+        }
+        let physical = size(12, 30);
+        let update = state.feed(bulk().as_bytes()).unwrap();
+        let mut outer = parser(physical, 200);
+        outer.process(&DisplayRenderer::new(physical).render(&update).unwrap());
+        assert_markers(&all_text(&mut outer));
+    }
+
+    #[test]
+    fn pi_startup_progress_notifications_pass_through_without_becoming_queries() {
+        let mut state = TerminalState::new(size(5, 20), 10_000).unwrap();
+        for (sequence, expected) in [
+            (b"\x1b]9;4;3\x07".as_slice(), b"\x1b]9;4;3\x1b\\".as_slice()),
+            (
+                b"\x1b]9;4;0;\x07".as_slice(),
+                b"\x1b]9;4;0;\x1b\\".as_slice(),
+            ),
+        ] {
+            let mut control = Vec::new();
+            for byte in sequence {
+                control.extend(state.feed(&[*byte]).unwrap().control);
+            }
+            assert_eq!(control, expected);
+            assert!(state.drain_responses().is_empty());
+        }
+        // Unknown OSC 9 commands are still unsupported, not blanket-ignored.
+        assert!(state.feed(b"\x1b]9;unknown\x07").is_err());
     }
 
     #[test]
