@@ -195,6 +195,7 @@ pub struct TerminalState {
     budget: usize,
     history: VecDeque<Vec<u8>>,
     history_len: usize,
+    history_evicted: bool,
     journal: VecDeque<DisplayUpdate>,
     journal_len: usize,
     screen: Vec<u8>,
@@ -215,6 +216,7 @@ impl TerminalState {
             budget: history_bytes,
             history: VecDeque::new(),
             history_len: 0,
+            history_evicted: false,
             journal: VecDeque::new(),
             journal_len: 0,
             screen,
@@ -231,6 +233,7 @@ impl TerminalState {
             if std::mem::take(&mut clear.detected) {
                 self.history.clear();
                 self.history_len = 0;
+                self.history_evicted = false;
                 self.journal.clear();
                 self.journal_len = 0;
                 self.parser.callbacks_mut().rows.clear();
@@ -269,6 +272,7 @@ impl TerminalState {
         if let Some(updates) = after.and_then(|sequence| self.updates_since(sequence)) {
             let mut snapshot = self.display();
             snapshot.reset = updates.iter().any(|u| u.reset);
+            snapshot.expired = updates.iter().any(|u| u.expired);
             let rows_after_clear = updates.iter().rposition(|u| u.reset).unwrap_or(0);
             snapshot.scrolled = updates[rows_after_clear..]
                 .iter()
@@ -283,7 +287,7 @@ impl TerminalState {
         let mut snapshot = self.display();
         snapshot.scrolled = self.history.iter().cloned().collect();
         snapshot.reset = true;
-        snapshot.expired = after.is_some();
+        snapshot.expired = after.is_some() || self.history_evicted;
         let title = &self.parser.callbacks().title;
         if !title.is_empty() {
             snapshot.control = [b"\x1b]2;".as_slice(), title, b"\x1b\\"].concat();
@@ -341,6 +345,7 @@ impl TerminalState {
             self.history.push_back(row.clone());
         }
         while self.history_len > self.budget {
+            self.history_evicted = true;
             self.history_len -= self
                 .history
                 .pop_front()
@@ -409,7 +414,8 @@ impl DisplayRenderer {
         let duplicate = self
             .sequence
             .is_some_and(|sequence| update.sequence <= sequence);
-        if duplicate && !update.reset && !self.repaint {
+        let reset = update.reset && (!duplicate || !update.expired);
+        if duplicate && !reset && !self.repaint {
             return Ok(Vec::new());
         }
         if let Some(sequence) = self.sequence {
@@ -419,22 +425,25 @@ impl DisplayRenderer {
         }
         let mut output = b"\x1b[?6l\x1b[r\x1b[0m\x1b[?7l".to_vec();
         let mut native_rows = self.native_rows;
-        if update.reset {
+        if reset {
             output.extend_from_slice(b"\x1b[3J\x1b[2J\x1b[H");
             native_rows = 0;
+            if update.expired {
+                native_rows += self.push_history_row(&mut output, b"[earlier output expired]")?;
+            }
         } else {
             for _ in 0..self.restore_rows {
                 self.scroll_physical(&mut output);
             }
         }
-        if update.reset || !duplicate {
+        if reset || !duplicate {
             for row in &update.scrolled {
                 native_rows += self.push_history_row(&mut output, row)?;
             }
         }
         output.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J\x1b[?7h");
         repaint_screen(&mut output, update);
-        if !duplicate || update.reset {
+        if !duplicate || reset {
             output.extend_from_slice(&update.control);
         }
         self.sequence = Some(update.sequence);
@@ -738,6 +747,103 @@ mod tests {
         assert!(outer.screen().bracketed_paste());
         assert!(outer.screen().hide_cursor());
         assert!(all_text(&mut outer).contains("界e\u{301}🙂"));
+    }
+
+    fn expiry_state() -> TerminalState {
+        let mut state = TerminalState::new(size(3, 40), 300).unwrap();
+        for n in 0..12 {
+            state.feed(format!("unique-{n:02}\r\n").as_bytes()).unwrap();
+        }
+        state
+    }
+
+    fn assert_expiry_history(state: &TerminalState, snapshot: &DisplayUpdate) {
+        let physical = size(8, 40);
+        let mut renderer = DisplayRenderer::new(physical);
+        let mut outer = parser(physical, 100);
+        outer.process(&renderer.render(snapshot).unwrap());
+        let live = outer.screen().contents();
+        let text = all_text(&mut outer);
+        assert_eq!(
+            text.matches("[earlier output expired]").count(),
+            1,
+            "{text}"
+        );
+        assert!(!live.contains("expired"), "{live}");
+        assert!(!text.contains("unique-00"), "{text}");
+        for n in 1..12 {
+            assert_eq!(text.matches(&format!("unique-{n:02}")).count(), 1, "{text}");
+        }
+        assert!(renderer.render(snapshot).unwrap().is_empty());
+        renderer.resize_physical(size(10, 40));
+        outer.set_size(10.try_into().unwrap(), 40.try_into().unwrap());
+        outer.process(&renderer.render(snapshot).unwrap());
+        assert_eq!(all_text(&mut outer).trim_end(), text.trim_end());
+        assert_eq!(outer.screen().contents().trim_end(), live.trim_end());
+        assert!(!state.snapshot(Some(snapshot.sequence)).expired);
+    }
+
+    #[test]
+    fn expiry_fresh_attach_reports_eviction_across_feeds() {
+        let state = expiry_state();
+        let snapshot = state.snapshot(None);
+        assert!(snapshot.expired);
+        assert_expiry_history(&state, &snapshot);
+    }
+
+    #[test]
+    fn expiry_old_sequence_reset_is_visible_and_idempotent() {
+        let state = expiry_state();
+        let snapshot = state.snapshot(Some(0));
+        assert!(snapshot.expired);
+        assert_expiry_history(&state, &snapshot);
+    }
+
+    #[test]
+    fn expiry_valid_replay_and_intentional_clear_do_not_warn() {
+        let mut state = expiry_state();
+        let sequence = state.snapshot(None).sequence;
+        state.feed(b"\x1b[Hfresh").unwrap();
+        let replay = state.snapshot(Some(sequence));
+        assert!(!replay.expired);
+        for part in [b"\x1b[2J\x1b[H\x1b[".as_slice(), b"3", b"J"] {
+            state.feed(part).unwrap();
+        }
+        state.feed(b"new-a\r\nnew-b\r\nnew-c\r\nnew-d").unwrap();
+        let snapshot = state.snapshot(None);
+        assert!(!snapshot.expired);
+        let physical = size(8, 40);
+        let mut outer = parser(physical, 100);
+        let mut renderer = DisplayRenderer::new(physical);
+        outer.process(&renderer.render(&snapshot).unwrap());
+        let text = all_text(&mut outer);
+        assert!(!text.contains("expired"), "{text}");
+        assert!(!text.contains("unique-"), "{text}");
+        for row in ["new-a", "new-b", "new-c", "new-d"] {
+            assert_eq!(text.matches(row).count(), 1, "{text}");
+        }
+        // An explicit non-expired reset at the same sequence still restores history.
+        outer.process(b"\x1b[3J\x1b[2J\x1b[H");
+        outer.process(&renderer.render(&snapshot).unwrap());
+        assert_eq!(all_text(&mut outer), text);
+    }
+
+    #[test]
+    fn expiry_no_eviction_has_no_native_banner() {
+        let physical = size(8, 40);
+        let mut state = TerminalState::new(size(3, 40), 100_000).unwrap();
+        state
+            .feed(b"normal-a\r\nnormal-b\r\nnormal-c\r\nnormal-d")
+            .unwrap();
+        let snapshot = state.snapshot(None);
+        assert!(!snapshot.expired);
+        let mut outer = parser(physical, 100);
+        outer.process(&DisplayRenderer::new(physical).render(&snapshot).unwrap());
+        let text = all_text(&mut outer);
+        assert!(!text.contains("expired"), "{text}");
+        for row in ["normal-a", "normal-b", "normal-c", "normal-d"] {
+            assert_eq!(text.matches(row).count(), 1, "{text}");
+        }
     }
 
     #[test]
