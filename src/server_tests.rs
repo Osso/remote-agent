@@ -94,7 +94,6 @@ impl Fixture {
             -1,
             "owned PTY child leaked"
         );
-        assert!(self.root.path().join("history.jsonl").exists());
     }
 }
 
@@ -220,6 +219,78 @@ async fn quic_bulk_output_and_reconnect_preserve_every_line_and_child() {
         .await
         .unwrap();
     resumed.close(0u32.into(), b"done");
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn logs_request_returns_retained_output_without_joining_or_resizing() {
+    let fixture = Fixture::start().await;
+    let size = Size {
+        rows: 46,
+        cols: 165,
+    };
+    let id = uuid::Uuid::new_v4().to_string();
+    let (_endpoint, connection, mut writer, mut reader) = fixture.attach(&id, size, None).await;
+    let mut renderer = DisplayRenderer::new(size);
+    let mut terminal = vt100::Parser::new_with_callbacks(
+        NonZeroU16::new(46).unwrap(),
+        NonZeroU16::new(165).unwrap(),
+        0,
+        Rows::default(),
+    );
+    while !terminal_text(&terminal).contains("READY") {
+        terminal.process(&renderer.render(&next_display(&mut reader).await).unwrap());
+    }
+    send_frame(
+        &mut writer,
+        &ClientFrame::Input {
+            sequence: 1,
+            data: b"bulk\n".to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    while !terminal_text(&terminal).contains("BULK_LINE_079") {
+        terminal.process(&renderer.render(&next_display(&mut reader).await).unwrap());
+    }
+    let (_logs_endpoint, logs) = crate::client::connect(&fixture.ticket, "127.0.0.1")
+        .await
+        .unwrap();
+    let (mut logs_writer, mut logs_reader) = logs.open_bi().await.unwrap();
+    send_frame(
+        &mut logs_writer,
+        &ClientFrame::Logs {
+            token: fixture.ticket.token.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let snapshot = next_display(&mut logs_reader).await;
+    assert_eq!(snapshot.size, size);
+    let mut logged = vt100::Parser::new_with_callbacks(
+        NonZeroU16::new(46).unwrap(),
+        NonZeroU16::new(165).unwrap(),
+        0,
+        Rows::default(),
+    );
+    logged.process(&DisplayRenderer::new(size).render(&snapshot).unwrap());
+    for index in 0..80 {
+        assert_eq!(
+            terminal_text(&logged)
+                .matches(&format!("BULK_LINE_{index:03}"))
+                .count(),
+            1
+        );
+    }
+    // A logs request is not an attachment: the attached client sees no resize.
+    let unexpected = tokio::time::timeout(
+        Duration::from_millis(300),
+        read_frame::<_, ServerFrame>(&mut reader),
+    )
+    .await;
+    assert!(unexpected.is_err(), "{unexpected:?}");
+    logs.close(0u32.into(), b"done");
+    connection.close(0u32.into(), b"done");
     fixture.stop().await;
 }
 

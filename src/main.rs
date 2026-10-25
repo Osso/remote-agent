@@ -237,20 +237,9 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         ControlRequest::List => Ok(json!({"sessions":control::list_sessions(home)?})),
         ControlRequest::Status { name } => control::status(home, &name),
         ControlRequest::Projects => Ok(json!({"projects":config.list_projects()})),
-        ControlRequest::Logs { name } => read_logs(home, &name),
+        ControlRequest::Logs { name } => read_logs(&read_running_ticket(home, &name)?).await,
         ControlRequest::Attach { name } => {
-            let status = control::status(home, &name)?;
-            ensure!(
-                status["server_running"] == true,
-                "session server is not running; start a new named session or explicitly resume its conversation"
-            );
-            let path = control::session_dir(home, &name)?.join("runtime.json");
-            let runtime: control::Runtime = serde_json::from_slice(&std::fs::read(path)?)?;
-            Ok(serde_json::to_value(Ticket {
-                address: runtime.address,
-                certificate: runtime.certificate,
-                token: runtime.token,
-            })?)
+            Ok(serde_json::to_value(read_running_ticket(home, &name)?)?)
         }
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
         ControlRequest::PiLogin { .. } => bail!("Pi login needs a TTY; use pi-login PROVIDER"),
@@ -276,9 +265,23 @@ async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Resul
     )
 }
 
-fn read_logs(home: &Path, name: &str) -> Result<Value> {
-    let state = control::session_dir(home, name)?;
-    let update = remote_agent_rs::history::read(&state.join("history.jsonl"))?;
+fn read_running_ticket(home: &Path, name: &str) -> Result<Ticket> {
+    let status = control::status(home, name)?;
+    ensure!(
+        status["server_running"] == true,
+        "session server is not running; start a new named session or explicitly resume its conversation"
+    );
+    let path = control::session_dir(home, name)?.join("runtime.json");
+    let runtime: control::Runtime = serde_json::from_slice(&std::fs::read(path)?)?;
+    Ok(Ticket {
+        address: runtime.address,
+        certificate: runtime.certificate,
+        token: runtime.token,
+    })
+}
+
+async fn read_logs(ticket: &Ticket) -> Result<Value> {
+    let update = client::fetch_snapshot(ticket).await?;
     let mut lines = Vec::new();
     if update.expired {
         lines.push("[earlier output expired]".to_string());

@@ -120,8 +120,6 @@ class NativeRustUpgradeTests(native.NativeRustAttachTests):
             logs = self.cli("logs", "bulk-proof", check=False)
             self.assertEqual(logs.returncode, 0, logs.stderr)
             self.assertIn("BULK_LINE_079", logs.stdout)
-            history_before = (self.state / "history.jsonl").read_bytes()
-            self.assertTrue(history_before)
             scope = json.loads((self.state / "fixture-scope.json").read_text())
             self.assertEqual(scope["pid"], started["pid"])
             cancelled = self.cli("cancel", "bulk-proof")
@@ -144,9 +142,6 @@ class NativeRustUpgradeTests(native.NativeRustAttachTests):
             self.assertFalse(self.cli("status", "bulk-proof")["running"])
             self.assertEqual(runtime_path.read_bytes(), runtime_before)
             self.assertEqual((self.state / "launch.json").read_bytes(), launch_before)
-            self.assertEqual(
-                (self.state / "history.jsonl").read_bytes(), history_before
-            )
             self.assertTrue((self.state / "server.log").is_file())
             self.record("behavior", result="passed", status=attached)
         finally:

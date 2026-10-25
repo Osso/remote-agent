@@ -37,6 +37,9 @@ enum Event {
         id: String,
         connection: String,
     },
+    Logs {
+        reply: tokio::sync::oneshot::Sender<DisplayUpdate>,
+    },
 }
 
 struct Acceptor(tokio::task::JoinHandle<()>);
@@ -50,7 +53,6 @@ impl Drop for Acceptor {
 struct Session {
     state: PathBuf,
     terminal: TerminalState,
-    history: crate::history::HistoryStore,
     pty: Pty,
     peers: HashMap<String, Peer>,
     input_positions: HashMap<String, u64>,
@@ -87,10 +89,6 @@ pub async fn serve(state: PathBuf) -> Result<()> {
         exit_code: None,
     };
     let terminal = TerminalState::new(launch.size, launch.history_bytes)?;
-    let mut history =
-        crate::history::HistoryStore::open(&state.join("history.jsonl"), launch.history_bytes)?;
-    let initial = terminal.snapshot(None);
-    history.append(&initial, || terminal.snapshot(None))?;
     let (output_sender, output) = mpsc::channel(64);
     let pty = Pty::spawn(&launch, output_sender)?;
     write_private_json(
@@ -100,7 +98,6 @@ pub async fn serve(state: PathBuf) -> Result<()> {
     let mut session = Session {
         state,
         terminal,
-        history,
         pty,
         peers: HashMap::new(),
         input_positions: HashMap::new(),
@@ -161,19 +158,26 @@ async fn serve_connection(
         read_frame_limited::<_, ClientFrame>(&mut reader, MAX_AUTH_FRAME_BYTES),
     )
     .await??;
-    let ClientFrame::Hello {
-        token: presented,
-        client,
-        size,
-        after,
-    } = hello
-    else {
-        bail!("first frame must authenticate the client");
+    let (presented, client, size, after) = match hello {
+        ClientFrame::Hello {
+            token,
+            client,
+            size,
+            after,
+        } => (token, client, size, after),
+        ClientFrame::Logs { token: presented } => {
+            check_token(&presented, token)?;
+            let (reply, snapshot) = tokio::sync::oneshot::channel();
+            events.send(Event::Logs { reply }).await?;
+            let update = snapshot.await.context("session stopped before logs")?;
+            send_frame(&mut writer, &ServerFrame::Display { update }).await?;
+            writer.finish()?;
+            writer.stopped().await?;
+            return Ok(());
+        }
+        _ => bail!("first frame must authenticate the client"),
     };
-    ensure!(
-        bool::from(presented.as_bytes().ct_eq(token.as_bytes())),
-        "invalid attachment token"
-    );
+    check_token(&presented, token)?;
     uuid::Uuid::parse_str(&client).context("invalid client identity")?;
     size.validate()?;
     let (sender, mut outgoing) = mpsc::channel(128);
@@ -207,6 +211,14 @@ async fn serve_connection(
     }
     connection.close(0u32.into(), b"attachment closed");
     result
+}
+
+fn check_token(presented: &str, token: &str) -> Result<()> {
+    ensure!(
+        bool::from(presented.as_bytes().ct_eq(token.as_bytes())),
+        "invalid attachment token"
+    );
+    Ok(())
 }
 
 async fn receive_input(
@@ -260,7 +272,6 @@ impl Session {
         if !responses.is_empty() {
             self.pty.write_input(&responses)?;
         }
-        self.persist_update(&update)?;
         self.broadcast(ServerFrame::Display { update });
         Ok(())
     }
@@ -268,11 +279,6 @@ impl Session {
     fn broadcast(&mut self, frame: ServerFrame) {
         self.peers
             .retain(|_, peer| !peer.ready || peer.sender.try_send(frame.clone()).is_ok());
-    }
-
-    fn persist_update(&mut self, update: &DisplayUpdate) -> Result<()> {
-        let terminal = &self.terminal;
-        self.history.append(update, || terminal.snapshot(None))
     }
 
     fn poll_exit(&mut self) -> Result<()> {
@@ -305,6 +311,11 @@ impl Session {
                     self.peers.remove(&id);
                     self.resize_to_smallest()?;
                 }
+                Ok(())
+            }
+            Event::Logs { reply } => {
+                // The requester may already be gone; nothing else depends on delivery.
+                let _ = reply.send(self.terminal.snapshot(None));
                 Ok(())
             }
             Event::Leave { id, connection } => {
@@ -400,7 +411,6 @@ impl Session {
         self.pty.resize(size)?;
         self.size = size;
         let update = self.terminal.resize(size)?;
-        self.persist_update(&update)?;
         self.broadcast(ServerFrame::Display { update });
         Ok(())
     }
@@ -432,7 +442,9 @@ impl Session {
                 self.peers.remove(id);
                 self.resize_to_smallest()
             }
-            ClientFrame::Hello { .. } => bail!("duplicate authentication frame"),
+            ClientFrame::Hello { .. } | ClientFrame::Logs { .. } => {
+                bail!("duplicate authentication frame")
+            }
         }
     }
 

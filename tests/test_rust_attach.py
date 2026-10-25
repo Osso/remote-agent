@@ -508,9 +508,6 @@ class NativeRustAttachTests(unittest.TestCase):
             [f"{index:03}" for index in range(80)],
         )
         self.assertIn("TOOL_WIDGET complete", logs)
-        self.assertLessEqual(
-            (self.state / "history.jsonl").stat().st_size, 16 * 1024 * 1024
-        )
         self.detach()
         detached = self.cli("status", "bulk-proof")
         for field in ("pid", "child_pid", "conversation"):

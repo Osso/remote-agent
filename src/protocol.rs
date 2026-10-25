@@ -51,6 +51,10 @@ pub enum ClientFrame {
         size: Size,
         after: Option<u64>,
     },
+    /// Authenticated one-shot snapshot request; does not join or resize the session.
+    Logs {
+        token: String,
+    },
     Input {
         sequence: u64,
         #[serde(with = "base64_bytes")]

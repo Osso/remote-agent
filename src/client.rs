@@ -104,6 +104,22 @@ pub async fn connect(ticket: &Ticket, host: &str) -> Result<(Endpoint, Connectio
     Ok((endpoint, connection))
 }
 
+/// Read the running server's retained output without attaching to the session.
+pub async fn fetch_snapshot(ticket: &Ticket) -> Result<DisplayUpdate> {
+    let (_endpoint, connection) = connect(ticket, "127.0.0.1").await?;
+    let (mut writer, mut reader) = connection.open_bi().await?;
+    let request = ClientFrame::Logs {
+        token: ticket.token.clone(),
+    };
+    send_frame(&mut writer, &request).await?;
+    let reply: ServerFrame = read_frame(&mut reader).await?;
+    connection.close(0u32.into(), b"logs read");
+    match reply {
+        ServerFrame::Display { update } => Ok(update),
+        other => bail!("unexpected logs reply: {other:?}"),
+    }
+}
+
 struct InputReader {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
