@@ -203,11 +203,33 @@ fn read_process_file(path: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 pub fn spawn_session(exe: &Path, launch: &Launch, state: &Path) -> Result<Child> {
+    spawn_session_with_runner(
+        exe,
+        launch,
+        state,
+        Path::new("systemctl"),
+        Path::new("systemd-run"),
+    )
+}
+
+fn spawn_session_with_runner(
+    exe: &Path,
+    launch: &Launch,
+    state: &Path,
+    systemctl: &Path,
+    systemd_run: &Path,
+) -> Result<Child> {
+    ensure!(
+        cfg!(target_os = "linux"),
+        "session server launch requires Linux"
+    );
+    ensure!(state.is_absolute(), "session state path must be absolute");
     validate_session_name(&launch.name)?;
     ensure!(
         state.file_name().and_then(|s| s.to_str()) == Some(&launch.name),
         "state directory does not match launch name"
     );
+    let user_manager = resolve_user_scope(systemctl)?;
     private_directory(state.parent().context("state has no parent")?)?;
     DirBuilder::new()
         .mode(0o700)
@@ -220,8 +242,15 @@ pub fn spawn_session(exe: &Path, launch: &Launch, state: &Path) -> Result<Child>
         .create_new(true)
         .mode(0o600)
         .open(state.join("server.log"))?;
-    let mut command = Command::new(exe);
+    let mut command = Command::new(systemd_run);
+    if user_manager {
+        command.arg("--user");
+    }
     command
+        .args(["--scope", "--slice=agents.slice", "--quiet", "--collect"])
+        .arg(format!("--unit=remote-agent-rs-{}", launch.name))
+        .arg("--")
+        .arg(exe)
         .arg("__serve")
         .arg("--state")
         .arg(state)
@@ -240,6 +269,24 @@ pub fn spawn_session(exe: &Path, launch: &Launch, state: &Path) -> Result<Child>
     command
         .spawn()
         .with_context(|| format!("spawn session server {}", exe.display()))
+}
+
+fn resolve_user_scope(systemctl: &Path) -> Result<bool> {
+    let output = Command::new(systemctl)
+        .args(["show", "agents.slice", "-p", "FragmentPath", "--value"])
+        .stdin(Stdio::null())
+        .output()
+        .context("query agents.slice system fragment")?;
+    ensure!(
+        output.status.success(),
+        "could not resolve agents.slice ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(std::str::from_utf8(&output.stdout)
+        .context("agents.slice FragmentPath is not UTF-8")?
+        .trim()
+        .is_empty())
 }
 
 pub fn build_pi_login_command(pi: &Path, provider: &str) -> Command {
@@ -368,33 +415,124 @@ mod tests {
         fs::write(state.join("runtime.json"), "bad").unwrap();
         assert!(status(home.path(), "test-1").is_err());
     }
+    #[cfg(target_os = "linux")]
+    fn write_executable(path: &Path, source: &str) {
+        fs::write(path, source).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn scope_provider(home: &Path, fragment: &str, failure: bool) -> (PathBuf, PathBuf) {
+        let systemctl = home.join("systemctl");
+        write_executable(
+            &systemctl,
+            &format!(
+                "#!/usr/bin/python3\nimport sys\nassert sys.argv[1:] == ['show','agents.slice','-p','FragmentPath','--value']\nprint({fragment:?})\nprint('manager unavailable' if {failure} else '',file=sys.stderr)\nsys.exit({code})\n",
+                failure = if failure { "True" } else { "False" },
+                code = if failure { 7 } else { 0 },
+            ),
+        );
+        let runner = home.join("systemd-run");
+        write_executable(
+            &runner,
+            "#!/usr/bin/python3\nimport json,pathlib,subprocess,sys\npathlib.Path(__file__).with_suffix('.json').write_text(json.dumps(sys.argv[1:]))\ni=sys.argv.index('--')\nsubprocess.Popen(sys.argv[i+1:])\n",
+        );
+        (systemctl, runner)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scope_resolution_failure_does_not_launch_a_process() {
+        let home = tempfile::tempdir().unwrap();
+        let (systemctl, runner) = scope_provider(home.path(), "", true);
+        let state = session_dir(home.path(), "test-1").unwrap();
+        let error = spawn_session_with_runner(
+            Path::new("/does/not/exist"),
+            &launch(),
+            &state,
+            &systemctl,
+            &runner,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("manager unavailable"));
+        assert!(!runner.with_extension("json").exists());
+        assert!(!state.exists());
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn detached_subprocess_receives_state_and_private_log() {
         let home = tempfile::tempdir().unwrap();
         let exe = home.path().join("fixture");
-        fs::write(&exe, "#!/usr/bin/env python3\nimport os,sys,json\nprint(json.dumps({'args':sys.argv[1:],'sid':os.getsid(0),'pid':os.getpid(),'stdin':sys.stdin.read()}),flush=True)\n").unwrap();
-        fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
-        let state = session_dir(home.path(), "test-1").unwrap();
-        let mut child = spawn_session(&exe, &launch(), &state).unwrap();
-        assert!(child.wait().unwrap().success());
-        let output: Value =
-            serde_json::from_slice(&fs::read(state.join("server.log")).unwrap()).unwrap();
-        assert_eq!(
-            output["args"],
-            serde_json::json!(["__serve", "--state", state])
+        write_executable(
+            &exe,
+            "#!/usr/bin/python3\nimport os,sys,json,time,pathlib\ntime.sleep(0.1)\nprint(json.dumps({'args':sys.argv[1:],'sid':os.getsid(0),'pid':os.getpid(),'stdin':sys.stdin.read()}),flush=True)\nprint('private stderr',file=sys.stderr,flush=True)\npathlib.Path(sys.argv[3],'finished').touch()\n",
         );
-        assert_eq!(output["sid"], output["pid"]);
-        assert_eq!(output["stdin"], "");
-        assert_eq!(
-            fs::metadata(state.join("server.log"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        assert_eq!(read_launch(&state).unwrap().conversation, "abc");
-        assert!(spawn_session(&exe, &launch(), &state).is_err());
+        for fragment in ["/etc/systemd/system/agents.slice", ""] {
+            let fixture = tempfile::tempdir_in(home.path()).unwrap();
+            let (systemctl, runner) = scope_provider(fixture.path(), fragment, false);
+            let state = session_dir(fixture.path(), "test-1").unwrap();
+            let mut child =
+                spawn_session_with_runner(&exe, &launch(), &state, &systemctl, &runner).unwrap();
+            assert!(child.wait().unwrap().success());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !state.join("finished").exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "delegated process did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let args: Vec<String> =
+                serde_json::from_slice(&fs::read(runner.with_extension("json")).unwrap()).unwrap();
+            let mut expected = Vec::new();
+            if fragment.is_empty() {
+                expected.push("--user".to_string());
+            }
+            expected.extend(
+                [
+                    "--scope",
+                    "--slice=agents.slice",
+                    "--quiet",
+                    "--collect",
+                    "--unit=remote-agent-rs-test-1",
+                    "--",
+                ]
+                .map(str::to_owned),
+            );
+            expected.extend(
+                [
+                    exe.to_str().unwrap(),
+                    "__serve",
+                    "--state",
+                    state.to_str().unwrap(),
+                ]
+                .map(str::to_owned),
+            );
+            assert_eq!(args, expected);
+            let log = fs::read_to_string(state.join("server.log")).unwrap();
+            let output: Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
+            assert!(log.contains("private stderr"));
+            assert_eq!(
+                output["args"],
+                serde_json::json!(["__serve", "--state", state])
+            );
+            assert_eq!(output["sid"], child.id());
+            assert_ne!(output["pid"], child.id());
+            assert_eq!(output["stdin"], "");
+            assert_eq!(
+                fs::metadata(state.join("server.log"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert_eq!(read_launch(&state).unwrap().conversation, "abc");
+            assert!(
+                spawn_session_with_runner(&exe, &launch(), &state, &systemctl, &runner).is_err()
+            );
+        }
     }
     #[test]
     fn provider_login_invokes_pi_without_changing_credentials() {
