@@ -38,6 +38,10 @@ def ssh_bootstrap():
     root = Path(os.environ["RUST_ATTACH_HOME"])
     with (root / "ssh-events.jsonl").open("a") as stream:
         stream.write(json.dumps({"argv": arguments, "pid": os.getpid()}) + "\n")
+    while arguments[:1] == ["-o"]:
+        if len(arguments) < 2:
+            raise RuntimeError("SSH option is missing its value")
+        arguments = arguments[2:]
     if arguments == ["-G", "fixture-host"]:
         print("hostname 127.0.0.1")
         return
@@ -283,11 +287,23 @@ class NativeRustAttachTests(unittest.TestCase):
                 phase_ready = not wait_phase or any(
                     event["phase"] == phase for event in self.events()
                 )
-                if phase_ready and output:
-                    output.extend(self.drain(1))
-                    return
                 if "unsupported" in self.server_log().lower():
                     self.fail(f"Pi terminal startup rejected: {self.server_log()}")
+                pid, status = os.waitpid(self.client, os.WNOHANG)
+                if pid:
+                    self.reaped.add(pid)
+                    self.client = None
+                    self.fail(
+                        f"client exited {os.waitstatus_to_exitcode(status)} before {phase}: {output.decode(errors='replace')}"
+                    )
+                snapshot_rendered = (
+                    b"\x1b[3J" in output
+                    if phase in ("ready", "reconnected")
+                    else bool(output)
+                )
+                if phase_ready and snapshot_rendered:
+                    output.extend(self.drain(1))
+                    return
             self.fail(
                 f"phase {phase!r} timed out: {self.server_log()}; client={output.decode(errors='replace')}"
             )
