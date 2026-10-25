@@ -315,6 +315,51 @@ mod tests {
     }
 
     #[test]
+    fn compaction_without_row_eviction_preserves_order_without_expiration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        let mut store = HistoryStore::open(&path, 600).unwrap();
+        let mut snapshot = update(0, &[]);
+        let mut compactions = 0;
+        for sequence in 1..=12 {
+            let row = [sequence as u8];
+            let delta = update(sequence, &[&row]);
+            snapshot.sequence = sequence;
+            snapshot.scrolled.push(row.to_vec());
+            store
+                .append(&delta, || {
+                    compactions += 1;
+                    snapshot.clone()
+                })
+                .unwrap();
+            let restored = read(&path).unwrap();
+            assert_eq!(restored.scrolled, snapshot.scrolled);
+            assert!(!restored.expired);
+            assert!(fs::metadata(&path).unwrap().len() <= 600);
+        }
+        assert!(compactions > 1, "fixture never crossed the disk budget");
+    }
+
+    #[test]
+    fn failed_atomic_replacement_reports_error_and_removes_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        let saved = dir.path().join("saved");
+        let mut store = HistoryStore::open(&path, 4096).unwrap();
+        let first = update(1, &[b"original"]);
+        store.append(&first, || first.clone()).unwrap();
+        let before = fs::read(&path).unwrap();
+        fs::rename(&path, &saved).unwrap();
+        fs::create_dir(&path).unwrap();
+        let mut reset = update(2, &[b"replacement"]);
+        reset.reset = true;
+        let error = store.append(&reset, || reset.clone()).unwrap_err();
+        assert!(error.to_string().contains("replace history"), "{error:#}");
+        assert_eq!(fs::read(&saved).unwrap(), before);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
     fn reset_discards_old_rows_and_clears_expiration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history");
