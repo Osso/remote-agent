@@ -132,6 +132,8 @@ class NativeRustAttachTests(unittest.TestCase):
             "XDG_STATE_HOME": str(self.root / ".local/state"),
             "RUST_ATTACH_HOME": str(self.root),
             "TERM": "xterm-256color",
+            "TERM_PROGRAM": "ghostty",
+            "GHOSTTY_RESOURCES_DIR": "/fixture/physical-terminal",
             "LANG": "C.UTF-8",
         }
         self.env.pop("REMOTE_AGENT_AGENT_SERVER_SSH", None)

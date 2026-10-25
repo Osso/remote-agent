@@ -51,6 +51,8 @@ Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty 
 
 Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Actual provider login has not been tested. Prototype `--user` routing uses `authsudo` and `/home/USER`; it does not establish Python's account-directory behavior or cross-user acceptance.
 
+The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
+
 ### Pi keyboard negotiation and detach
 
 The virtual endpoint answers Pi's keyboard/cursor/device queries itself rather than broadcasting queries to all clients. Kitty push/pop requests do not enable physical Kitty mode; the endpoint reports zero Kitty flags and forwards Pi's xterm `modifyOtherKeys` setting. The local input decoder recognizes image paste and detach in legacy, Kitty, and xterm encodings while leaving bracketed-paste content literal.

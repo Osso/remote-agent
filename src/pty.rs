@@ -21,31 +21,7 @@ pub struct Pty {
 impl Pty {
     pub fn spawn(launch: &Launch, events: mpsc::Sender<PtyEvent>) -> Result<Self> {
         let (master, slave) = open_pty(launch.size)?;
-        let mut command = Command::new(&launch.pi);
-        command.arg("--session").arg(&launch.conversation);
-        if let Some(prompt) = &launch.prompt {
-            command.arg(prompt);
-        }
-        command
-            .current_dir(&launch.cwd)
-            .env("TERM", "xterm-256color")
-            .env("COLORTERM", "truecolor");
-        command
-            .stdin(slave.try_clone()?)
-            .stdout(slave.try_clone()?)
-            .stderr(slave);
-        // Only async-signal-safe libc operations run between fork and exec.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let child = command
-            .spawn()
-            .with_context(|| format!("launch Pi at {}", launch.pi.display()))?;
+        let child = spawn_pi_child(launch, slave)?;
         spawn_reader(master.try_clone()?, events);
         Ok(Self { master, child })
     }
@@ -78,6 +54,56 @@ impl Pty {
         }
         Ok(())
     }
+}
+
+fn build_pi_command(launch: &Launch) -> Command {
+    let mut command = Command::new(&launch.pi);
+    command.arg("--session").arg(&launch.conversation);
+    if let Some(prompt) = &launch.prompt {
+        command.arg(prompt);
+    }
+    command
+        .current_dir(&launch.cwd)
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .env("TERM_PROGRAM", "remote-agent-rs")
+        .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    // Pi must detect the virtual endpoint, not an inherited physical GUI terminal.
+    for name in [
+        "GHOSTTY_RESOURCES_DIR",
+        "KITTY_WINDOW_ID",
+        "WEZTERM_PANE",
+        "WARP_SESSION_ID",
+        "WARP_TERMINAL_SESSION_UUID",
+        "ITERM_SESSION_ID",
+        "WT_SESSION",
+        "TERMINAL_EMULATOR",
+        "TMUX",
+        "STY",
+    ] {
+        command.env_remove(name);
+    }
+    command
+}
+
+fn spawn_pi_child(launch: &Launch, slave: File) -> Result<Child> {
+    let mut command = build_pi_command(launch);
+    command
+        .stdin(slave.try_clone()?)
+        .stdout(slave.try_clone()?)
+        .stderr(slave);
+    // Only async-signal-safe libc operations run between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command
+        .spawn()
+        .with_context(|| format!("launch Pi at {}", launch.pi.display()))
 }
 
 impl Drop for Pty {
