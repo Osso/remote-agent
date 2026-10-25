@@ -1,0 +1,23 @@
+ObjC.import('AppKit');
+
+// This script replaces the clipboard only on the disposable hosted CI Mac.
+function run(argv) {
+    const env = $.NSProcessInfo.processInfo.environment;
+    for (const [name, expected] of [
+        ['GITHUB_ACTIONS', 'true'],
+        ['RUNNER_OS', 'macOS'],
+        ['RUNNER_ENVIRONMENT', 'github-hosted']
+    ]) {
+        if (ObjC.unwrap(env.objectForKey(name)) !== expected) {
+            throw new Error('Refusing clipboard write outside GitHub-hosted macOS CI');
+        }
+    }
+    if (argv.length !== 1) throw new Error('Expected one owned PNG fixture path');
+    const png = $.NSData.dataWithContentsOfFile(argv[0]);
+    if (png.isNil()) throw new Error('Cannot read owned PNG fixture');
+    const pasteboard = $.NSPasteboard.generalPasteboard;
+    pasteboard.clearContents;
+    if (!pasteboard.setDataForType(png, $.NSPasteboardTypePNG)) {
+        throw new Error('Cannot write PNG fixture to NSPasteboard');
+    }
+}

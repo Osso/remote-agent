@@ -1,0 +1,52 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: python
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Check formatting
+        run: |
+          import subprocess
+          subprocess.run(["cargo", "fmt", "--check"], check=True)
+      - name: Check Rust
+        run: |
+          import subprocess
+          subprocess.run(["cargo", "check", "--locked"], check=True)
+      - name: Test Rust
+        run: |
+          import subprocess
+          subprocess.run(["cargo", "test", "--locked"], check=True)
+      - name: Prepare owned macOS clipboard fixture
+        if: runner.os == 'macOS'
+        run: |
+          import pathlib
+          import subprocess
+          fixture = pathlib.Path("tests/fixtures/clipboard-rgba.png").resolve()
+          subprocess.run(["osascript", "-l", "JavaScript", "tests/fixtures/prepare-macos-clipboard.jxa", str(fixture)], check=True)
+      - name: Test native macOS clipboard
+        if: runner.os == 'macOS'
+        run: |
+          import subprocess
+          subprocess.run(["cargo", "test", "--locked", "--test", "macos_clipboard", "native_clipboard_preserves_fixture_pixels", "--", "--ignored", "--exact"], check=True)

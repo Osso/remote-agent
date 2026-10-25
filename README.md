@@ -139,6 +139,23 @@ scrollback. Alternate-screen applications and unknown VT callbacks are unsupport
 See [implementation and proof limits](docs/wiki/systems/unified-pi-session.md)
 and the single [Cargo dependency inventory](docs/wiki/systems/unified-pi-session.md#cargo-dependency-inventory).
 
+### Rust CI proof
+
+`.github/workflows/rust.yml` runs formatting, `cargo check --locked`, and
+`cargo test --locked` on GitHub-hosted Ubuntu and macOS. The macOS job then
+prepares an owned PNG in its disposable clipboard and explicitly runs the
+otherwise ignored native `osascript`/JXA clipboard test. Decoded dimensions and
+RGBA pixels are compared, not PNG encoding bytes. Normal tests do not read or
+write a user's clipboard.
+
+The transport tests use production `client::connect` and protocol framing with
+an actual loopback QUIC test peer, including rejection of a different TLS
+certificate. They do not use the Linux production server. Passing macOS CI
+proves native client compilation, loopback transport, and fixture clipboard
+conversion; it does not prove macOS-to-Linux attachment, interactive Pi, SSH,
+terminal repaint, or installed deployment. These CI tests are added but actual
+macOS execution must be confirmed from the workflow results.
+
 ## Session commands
 
 After deployment, ensure `~/.local/bin` is in the controller's `PATH`. Before
