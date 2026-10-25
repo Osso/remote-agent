@@ -57,6 +57,8 @@ The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-comp
 
 The virtual endpoint answers Pi's keyboard/cursor/device queries itself rather than broadcasting queries to all clients. Kitty push/pop requests do not enable physical Kitty mode; the endpoint reports zero Kitty flags and forwards Pi's xterm `modifyOtherKeys` setting. The local input decoder recognizes image paste and detach in legacy, Kitty, and xterm encodings while leaving bracketed-paste content literal.
 
+Pi's plain-text row reset (`OSC 8` close) and advisory message-zone markers (`OSC 133 A/B/C`) do not poison the virtual display. The prototype does not preserve native shell-zone navigation metadata across its reframed screen; visible message text and scrollback are separate acceptance targets.
+
 Local detach is monitored independently of the network loop, including connection establishment and reconnection. Network reads have a dedicated task so a terminal tick or input event cannot cancel a partially read protocol frame. Attachment cleanup aborts that reader, closes its connection, and restores local terminal modes and attributes.
 
 ## Cargo dependency inventory

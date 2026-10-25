@@ -140,6 +140,9 @@ impl vt100::Callbacks for Capture {
             [b"11", b"?"] => {}
             // Pi appends a hyperlink close to every row, including plain text.
             [b"8", b"", b""] => {}
+            // These advisory shell zones carry no cell data. Reframed clients
+            // must not receive markers at an unrelated physical cursor position.
+            [b"133", b"A" | b"B" | b"C"] => {}
             [b"9", b"4", b"3"] => self.osc(b"9", b"4;3"),
             [b"9", b"4", b"0", b""] => self.osc(b"9", b"4;0;"),
             _ => self.failure = Some(format!("unsupported terminal OSC: {params:?}")),
@@ -850,7 +853,10 @@ mod tests {
     #[test]
     fn pi_line_resets_preserve_long_bulk_text_and_native_history() {
         let mut state = TerminalState::new(size(16, 30), 100000).unwrap();
-        let text = bulk().replace("\r\n", "\x1b[0m\x1b]8;;\x07\r\n");
+        let text = format!(
+            "\x1b]133;A\x07{}\x1b]133;B\x07\x1b]133;C\x07",
+            bulk().replace("\r\n", "\x1b[0m\x1b]8;;\x07\r\n")
+        );
         let update = state.feed(text.as_bytes()).unwrap();
         let physical = size(30, 60);
         let mut outer = parser(physical, 200);
