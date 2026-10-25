@@ -345,9 +345,10 @@ impl Attachment {
         terminal: &TerminalGuard,
         input: &mut mpsc::Receiver<Vec<u8>>,
     ) -> Result<i32> {
+        let hello = self.begin_replay(ticket.token.clone());
         let (_endpoint, connection) = connect(ticket, host).await?;
         let (mut writer, reader) = connection.open_bi().await?;
-        send_frame(&mut writer, &self.begin_replay(ticket.token.clone())).await?;
+        send_frame(&mut writer, &hello).await?;
         for frame in &self.pending {
             send_frame(&mut writer, frame).await?;
         }
