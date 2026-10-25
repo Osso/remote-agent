@@ -15,9 +15,9 @@ The user-approved product scope is a single Rust project replacing the needed re
 - [ ] Keep bounded, configurable output history; clearly report expired output when a requested replay position is no longer retained.
 - [ ] Allow simultaneous attached clients; size the shared Pi PTY to the smallest attached terminal dimensions.
 
-### Proposed session and transport acceptance
+### Session and transport acceptance
 
-These details require user review; they are not a claim that every existing CLI feature must be retained.
+Full scope is approved. Unchecked items remain product acceptance gaps; they do not mean the prototype has no implementation.
 
 - [ ] Keep Pi and its PTY alive when a client detaches or its network connection fails.
 - [ ] Preserve all ordered output within the agreed retention boundary, including updates longer than the viewport; do not substitute the latest screen for output history.
@@ -25,7 +25,7 @@ These details require user review; they are not a claim that every existing CLI 
 - [ ] Preserve input, terminal dimensions, clean detach, and local terminal restoration.
 - [ ] Retain the needed session commands and host/account/project routing, with user-specific credentials and configuration kept separate.
 
-### Proposed image-paste acceptance
+### Image-paste acceptance
 
 - [ ] The normal Pi image-paste action obtains the current local image without a separate upload command.
 - [ ] Make image data available before Pi consumes the paste; do not paste a stale image after an empty clipboard or transfer failure.
@@ -36,6 +36,7 @@ These details require user review; they are not a claim that every existing CLI 
 ## How it works
 
 - [Design notes and observed failure boundary](../wiki/systems/unified-pi-session.md).
+- [Cargo dependency justifications](../wiki/systems/unified-pi-session.md#cargo-dependency-inventory).
 - [Current account/project configuration](configuration.md).
 - [Current session preservation constraints](session-backends.md).
 
@@ -53,7 +54,7 @@ The Python controller/workers, separate detach project, and Mosh remain the curr
 
 ## Tests asserting this spec
 
-Targeted development tests establish the listed boundaries, not full CLI/deployment/platform acceptance.
+Reported targeted development passes through `28c9a90`: 2 native server tests; earlier 8 configuration/control, 9 local and 11 terminal tests. This docs-only audit did not rerun them. These establish fixture boundaries, not full CLI/deployment/platform acceptance or a full-suite pass.
 
 - `src/server_tests.rs`: real PTY plus QUIC bulk/reconnect test retains all 80 markers exactly once and preserves the child; another test covers simultaneous clients, smallest-size changes and separate private image files. The child is an isolated scripted fixture, not real Pi login/paste acceptance.
 - `src/terminal.rs` tests: bulk output at different physical sizes, ANSI/UTF-8 fragmentation, native scrollback, bounded expiry, replay, resize, soft wraps and query replies.
@@ -63,10 +64,11 @@ Targeted development tests establish the listed boundaries, not full CLI/deploym
 
 ## Known gaps (current cycle)
 
-- [ ] Review session command scope and reconnect/replay behavior before implementation; specify retention units/default and how a fresh attachment obtains valid terminal state after history expires.
-- [ ] Choose the Pi clipboard integration; the existing image-read path has been inspected, but the integration remains unsettled.
-- [ ] Define acceptance for provider login and transparent image paste on supported platforms.
-- [ ] Define a migration approach that preserves existing conversations, running processes, and configuration.
+- [ ] Prove actual Pi launch/resume, installed SSH/QUIC attachment and real network reconnect/address-change behavior; fixture reconnect is not full acceptance.
+- [ ] Prove transparent clipboard-to-Pi paste, provider login and simultaneous Pi clients on Linux/macOS clients; macOS build/runtime is untested.
+- [ ] Complete explicit expired-output reporting in the client; the protocol flag alone is insufficient. Retention and fresh-attachment reconstruction are implemented as described in the [wiki](../wiki/systems/unified-pi-session.md#output-and-retention).
+- [ ] Establish Pi VT capability coverage; alternate-screen applications and unknown VT callbacks are unsupported, not general terminal compatibility.
+- [ ] Define and verify a migration/deployment approach that preserves conversations, processes and configuration; no Rust deployment has occurred.
 
 ## Out of scope
 

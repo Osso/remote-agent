@@ -94,6 +94,51 @@ Linux user/home selection, systemd availability, and VM lifetime settings.
 Deployment does not provision these. UNC fetch paths require the explicitly
 selected `desktop` host; native Linux paths do not use WSL translation.
 
+## Rust prototype
+
+`remote-agent-rs` at `28c9a90` is an undeployed Pi-only prototype. It does **not**
+replace the operational Python `remote-agent`, detach or Mosh stack documented
+below. Linux server fixtures have passed; actual Pi login/paste, installed
+attachment and macOS build/runtime acceptance remain open.
+
+Build locally with a Rust toolchain that supports edition 2024:
+
+```text
+cargo build --locked --bin remote-agent-rs
+./target/debug/remote-agent-rs --help
+./target/debug/remote-agent-rs projects
+```
+
+The prototype reads the same private host/project maps described above on each
+account. Remote commands require the matching Rust executable already available
+at the selected account's `~/.local/bin/remote-agent-rs`, Pi, the mapped project,
+SSH access and direct UDP reachability to the server's dynamically selected QUIC
+port. Current deployment instructions below do not establish a Rust installation.
+Do not replace existing sessions to try it.
+
+For a separately provisioned experimental endpoint:
+
+```text
+./target/debug/remote-agent-rs --host agent-server start sample rust-demo --history-bytes 16777216
+./target/debug/remote-agent-rs --host agent-server list
+./target/debug/remote-agent-rs --host agent-server attach rust-demo
+./target/debug/remote-agent-rs --host agent-server logs rust-demo
+./target/debug/remote-agent-rs --host agent-server pi-login PROVIDER
+```
+
+Other commands are `status NAME` and `cancel NAME`; cancel stops the experimental
+server and its owned PTY process. Start accepts `--resume CONVERSATION_ID` and
+`--prompt-file PATH`. `--user USER` uses existing `authsudo` access and assumes
+`/home/USER`; cross-user acceptance is not established. Ctrl+backslash detaches;
+Ctrl+V requests the local image without a separate `paste` command. Clipboard
+providers are `wl-paste` (Wayland), `xclip` (X11), or `osascript` (macOS).
+
+History and replay-journal budgets are each 16 MiB by default and at most;
+`--history-bytes` can reduce them. Fresh attachment resets outer-terminal
+scrollback. Alternate-screen applications and unknown VT callbacks are unsupported.
+See [implementation and proof limits](docs/wiki/systems/unified-pi-session.md)
+and the single [Cargo dependency inventory](docs/wiki/systems/unified-pi-session.md#cargo-dependency-inventory).
+
 ## Session commands
 
 After deployment, ensure `~/.local/bin` is in the controller's `PATH`. Before

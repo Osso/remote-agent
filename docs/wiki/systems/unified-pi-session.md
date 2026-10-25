@@ -1,6 +1,6 @@
 # Unified Pi session design notes
 
-Status: product scope approved; architecture proposed, not implemented. The [specification](../../specs/unified-pi-session.md) owns requirements and open scope decisions.
+Status: Rust prototype implemented through `28c9a90`; product acceptance and deployment remain incomplete. The [specification](../../specs/unified-pi-session.md) owns requirements.
 
 ## Observed loss boundary
 
@@ -13,7 +13,7 @@ The fixed-size native diagnostic uses an actual Pi assistant-message component, 
 
 The missing prefix is already absent from the captured Mosh client output. This is not proof of a Pi widget row-count error. A separate slow incremental update retained all 80 lines, so output timing matters. The user's screenshot is cropped horizontally; its right edge does not establish clipping.
 
-The reproduction is committed as `e34f683`; local diagnostic evidence is under `/var/tmp/pi-resize-fix/long-live-red/`, including `direct-vs-mosh.json`. No repair has been demonstrated.
+The reproduction is committed as `e34f683`; local diagnostic evidence is under `/var/tmp/pi-resize-fix/long-live-red/`, including `direct-vs-mosh.json`. No repair of that stack has been demonstrated.
 
 ## Mosh source boundary
 
@@ -22,37 +22,64 @@ Upstream source was inspected at `mosh-1.4.0`, commit `bc73a26316ede2a79259d859f
 - `src/frontend/mosh-server.cc`, `serve()`, reads PTY output and calls `terminal.act()`.
 - `src/statesync/completeterminal.cc`, `Complete::act()`, parses those bytes into terminal state; `Complete::diff_from()` computes screen differences.
 - `src/frontend/stmclient.cc`, `STMClient::output_new_frame()`, renders received framebuffer state.
-- `src/frontend/terminaloverlay.*` implements predictive local echo as well as separate connection-notification overlays.
-- `src/network/network.cc`, `Connection::recv_one()`, handles a changed peer address. That behavior is distinct from durable output retention or restoring a dead server process.
+- `src/frontend/terminaloverlay.*` implements predictive local echo and connection-notification overlays.
+- `src/network/network.cc`, `Connection::recv_one()`, handles a changed peer address, not durable output retention or dead-server restoration.
 
-Tokei counted 9,560 production C++/header code lines across 63 files, excluding comments, blanks, tests, fuzz targets, examples, and generated protobuf output. That is a source-size measurement, not a Rust implementation estimate.
+Tokei counted 9,560 production C++/header code lines across 63 files, excluding comments, blanks, tests, fuzz targets, examples, and generated protobuf output. This is not a Rust implementation estimate.
 
-## Proposed consolidation
+## Implemented prototype
 
-One project can provide a local client and a persistent remote session process. They must have separate lifetimes even if they use the same binary. An ordered terminal-output stream would replace Mosh's framebuffer synchronization. With no predictive echo, the replacement does not need Mosh's prediction engine. Ordered byte delivery removes the need for framebuffer diffs as the output transport. It does not by itself establish that all terminal-state reconstruction can be removed.
+`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. Python controller/workers, detach and Mosh remain operational; this prototype has not been deployed. See the [build and CLI guide](../../../README.md#rust-prototype).
 
-This is not an implementation choice for a specific transport library. Authentication, replay positions, output retention, resize ordering, input delivery, and reconnection still require explicit design and behavioral tests. Transport address migration alone does not restore a session after its owning process exits.
+SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
 
-The user selected bounded output history. When old output expires, an arbitrary retained byte tail is not a sufficient terminal-state checkpoint: escape sequences, cursor position, and active terminal modes can depend on preceding bytes. Fresh attachment and expired-offset recovery need a valid state baseline plus ordered retained output, or another demonstrated reconstruction method. This requirement may retain terminal parsing through an existing library; a complete removal of server terminal emulation is not yet justified.
+### Output and retention
 
-## Simultaneous attachments
+The server keeps one authoritative, persistent `vt100` parser. Each PTY output chunk produces **every scrolled row**, the current formatted frame and supported control events. This is ordered QUIC delivery, not Mosh's screen-only synchronization or raw PTY-byte replay. The native client writes captured rows into the outer terminal's scrollback, then repaints the shared viewport. Its temporary display parsers do not own the application's hidden VT state.
 
-The user selected simultaneous clients with the shared PTY using the smallest attached terminal dimensions. Output delivery positions belong to individual clients, not one global acknowledgement. The implementation still needs behavioral proof for join/leave/resize ordering and for paste identity when clients interact concurrently.
+History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. Current frame storage, transient messages and JSON disk size are not capped by that queue budget.
 
-## Current image-paste boundary
+Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set; unavailable positions also set expired. Reset clears existing outer-terminal scrollback. `history.json` persists the current history/display snapshot, not the journal or serialized hidden parser state. The parser stays authoritative in the live server; the snapshot cannot restore a dead server or PTY. The client does not yet display a distinct expired-history warning.
 
-Pi's `packages/coding-agent/src/modes/interactive/interactive-mode.ts` maps the editor's image-paste action to `handleClipboardImagePaste()`, which invokes `readClipboardImage()`. On headless Linux, `packages/coding-agent/src/utils/clipboard-image.ts` reads image types and bytes through `wl-paste`.
+Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-read queries and application-requested resize can fail the parser; the library also silently ignores some unsupported modes/strings. This is neither general terminal compatibility nor a terminal sanitizer. Actual Pi capability coverage remains unproven.
 
-The existing worker's `wl_paste()` helper serves a PNG previously uploaded by `remote-agent paste`. It does not fetch the local clipboard automatically. The new design must replace that manual staging step. It must not depend on timing a separate upload against forwarded keyboard input.
+### Clients, input and images
 
-Pi's existing `handleClipboardImagePaste()` writes a unique `pi-clipboard-<UUID>` image file and inserts its path at the editor cursor. A simpler candidate for the unified client is an explicit image-paste message: read the initiating client's clipboard, transfer the image, create a unique private remote file, then insert its path as one bracketed-paste input operation. This avoids a shared clipboard cache or choosing which attached client's clipboard a later `wl-paste` invocation should read. It is a proposal, not a proven integration. Tests must cover Pi editor behavior, concurrent pastes, terminal key encodings, cleanup, and failure without stale-image insertion.
+Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Reconnect retries exist; loopback tests do not establish real network roaming or all retry/error cases.
 
-## Architecture candidates
+Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty Ctrl+V encodings. It reads the initiating client's clipboard on demand and sends PNG bytes as a sequenced image action. The server creates a unique private image file, then inserts its path as one bracketed paste. No shared clipboard cache or manual staging command is used. Linux selects `wl-paste` for Wayland or `xclip` for X11; macOS uses `osascript` with AppKit and base64 PNG output. Empty/failed clipboard reads report an error before an image is sent. Cleanup and actual Pi editor consumption remain unverified.
 
-- One binary supplies local client, SSH control commands, and a detached per-session Linux process. The session process owns the PTY, retained output, and network endpoint; a client does not own its lifetime.
-- Use SSH for existing host/account authentication and bootstrap. A proposed QUIC data connection carries ordered output, input, resize, and image-paste messages. Quinn is a candidate, not a selected dependency: its official documentation describes ordered streams and endpoint socket rebinding. A dead connection still needs application-level authenticated resume and retained output positions.
-- Record output positions independently for each client. Bound retained output and keep a valid terminal-state baseline at replay boundaries. Do not substitute screen snapshots for live output. A terminal-state library needs a Pi-specific capability probe before selection; formatted screen output alone does not prove complete state restoration.
-- Serialize input actions at the PTY boundary, including image-path insertion; preserve each paste's client identity and unique remote file. Size the shared PTY to the smallest attached client. Provider login remains delegated to Pi rather than creating a second credential store.
-- Validate fixed-size bulk output, reconnection replay, expired history, joins/leaves/resizes, concurrent input/paste, provider login, and native Linux/macOS client behavior before migration. Existing sessions stay on the current stack until a separate preservation-safe migration is agreed.
+Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Actual provider login has not been tested. Prototype `--user` routing uses `authsudo` and `/home/USER`; it does not establish Python's account-directory behavior or cross-user acceptance.
 
-Primary references for candidate evaluation: `quinn-rs.github.io/quinn/quinn/data-transfer.html`, `docs.rs/quinn/latest/quinn/struct.Endpoint.html`, and `docs.rs/vt100/latest/vt100/struct.Screen.html`. These document library capabilities, not proof that a candidate meets this project's acceptance criteria.
+## Cargo dependency inventory
+
+This is the single justification inventory for direct `Cargo.toml` dependencies. `Cargo.lock` records resolved versions.
+
+| Dependency | Purpose |
+| --- | --- |
+| `anyhow` | Contextual errors and explicit validation failures. |
+| `base64` | Decode macOS clipboard PNG output. |
+| `clap` (`derive`) | Parse public CLI and hidden control/server commands. |
+| `libc` | Unix PTY, termios, polling, process groups, signals and sizing. |
+| `quinn` (`runtime-tokio`, `rustls-ring`) | Ordered QUIC client/server streams with Tokio and TLS integration. |
+| `rcgen` | Generate the per-server certificate returned through SSH. |
+| `rustls` (`ring`, `std`) | TLS certificate/key types and client trust configuration. |
+| `serde` (`derive`) | Serialize typed control, launch, ticket and display messages. |
+| `serde_json` | Encode wire frames, maps, private state and CLI replies. |
+| `subtle` | Constant-time attachment-token comparison. |
+| `tokio` (`full`) | Async entry point, I/O, channels, tasks, timers and Unix signals. |
+| `uuid` (`v4`, `serde`) | Generate session/client/attachment/token/file identities; current records use strings, so typed UUID serialization is not needed by those records. |
+| `vt100` | Persistent server parsing with scroll callbacks and client display/cell formatting. |
+| `tempfile` (development only) | Isolated directories and executable/process fixtures in tests. |
+
+## Evidence and remaining acceptance
+
+Reported targeted development passes through `28c9a90`: 2 native server tests; earlier 8 configuration/control tests, 9 local tests and 11 terminal tests. This docs audit inspects source only and does not rerun or broaden that proof.
+
+| Boundary | Evidence | Remaining gap |
+| --- | --- | --- |
+| Bulk output/reconnect | Real Linux PTY + loopback QUIC + scripted child: all 80 markers once, offline replay, surviving child | Actual Pi, installed SSH path, real interruption/address change |
+| Simultaneous clients | Scripted PTY: minimum size, join/leave changes, distinct private image files | Actual concurrent Pi editing/paste and cross-user attachment |
+| Terminal reconstruction | Targeted fragmentation, scrollback, replay/expiry, resize, wraps and query tests | Actual Pi VT output; alternate screen and unknown callbacks unsupported |
+| Local input/clipboard | Key framing, bracketed paste, restoration and injectable provider fixtures | Real Linux clipboard-to-Pi paste, macOS build/runtime, provider login |
+| Rollout | Source and fixture proof only | Full integration acceptance, safe migration and deployment; no full-suite claim |
