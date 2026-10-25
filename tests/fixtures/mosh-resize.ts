@@ -57,13 +57,14 @@ async function replayLiveTerminal(): Promise<void> {
 	const stages = JSON.parse(fs.readFileSync(0, "utf8"));
 	const reports = [];
 	for (const stage of stages) {
+		terminal.resize(stage.columns ?? 165, stage.rows ?? 46);
 		await new Promise<void>((resolve) => terminal.write(stage.output, resolve));
 		const buffer = terminal.buffer.active;
 		const lines = Array.from({ length: buffer.length }, (_, index) => buffer.getLine(index).translateToString(true));
 		reports.push({
 			name: stage.name,
 			history: lines.slice(0, buffer.baseY),
-			visible: lines.slice(buffer.baseY, buffer.baseY + 46),
+			visible: lines.slice(buffer.baseY, buffer.baseY + terminal.rows),
 		});
 	}
 	terminal.dispose();
