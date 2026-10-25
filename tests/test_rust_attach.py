@@ -608,6 +608,12 @@ class NativeRustAttachTests(unittest.TestCase):
         started = self.cli("start", "demo", "bulk-proof", "--prompt-file", str(prompt))
         self.owned.update((started["pid"], started["child_pid"]))
         launch = (self.state / "launch.json").read_bytes()
+        # The fixture records argv after exec; killing earlier would lose the first launch.
+        argv_log = self.root / "pi-argv.jsonl"
+        deadline = time.monotonic() + 5
+        while not (argv_log.exists() and argv_log.read_text().endswith("\n")):
+            self.assertLess(time.monotonic(), deadline, "first Pi launch not recorded")
+            time.sleep(0.02)
         # Power loss: the server and Pi die without cancel; the unit stays enabled.
         for pid in (started["child_pid"], started["pid"]):
             os.kill(pid, signal.SIGKILL)
