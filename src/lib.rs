@@ -1,10 +1,10 @@
+pub mod client;
 pub mod config;
 pub mod control;
-pub mod terminal;
 pub mod local;
-#[cfg(target_os = "linux")]
-pub mod pty;
-pub mod client;
 pub mod protocol;
 #[cfg(target_os = "linux")]
+pub mod pty;
+#[cfg(target_os = "linux")]
 pub mod server;
+pub mod terminal;
