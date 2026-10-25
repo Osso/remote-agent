@@ -282,13 +282,16 @@ async fn logs_request_returns_retained_output_without_joining_or_resizing() {
             1
         );
     }
-    // A logs request is not an attachment: the attached client sees no resize.
-    let unexpected = tokio::time::timeout(
-        Duration::from_millis(300),
-        read_frame::<_, ServerFrame>(&mut reader),
-    )
-    .await;
-    assert!(unexpected.is_err(), "{unexpected:?}");
+    // A logs request is not an attachment: frames the attached client still
+    // receives (queued PTY output) all keep its size.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    while let Ok(frame) =
+        tokio::time::timeout_at(deadline, read_frame::<_, ServerFrame>(&mut reader)).await
+    {
+        if let ServerFrame::Display { update } = frame.unwrap() {
+            assert_eq!(update.size, size, "logs request resized the session");
+        }
+    }
     logs.close(0u32.into(), b"done");
     connection.close(0u32.into(), b"done");
     fixture.stop().await;
