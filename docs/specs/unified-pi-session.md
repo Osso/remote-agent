@@ -12,6 +12,7 @@ A proposed single Rust project replaces the needed remote-agent, detach, and Mos
 - [ ] Support Linux and macOS clients, with Linux servers.
 - [ ] Retain Pi provider login.
 - [ ] Paste a local clipboard image into remote Pi without a separate manual `paste` command.
+- [ ] Keep bounded, configurable output history; clearly report expired output when a requested replay position is no longer retained.
 
 ### Proposed session and transport acceptance
 
@@ -56,7 +57,7 @@ No passing tests establish the proposed replacement contract.
 
 ## Known gaps (current cycle)
 
-- [ ] Review session command scope, output retention, and reconnect/replay behavior before implementation.
+- [ ] Review session command scope and reconnect/replay behavior before implementation; specify retention units/default and how a fresh attachment obtains valid terminal state after history expires.
 - [ ] Choose the Pi clipboard integration after inspecting the actual image-read path.
 - [ ] Define acceptance for provider login and transparent image paste on supported platforms.
 - [ ] Define a migration approach that preserves existing conversations, running processes, and configuration.

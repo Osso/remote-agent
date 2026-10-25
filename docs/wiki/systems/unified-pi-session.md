@@ -29,9 +29,11 @@ Tokei counted 9,560 production C++/header code lines across 63 files, excluding 
 
 ## Proposed consolidation
 
-One project can provide a local client and a persistent remote session process. They must have separate lifetimes even if they use the same binary. An ordered terminal-output stream would replace Mosh's framebuffer synchronization. With no predictive echo, the replacement does not need to copy Mosh's terminal emulator, framebuffer renderer, or prediction engine.
+One project can provide a local client and a persistent remote session process. They must have separate lifetimes even if they use the same binary. An ordered terminal-output stream would replace Mosh's framebuffer synchronization. With no predictive echo, the replacement does not need Mosh's prediction engine. Ordered byte delivery removes the need for framebuffer diffs as the output transport. It does not by itself establish that all terminal-state reconstruction can be removed.
 
 This is not an implementation choice for a specific transport library. Authentication, replay positions, output retention, resize ordering, input delivery, and reconnection still require explicit design and behavioral tests. Transport address migration alone does not restore a session after its owning process exits.
+
+The user selected bounded output history. When old output expires, an arbitrary retained byte tail is not a sufficient terminal-state checkpoint: escape sequences, cursor position, and active terminal modes can depend on preceding bytes. Fresh attachment and expired-offset recovery need a valid state baseline plus ordered retained output, or another demonstrated reconstruction method. This requirement may retain terminal parsing through an existing library; a complete removal of server terminal emulation is not yet justified.
 
 ## Current image-paste boundary
 
