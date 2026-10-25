@@ -148,7 +148,8 @@ acceptance.
 | Legacy preservation | Legacy sessions, maps, credentials and legacy code remained byte/PID-identical | Not authorization to migrate them |
 | macOS | GitHub run `40226091616` passed the Ubuntu and macOS jobs (native clipboard fixture, PTY and unit tests) at `fdaa0d6`; run `40230014481` passed both at `c06678a` | Installed macOS-to-Linux attachment not exercised |
 | Display diffs (`c06678a`) | Native attach/resize/network suites pass; client output bytes across the same stages fell from 4,787,949 to 2,138,492 (45%); first screen after attach 230 KB → 39 KB. Real agent-server attach: typing after attach wrote about 9 KB instead of about 90 KB per update; client viewport matched the server `logs` snapshot; unit acceptance passed again for both accounts | Fresh attach and reconnect replay still send the complete retained backlog and display, by design |
-| Earlier Pi/renderer proof | Offline CLI at `121e38e`, native Pi TUI at `fca936a`, PTY/QUIC 80-marker fixtures, resize work at `6267448`/`5b8f341` | Full OAuth/model call, current real image paste, per-display geometry and complete VT coverage remain open |
+| Image paste (`c06678a`) | Real agent-server Pi, two simultaneous Linux clients (165×46 and 120×40); a private headless cage clipboard supplied a different PNG to each Ctrl+V; server images byte-identical (SHA-256); both paths in Pi's editor on both clients; bracketed text containing Ctrl+V stayed text; empty clipboard gave a notice with no image or editor change | macOS clipboard only in CI fixture; model call with the image not exercised |
+| Earlier Pi/renderer proof | Offline CLI at `121e38e`, native Pi TUI at `fca936a`, PTY/QUIC 80-marker fixtures, resize work at `6267448`/`5b8f341` | Full OAuth/model call, per-display geometry and complete VT coverage remain open |
 
 The existing fixed-size Mosh 80-marker regression remains RED; Rust work does
 not repair it. Root process inventories at

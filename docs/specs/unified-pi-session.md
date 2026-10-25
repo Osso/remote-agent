@@ -31,8 +31,8 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 ### Login and image paste
 
 - [ ] Retain full Pi provider login; invalid-provider CLI proof does not establish OAuth or credentials.
-- [ ] Prove current-revision real Pi image paste from the initiating client's local clipboard without a manual upload command, including simultaneous clients.
-- [ ] Preserve text paste framing, transfer images only on demand, and reject empty or failed clipboard reads without stale image insertion. Earlier offline and fixture evidence is not full current acceptance.
+- [x] Prove current-revision real Pi image paste from the initiating client's local clipboard without a manual upload command, including simultaneous clients.
+- [x] Preserve text paste framing, transfer images only on demand, and reject empty or failed clipboard reads without stale image insertion.
 
 ## How it works
 
@@ -57,13 +57,14 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 - `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
 - `tests/test_rust_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_rust_deploy.py`: 8/8 deployment cases.
 - Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. `terminal::tests::one_changed_pi_row_*` and `scrolled_pi_chat_*` compare live diffs and row repaint at 165×46 against full snapshot repaints for identical screen and scrollback. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
+- Real agent-server paste acceptance at installed `c06678a` (`/var/tmp/pi-resize-fix/rust-production/accept-paste.py`, Linux Wayland client): two simultaneous clients each pressed Ctrl+V with a different private-clipboard PNG; the server saved both byte-identical and Pi's editor showed both paths on both clients; bracketed text containing Ctrl+V stayed text; an empty clipboard showed a notice and changed neither images nor editor.
 - Real agent-server acceptance at `fdaa0d6`: both accounts' enabled/active units, launch identity/environment, real SSH/QUIC/Pi input and detach, whole-unit kill/start conversation restore, cancellation and legacy preservation. See the wiki for exact boundaries.
 
 ## Known gaps (current cycle)
 
 - [ ] Actual host reboot: not performed because it would stop legacy sessions.
 - [ ] Installed macOS-to-Linux acceptance remains open. (GitHub run `40226091616` passed the Ubuntu and macOS jobs at `fdaa0d6`.)
-- [ ] Full OAuth/model-call, simultaneous real-client image paste, per-display geometry and complete Pi VT acceptance remain open.
+- [ ] Full OAuth/model-call, macOS real-client image paste, per-display geometry and complete Pi VT acceptance remain open.
 
 ## Out of scope
 
