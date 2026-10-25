@@ -23,6 +23,7 @@ impl Fixture {
             cwd: root.path().into(),
             pi,
             conversation: uuid::Uuid::new_v4().to_string(),
+            resume: false,
             prompt: None,
             size: Size {
                 rows: 46,

@@ -53,6 +53,8 @@ Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential stor
 
 The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
 
+A newly generated conversation uses Pi's `--session-id` creation flag. Explicit `--resume` uses `--session` to open the requested conversation; a missing conversation must not silently become a new one. Installed-Pi acceptance runs offline in an isolated HOME and never submits a model prompt.
+
 ### Pi keyboard negotiation and detach
 
 The virtual endpoint answers Pi's keyboard/cursor/device queries itself rather than broadcasting queries to all clients. Kitty push/pop requests do not enable physical Kitty mode; the endpoint reports zero Kitty flags and forwards Pi's xterm `modifyOtherKeys` setting. The local input decoder recognizes image paste and detach in legacy, Kitty, and xterm encodings while leaving bracketed-paste content literal.

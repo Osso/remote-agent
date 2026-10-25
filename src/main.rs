@@ -185,6 +185,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 history_bytes > 0 && history_bytes <= DEFAULT_HISTORY_BYTES,
                 "history_bytes must be between 1 and {DEFAULT_HISTORY_BYTES}"
             );
+            let resuming = resume.is_some();
             let conversation = resume.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             ensure!(
                 !conversation.is_empty() && !conversation.contains('\0'),
@@ -196,6 +197,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 cwd,
                 pi,
                 conversation,
+                resume: resuming,
                 prompt,
                 size: Size { rows: 24, cols: 80 },
                 history_bytes,

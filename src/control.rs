@@ -260,6 +260,7 @@ mod tests {
             cwd: "/tmp".into(),
             pi: "/usr/bin/pi".into(),
             conversation: "abc".into(),
+            resume: false,
             prompt: Some("hello".into()),
             size: Size { rows: 24, cols: 80 },
             history_bytes: 1024,

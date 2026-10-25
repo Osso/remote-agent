@@ -93,6 +93,7 @@ pub struct Launch {
     pub cwd: std::path::PathBuf,
     pub pi: std::path::PathBuf,
     pub conversation: String,
+    pub resume: bool,
     pub prompt: Option<String>,
     pub size: Size,
     pub history_bytes: usize,

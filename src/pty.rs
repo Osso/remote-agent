@@ -58,7 +58,12 @@ impl Pty {
 
 fn build_pi_command(launch: &Launch) -> Command {
     let mut command = Command::new(&launch.pi);
-    command.arg("--session").arg(&launch.conversation);
+    let session_flag = if launch.resume {
+        "--session"
+    } else {
+        "--session-id"
+    };
+    command.arg(session_flag).arg(&launch.conversation);
     if let Some(prompt) = &launch.prompt {
         command.arg(prompt);
     }
