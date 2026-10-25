@@ -29,7 +29,7 @@ Tokei counted 9,560 production C++/header code lines across 63 files, excluding 
 
 ## Implemented prototype
 
-`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. Python controller/workers, detach and Mosh remain operational; this prototype has not been deployed. See the [build and CLI guide](../../../README.md#rust-prototype).
+`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. Python controller/workers, detach and Mosh remain operational. Opt-in Rust deployment and real attachment were verified on agent-server for `osso` and `allison` at `fdaa0d6`; legacy sessions were preserved. See the [build and CLI guide](../../../README.md#rust-prototype).
 
 SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. Byte fields require base64 strings. The server limits the unauthenticated frame to 8192 bytes from its length header before payload allocation; authenticated frames allow at most 80 MiB. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
 
@@ -37,23 +37,25 @@ SSH uses existing private host/project maps and returns a ticket containing the 
 
 The server keeps one authoritative, persistent `vt100` parser. Each PTY output chunk produces **every scrolled row**, the current formatted frame and supported control events. This is ordered QUIC delivery, not Mosh's screen-only synchronization or raw PTY-byte replay. The native client writes captured rows into the outer terminal's scrollback, then repaints the shared viewport. Its temporary display parsers do not own the application's hidden VT state.
 
-History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216, but the budget must fit the current display checkpoint. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. A private JSONL disk journal uses explicit reader/writer locks and separately enforces the configured serialized-byte limit; ordinary deltas append, while reset or overflow writes an atomic checkpoint and trims oldest archived rows if needed. Byte payloads use base64 rather than numeric arrays.
+History rows and the replay-update journal are separate in-memory queues, each capped by the configured accounting budget. The default and CLI maximum are individually 16 MiB; `start --history-bytes N` accepts 1–16777216, but the budget must fit the current display checkpoint. Accounting includes fixed/per-row overhead, not a whole-process memory limit. A live update includes all rows from that chunk even when it exceeds retention. There is no disk output store: `src/history.rs` and `history.jsonl` were deleted by user decision. Byte payloads use base64 rather than numeric arrays.
 
-Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set. Expired history is marked, including a fresh attachment after retained rows were evicted; the client inserts `[earlier output expired]` into native scrollback. Reset clears existing outer-terminal scrollback and is idempotent for duplicate delivery. `history.jsonl` persists bounded checkpoints/deltas, not hidden parser state; it has no per-delta fsync or power-loss guarantee. The parser stays authoritative in the live server; archived display data cannot restore a dead server or PTY. `logs` reconstructs plain text without repainting the caller's terminal.
+Reconnect supplies the last rendered sequence. Retained journal updates supply missing rows/control events with the current frame. Fresh attachment or an unavailable replay position receives retained history plus the current frame with reset set. Expired history is marked, including a fresh attachment after retained rows were evicted; the client inserts `[earlier output expired]` into native scrollback. Reset clears existing outer-terminal scrollback and is idempotent for duplicate delivery. The parser and retained output exist only in the live server and are lost when it exits. `logs` works only for running sessions: the control process connects to the server's local QUIC port, sends a one-shot authenticated `Logs { token }` frame and receives the snapshot. It does not join the session, change PTY dimensions or repaint the caller's terminal.
 
 Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-read queries and application-requested resize can fail the parser; the library also silently ignores some unsupported modes/strings. This is neither general terminal compatibility nor a terminal sanitizer. Earlier offline native Pi capability tests passed within the boundaries below; full VT compatibility and current-revision acceptance remain open.
 
 ### Clients, input and images
 
-Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Reconnect retries exist; loopback tests do not establish real network roaming or all retry/error cases.
+Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Five consecutive failed reconnect attempts end the attachment. Any authenticated display frame resets the failure count. Backoff ceilings are 500/1000/2000/4000 ms with 90–100% jitter. Native outage and NAT port migration tests cover the boundaries recorded below, not every network condition.
+
+Reconnect, control, clipboard and server notices use the bottom physical terminal row with save/restore cursor, autowrap disabled and no line feed. The next display repaints over the notice, including a duplicate reconnect snapshot. This fixed the observed duplication of two rows after reconnect.
 
 Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty Ctrl+V encodings. It reads the initiating client's clipboard on demand and sends PNG bytes as a sequenced image action. The server creates a unique private image file, then inserts its path as one bracketed paste. No shared clipboard cache or manual staging command is used. Linux selects `wl-paste` for Wayland or `xclip` for X11; macOS uses `osascript` with AppKit and base64 PNG output. Empty/failed clipboard reads report an error before an image is sent. Earlier offline Pi image-editor consumption passed; current-revision and simultaneous real-client acceptance remain open.
 
-Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Earlier offline CLI tests covered invalid-provider login, not full OAuth or credentials. Native `__as-user` resolves passwd identity/home and enters that home with a clean environment. Account isolation, launch variables, scope ownership and cancellation policy have one contract in [configuration](../../specs/configuration.md#rust-account-and-launch-policy); installed cross-user acceptance remains open.
+Pi login uses interactive SSH and `pi login PROVIDER`, not a new credential store. Earlier offline CLI tests covered invalid-provider login, not full OAuth or credentials. Native `__as-user` resolves passwd identity/home and enters that home with a clean environment. Account isolation, launch variables, service ownership and cancellation policy have one contract in [configuration](../../specs/configuration.md#rust-account-and-launch-policy). Real cross-user attachment was verified for both accounts at `fdaa0d6`.
 
 The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
 
-A newly generated conversation uses Pi's `--session-id` creation flag. Explicit `--resume` uses `--session` to open the requested conversation; a missing conversation must not silently become a new one. Installed-Pi acceptance runs offline in an isolated HOME and never submits a model prompt.
+A generated conversation uses Pi's `--session-id UUID`, which opens the existing conversation if one exists in the project. Explicit `--resume UUID` uses `--session UUID`; these resume semantics are unchanged. UUID-conflict handling is excluded. Earlier isolated-HOME Pi acceptance was offline and did not submit a model prompt.
 
 ### Pi keyboard negotiation and detach
 
@@ -70,7 +72,7 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 | Dependency | Purpose |
 | --- | --- |
 | `anyhow` | Contextual errors and explicit validation failures. |
-| `base64` | Decode macOS clipboard PNG output and encode transport/journal byte payloads. |
+| `base64` | Decode macOS clipboard PNG output and encode transport byte payloads. |
 | `vte` | Observe CSI 3 J with a real parser, preserving clear-history ordering alongside the authoritative vt100 parser. |
 | `clap` (`derive`) | Parse public CLI and hidden control/server commands. |
 | `libc` | Unix PTY, termios, polling, process groups, signals and sizing. |
@@ -85,40 +87,60 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 | `vt100` | Persistent server parsing with scroll callbacks and client display/cell formatting. |
 | `tempfile` (development only) | Isolated directories and executable/process fixtures in tests. |
 
-### Current client and lifecycle work
+### Session service lifecycle
 
-`6267448` fixes deferred reset/control delivery and retry handling. `5b8f341`
-adds analyzer coverage and two native resize cases. Per-display geometry remains
-pending; shared-PTY minimum dimensions do not prove correct rendering at every
-physical client size. Pending main/protocol/server/PTY and attach-test changes
-are not a completed acceptance revision.
+The repository-root `remote-agent-rs@.service` template is installed by
+`deploy.sh --rust` into every server account's `~/.config/systemd/user/`, followed
+by `systemctl --user daemon-reload`. Each session uses the enabled user unit
+`remote-agent-rs@NAME.service` with `Slice=agents.slice` (the user slice).
+Its launch directive is:
 
-`deploy.sh --rust` selects parallel installation, preserving both accounts' maps,
-private immutable hash versions and a stable link with compare-and-swap checks.
-Python remains the default. No operational Rust deployment or live Pi handoff
-has occurred. Legacy detach has no SCM_RIGHTS transfer mechanism; do not infer
-that installing the new binary transfers an existing PTY. Existing Pi processes
-must not be migrated or cancelled without authorization.
+```text
+ExecStart=%h/.local/bin/remote-agent-rs __serve --state %h/.local/state/remote-agent-rs/sessions/%i
+```
+
+Server output appends to the session's `server.log`; this is diagnostic output,
+not retained Pi terminal history. `start` runs `systemctl --user enable --now`.
+`cancel` runs `systemctl --user disable --now`, waits for the server PID to exit,
+then runs the project's `pi_cancel_executable` hook with the conversation ID.
+Repeating cancellation's unit stop is a no-op, allowing retry after a failed hook.
+Systemd-run scopes, `scope.json` and InvocationID records were removed.
+
+Server identity uses exact argv `__serve --state <absolute state path>`.
+It no longer compares executable inodes, so a session started by an older
+installed binary remains manageable after an upgrade.
+
+Enabled units return when the user manager starts at boot, which requires
+linger. On agent-server, `osso` has `Linger=yes`; `allison` linger was enabled
+with user approval on 2026-10-25. The restarted server launches Pi with the same
+`launch.json`. Conversation, session name, project and account return; running
+jobs, an in-progress model turn and unsent editor text do not. Output retention
+starts empty because it is in memory only. An actual host reboot was not tested.
+
+`deploy.sh --rust` preserves each account's maps and installs private immutable
+hash-addressed binaries through a stable link. Python remains the default.
+Installation does not transfer a legacy PTY. Legacy detach has no SCM_RIGHTS
+handoff; existing sessions must not be migrated or cancelled without approval.
 
 ## Evidence and remaining acceptance
 
-Evidence below was supplied for this bounded docs audit on 2026-10-25; no tests,
-CI queries or operational commands were run here. It is preliminary,
-revision-scoped evidence, not fresh acceptance of pending source.
+The main thread supplied this proof for the changes after `eb27c84` through
+`fdaa0d6`, verified 2026-10-25. This docs-only update ran no tests, CI queries,
+deployment or operational checks. These results do not establish full product
+acceptance.
 
 | Boundary | Evidence | Remaining gap |
 | --- | --- | --- |
-| Real Pi offline CLI | Two tests at `121e38e`: new conversation, image editor, detach and invalid-provider login CLI | Current-revision rerun; no full OAuth, credentials, prompt submission or model call |
-| Native Pi TUI | Two tests at `fca936a`: bulk output, revised output and widgets with real Pi offline | Current-revision rerun, real network roaming and installed attachment |
-| macOS native client | GitHub run `40206416647` macOS job SUCCESS, including native clipboard, PTY and unit tests | Current CI and macOS-to-Linux installed acceptance; not “macOS untested” |
-| Ubuntu CI | Same run failed a fixture readiness race; local fix `81021f2` reported | Fresh current-revision CI, not an all-platform green claim |
-| Auth framing/network target | One targeted GREEN each reported in `/var/tmp/pi-resize-fix/rust-server/auth-*-green.log` | These narrow passes do not establish broad protocol acceptance |
-| Replay and resize | Earlier PTY/QUIC fixtures preserve all 80 markers; `6267448` client fixes and `5b8f341` analyzer/two native resize cases added | Per-display geometry pending; current integration reruns required |
-| Retention | Bounded JSONL, atomic checkpoints, locks/readers and explicit client expiry marker implemented | Current end-to-end replay/reset/control/retry proof |
-| Account/lifecycle/deployment | Native account routing, owned scope cancellation and opt-in install implemented with fixtures | Actual two-account Rust deployment and installed acceptance; no operational deployment yet |
+| Native lifecycle/restore | `tests/test_rust_attach.py` 5/5, including simulated-reboot restore; fixture SSH/systemd with real PTY/QUIC/Pi TUI components | Actual host reboot not performed |
+| Network/reconnect | `tests/test_rust_network.py` 3/3, including reconnect-notice regression and native outage/NAT migration coverage; `tests/test_rust_retry_budget.py` six outages on one client over 193 seconds | Not all network conditions or complete real roaming acceptance |
+| Upgrade/deployment | `tests/test_rust_upgrade.py`; `tests/test_rust_deploy.py` 8/8; Rust control/client/server unit tests | No legacy PTY handoff or migration proof |
+| Real agent-server, both accounts | At `fdaa0d6`, `osso` and `allison` units enabled and active in user `agents.slice`; correct UID, cwd, PTY 165×46 and `CARGO_BUILD_JOBS`; real SSH/QUIC attach, typed input reaches Pi, clean detach | Installed macOS-to-Linux and simultaneous real Pi clients remain open |
+| Real restore/cancel | Whole-unit SIGKILL then `systemctl --user start` restored the same conversation; osso's resumed transcript visible again; cancel left unit disabled/inactive | Actual reboot deliberately not performed because it would stop legacy sessions; jobs, model turn and editor text do not return |
+| Legacy preservation | Legacy sessions, maps, credentials and legacy code remained byte/PID-identical | Not authorization to migrate them |
+| macOS | Earlier GitHub run `40206416647` passed native clipboard, PTY and unit tests | macOS CI for `fdaa0d6` pending at time of writing; no current all-platform green claim |
+| Earlier Pi/renderer proof | Offline CLI at `121e38e`, native Pi TUI at `fca936a`, PTY/QUIC 80-marker fixtures, resize work at `6267448`/`5b8f341` | Full OAuth/model call, current real image paste, per-display geometry and complete VT coverage remain open |
 
-The existing fixed-size Mosh 80-marker regression remains RED; Rust work does not
-repair it. Root process inventories for both accounts were captured at
-`/var/tmp/pi-resize-fix/rust-production/before-{osso,allison}.json`, including
-real Pi/master/wrapper PIDs. These are preservation baselines, not proof of
-migration, deployment or live handoff.
+The existing fixed-size Mosh 80-marker regression remains RED; Rust work does
+not repair it. Root process inventories at
+`/var/tmp/pi-resize-fix/rust-production/before-{osso,allison}.json` are
+preservation baselines, not proof of live handoff.

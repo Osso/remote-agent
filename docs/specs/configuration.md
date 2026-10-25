@@ -16,19 +16,23 @@ Host and project mappings belong to the current user's `~/.config/remote-agent/`
 ## Rust account and launch policy
 
 These requirements apply to `remote-agent-rs`, not the Python defaults above.
-Source is implemented; current-revision installed acceptance remains open.
+Main-thread proof at `fdaa0d6` includes real agent-server acceptance for `osso`
+and `allison`; actual reboot and current macOS CI remain unproven.
 
-- [ ] Resolve `projects` and session operations through RPC to the selected host/account, using that account's private maps.
-- [ ] Native Linux `--user` must resolve identity/home through passwd, enter the target home, and execute only the target Rust RPC/login operation through existing `authsudo` authorization. Start with an empty environment plus the 13 explicit account variables; do not inherit administrator credentials.
-- [ ] Require selected-host `cargo_build_jobs` as a positive integer string and pass it as `CARGO_BUILD_JOBS`. Pass optional `build_host_scripts` as `BUILD_HOST_SCRIPTS` without an implicit path. Record launch values explicitly in the launch record's environment field.
-- [ ] Use an existing `agents.slice` in the selected system/user manager without enabling services. Scope identity must include UID and session name; private owned `0600` metadata must retain manager choice and InvocationID.
-- [ ] Cancellation must validate recorded PID, executable, argv and state ownership before stopping the owned unit. Wait for server exit before invoking `pi_cancel_executable` with the conversation ID. Keep errors and saved state available for retry; never run the hook after an identity mismatch or while the server remains alive.
+- [x] Resolve `projects` and session operations through RPC to the selected host/account, using that account's private maps.
+- [x] Native Linux `--user` must resolve identity/home through passwd, enter the target home, and execute only the target Rust RPC/login operation through existing `authsudo` authorization. Start with an empty environment plus the 13 explicit account variables; do not inherit administrator credentials.
+- [x] Require selected-host `cargo_build_jobs` as a positive integer string and pass it as `CARGO_BUILD_JOBS`. Pass optional `build_host_scripts` as `BUILD_HOST_SCRIPTS` without an implicit path. Record launch values explicitly in the launch record's environment field.
+- [x] Run each session as an enabled systemd user service in the selected account's user `agents.slice`. Install the service template and reload every server account's user manager during Rust deployment.
+- [x] Identify the server by exact `__serve --state <absolute state path>` argv, without requiring the current installed executable inode, so upgrades preserve manageability.
+- [x] Cancellation must disable and stop the session unit, then wait for the server PID to exit before invoking `pi_cancel_executable` with the conversation ID. Repeated unit stop is a no-op so a failed hook can be retried. Keep errors and saved state available; never run the hook after an identity mismatch or while the server remains alive.
+- [ ] Restore enabled sessions when the user manager starts after an actual reboot, with linger required. Whole-unit kill/start and simulated-reboot tests establish conversation restoration, not actual host reboot acceptance.
 
 Rust deployment is opt-in through `deploy.sh --rust`. Preserve both existing maps
 for every selected account, including `osso` and `allison`; do not change Python's
 default deployment or existing processes. Install immutable private hash-addressed
-versions and update the stable link with compare-and-swap protection. No operational
-Rust deployment is established by fixture installation tests. See the
+versions and update the stable link with compare-and-swap protection. Fixture
+installation tests and real two-account deployment/attachment at `fdaa0d6` are
+separate proof boundaries. Linger state and service mechanics are recorded in the
 [implementation and proof matrix](../wiki/systems/unified-pi-session.md).
 
 ## Shared Claude credential ownership
@@ -50,7 +54,8 @@ Rust deployment is established by fixture installation tests. See the
 - `remote-agent-worker.py` — worker mapping consumption and selected-host agent environment.
 - `deploy.py` — separate code archive, private mapping transfer and opt-in Rust installation.
 - `src/account.rs`, `src/config.rs`, `src/main.rs` — native target-account dispatch, Rust map selection and launch environment.
-- `src/control.rs` — scope metadata, identity validation and owned lifecycle.
+- `src/control.rs` — launch records, server identity validation and user service lifecycle.
+- `remote-agent-rs@.service` — per-session user service template.
 
 ## Tests asserting this spec
 
@@ -63,8 +68,14 @@ Native scheduler/dispatch coverage belongs to [Pi's scheduler spec](https://gith
 
 Rust behavior is covered by fixtures in `src/account.rs`, `src/config.rs`,
 `src/control.rs`, `src/main.rs`, `tests/test_rust_attach.py` and
-`tests/test_rust_deploy.py`. This docs-only audit runs none of them and does not
-promote fixture evidence to current installed cross-user acceptance.
+`tests/test_rust_deploy.py`, plus native network, retry-budget and upgrade tests.
+Main-thread proof includes attach 5/5, network 3/3, deployment 8/8, six outages
+on one client over 193 seconds, and real two-account SSH/QUIC/Pi acceptance at
+`fdaa0d6`. Correct UID/cwd/PTY 165×46/`CARGO_BUILD_JOBS`, enabled/active user
+units, input, detach, conversation restore and disabled/inactive cancellation
+were verified; legacy sessions, maps, credentials and code stayed byte/PID-identical.
+This docs-only update ran none of these checks. Actual reboot was not performed;
+macOS CI for `fdaa0d6` was pending. See the wiki proof matrix for remaining gaps.
 
 ## Known gaps (current cycle)
 

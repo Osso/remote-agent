@@ -97,10 +97,10 @@ selected `desktop` host; native Linux paths do not use WSL translation.
 ## Rust prototype
 
 `remote-agent-rs` is an opt-in Pi-only Rust implementation. It does **not**
-replace the operational Python `remote-agent`, detach or Mosh stack documented
-below. No operational Rust deployment has occurred. Source through `5b8f341`
-and pending main/protocol/server/PTY changes extend the early prototype. Earlier
-native Pi and macOS proof does not establish current-revision acceptance. See
+replace the Python `remote-agent`, detach or Mosh stack documented below.
+At `fdaa0d6`, Rust deployment and real SSH/QUIC/Pi attachment were verified on
+agent-server for `osso` and `allison`; legacy sessions remain unchanged.
+An actual host reboot was not performed, and macOS CI for that revision is pending. See
 the [proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance).
 
 Build locally with a Rust toolchain that supports edition 2024:
@@ -123,7 +123,9 @@ Run `./deploy.sh --rust [--host HOST]` to install only `remote-agent-rs`, beside
 Python `remote-agent`. The default deployment mode remains unchanged. Rust mode
 preserves both maps on the local, default SSH, and configured `deploy_users`
 accounts; missing maps fail instead of copying the operator's configuration.
-It does not change Python workers, detach/Mosh, services, or running sessions.
+It does not change Python workers, detach/Mosh, or existing running sessions.
+On every server account, it installs the repository-root `remote-agent-rs@.service`
+template into `~/.config/systemd/user/` and runs `systemctl --user daemon-reload`.
 
 The local client requires Cargo/rustc with edition 2024 support. Supported native
 platforms are Linux GNU and macOS, on x86_64 or aarch64/arm64; the server must be
@@ -143,8 +145,8 @@ Each account receives a private, content-addressed executable at
 `~/.local/bin/remote-agent-rs`. Directory/file modes are `0700` for the store and
 `0500` for each version and binary. Updates retain old versions without rewriting
 them. Unmanaged executables and foreign or dangling symlinks are rejected.
-`tests/test_rust_deploy.py` covers the installation with fixture SSH/build tools;
-it does not establish live cross-user deployment.
+`tests/test_rust_deploy.py` passed 8/8 fixture cases; real two-account deployment
+and attachment at `fdaa0d6` are recorded in the proof matrix.
 
 For a separately provisioned experimental endpoint:
 
@@ -157,15 +159,31 @@ For a separately provisioned experimental endpoint:
 ```
 
 Other commands are `status NAME` and `cancel NAME`; cancel stops the experimental
-owned session scope, waits for the server to exit, then runs any configured
-conversation cancellation hook. Identity or teardown errors retain state for retry. Start accepts `--resume CONVERSATION_ID` and
+enabled user unit with `systemctl --user disable --now`, waits for the server PID
+to exit, then runs the project's `pi_cancel_executable` hook with the conversation
+ID. Repeating the unit stop is a no-op, so a failed hook can be retried.
+Identity or teardown errors retain state for retry. Start accepts `--resume CONVERSATION_ID` and
 `--prompt-file PATH`. `--user USER` uses native passwd lookup and a clean target-account environment
-through existing `authsudo` authorization; installed cross-user acceptance remains
-open. Rust `projects` queries the selected remote account, unlike Python's
+through existing `authsudo` authorization; real attachment was verified for
+`osso` and `allison` at `fdaa0d6`. Rust `projects` queries the selected remote account, unlike Python's
 local-map listing. See [launch policy](docs/specs/configuration.md#rust-account-and-launch-policy). Ctrl+backslash detaches;
 Ctrl+V requests the local image without a separate `paste` command. Clipboard
 providers are `wl-paste` (Wayland), `xclip` (X11), or `osascript` (macOS).
 
+`start` enables and starts `remote-agent-rs@NAME.service` in the user's
+`agents.slice`. Enabled units return when the user manager starts at boot;
+this requires linger. On agent-server, `osso` has `Linger=yes`; `allison` linger
+was enabled with user approval on 2026-10-25. The server reuses `launch.json`:
+Pi's `--session-id UUID` opens an existing conversation in the project, while
+explicit `--resume UUID` uses `--session UUID`. Conversation, name, project and
+account return; running jobs, an in-progress model turn and unsent editor text
+do not. Whole-unit SIGKILL followed by a manual unit start proved conversation
+restoration, not an actual host reboot. UUID-conflict handling is out of scope;
+explicit resume semantics are unchanged.
+
+Retained output exists only in the running server's bounded memory. `logs`
+authenticates a one-shot local QUIC snapshot request; it does not attach or
+resize the PTY and fails for stopped sessions. There is no disk history store.
 History and replay-journal budgets are each 16 MiB by default and at most;
 `--history-bytes` can reduce them. Fresh attachment resets outer-terminal
 scrollback. Alternate-screen applications and unknown VT callbacks are unsupported.
@@ -189,7 +207,7 @@ conversion; it does not prove macOS-to-Linux attachment, interactive Pi, SSH,
 terminal repaint, or installed deployment. GitHub run `40206416647` passed the macOS job, including native clipboard,
 PTY and unit tests. Ubuntu failed a fixture readiness race, fixed locally in
 `81021f2`. Current-revision CI and installed macOS-to-Linux acceptance remain
-pending; the earlier macOS runtime is proven, not untested.
+pending at `fdaa0d6`; the earlier macOS runtime is proven, not untested.
 
 ## Session commands
 
