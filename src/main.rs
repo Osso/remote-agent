@@ -184,7 +184,7 @@ async fn run_client_command(
         Action::Cancel { name } => ControlRequest::Cancel { name },
         _ => bail!("command is not a client action"),
     };
-    let response = client::query_remote(config, host, user, &request)?;
+    let response = client::query_remote(config, host, user, &request).await?;
     if let Some(logs) = response.get("logs").and_then(Value::as_str) {
         print!("{logs}");
     } else {

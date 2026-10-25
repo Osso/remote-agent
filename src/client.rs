@@ -16,39 +16,7 @@ use std::sync::{
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
 
-pub fn query_remote(
-    config: &Config,
-    host: &str,
-    user: Option<&str>,
-    request: &ControlRequest,
-) -> Result<serde_json::Value> {
-    let mut command = config.build_ssh_command(host, user, &["__rpc".into()])?;
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start SSH control request")?;
-    child
-        .stdin
-        .take()
-        .context("SSH stdin missing")?
-        .write_all(&serde_json::to_vec(request)?)?;
-    let result = child.wait_with_output()?;
-    ensure!(
-        result.status.success(),
-        "remote control failed: {}",
-        String::from_utf8_lossy(&result.stderr).trim()
-    );
-    let reply: serde_json::Value =
-        serde_json::from_slice(&result.stdout).context("decode SSH control reply")?;
-    if let Some(error) = reply.get("error").and_then(|v| v.as_str()) {
-        bail!("{error}");
-    }
-    Ok(reply)
-}
-
-async fn query_remote_async(
+pub async fn query_remote(
     config: &Config,
     host: &str,
     user: Option<&str>,
@@ -238,8 +206,7 @@ struct Attachment {
 
 pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str) -> Result<i32> {
     let request = ControlRequest::Attach { name: name.into() };
-    let ticket: Ticket =
-        serde_json::from_value(query_remote_async(config, host, user, &request).await?)?;
+    let ticket: Ticket = serde_json::from_value(query_remote(config, host, user, &request).await?)?;
     let hostname = query_ssh_hostname(config, host)?;
     let terminal = TerminalGuard::enter()?;
     let size = terminal.size()?;
@@ -264,7 +231,7 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                         let entropy = uuid::Uuid::new_v4().as_u128();
                         tokio::time::sleep(reconnect_delay(state.consecutive_failures, entropy))
                             .await;
-                        match query_remote_async(config, host, user, &request)
+                        match query_remote(config, host, user, &request)
                             .await
                             .and_then(|reply| Ok(serde_json::from_value(reply)?))
                         {
