@@ -140,6 +140,11 @@ def _focus(niri_window: int | None) -> None:
         _run(["niri", "msg", "action", "focus-window", "--id", str(niri_window)])
 
 
+def _title_tab(pane_id: int | str, session: Session) -> None:
+    """Label the session's tab with the name the picker shows."""
+    _wezterm("set-tab-title", "--pane-id", str(pane_id).strip(), session.name)
+
+
 def _spawn_arguments(session: Session) -> list[str]:
     if session.backend == "remote":
         return ["--", "remote-agent", "--host", session.host, "attach", session.handle]
@@ -172,12 +177,18 @@ def open_session(session: Session) -> None:
             )
         niri_window = _niri_window(pane["window_id"], picker_window)
         _wezterm("activate-pane", "--pane-id", str(pane["pane_id"]))
+        _title_tab(pane["pane_id"], session)
         _focus(niri_window)
         return
     windows = sorted({pane["window_id"] for pane in panes} - {picker_window})
     if not windows:
-        _wezterm("spawn", "--new-window", *_spawn_arguments(session))
+        _title_tab(
+            _wezterm("spawn", "--new-window", *_spawn_arguments(session)), session
+        )
         return
     niri_window = _niri_window(windows[0], picker_window)
-    _wezterm("spawn", "--window-id", str(windows[0]), *_spawn_arguments(session))
+    spawned = _wezterm(
+        "spawn", "--window-id", str(windows[0]), *_spawn_arguments(session)
+    )
+    _title_tab(spawned, session)
     _focus(niri_window)

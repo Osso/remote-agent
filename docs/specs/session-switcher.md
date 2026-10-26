@@ -46,6 +46,9 @@ and matched by `tty_name`; titles are never used for identity.
   none exists: running remote sessions run installed `remote-agent --host HOST
   attach NAME`; stopped local sessions run `pi --session SESSION_PATH` in their
   saved directory.
+- [x] Each activated or spawned tab is titled with the session name the picker
+  shows (`wezterm cli set-tab-title`), for example `Assistant` or `wow-ui-sim`;
+  the WezTerm config shows an explicit tab title as-is.
 - [x] A session open outside WezTerm (for example a Ghostty tab) reports its
   terminal and starts nothing. A running local Pi or remote client without a live
   terminal reports already-open. Clients on two terminals report ambiguity.

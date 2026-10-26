@@ -213,6 +213,17 @@ else:
                     ],
                 },
                 {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "77",
+                        "Local research",
+                    ],
+                },
+                {
                     "program": "niri",
                     "args": ["msg", "action", "focus-window", "--id", "92"],
                 },
@@ -238,6 +249,17 @@ else:
                         "--host",
                         "agent-server",
                         "attach",
+                        "remote-work",
+                    ],
+                },
+                {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "77",
                         "remote-work",
                     ],
                 },
@@ -270,7 +292,18 @@ else:
                         "attach",
                         "remote-work",
                     ],
-                }
+                },
+                {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "77",
+                        "remote-work",
+                    ],
+                },
             ],
         )
 
@@ -351,6 +384,17 @@ else:
                     ],
                 },
                 {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "31",
+                        "Local research",
+                    ],
+                },
+                {
                     "program": "niri",
                     "args": ["msg", "action", "focus-window", "--id", "92"],
                 },
@@ -379,6 +423,17 @@ else:
                         "activate-pane",
                         "--pane-id",
                         "32",
+                    ],
+                },
+                {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "32",
+                        "remote-work",
                     ],
                 },
                 {
@@ -533,7 +588,7 @@ else:
         )
         result = self.run_cli("--open", self.entry_key("remote"))
         self.assertEqual(result.returncode, 0, result.stderr)
-        spawn, focus = self.recorded()
+        spawn, _title, focus = self.recorded()
         self.assertEqual(spawn["args"][3:5], ["--window-id", "3"])
         self.assertEqual(focus["args"], ["msg", "action", "focus-window", "--id", "92"])
 
