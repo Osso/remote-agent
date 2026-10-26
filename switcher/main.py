@@ -38,6 +38,13 @@ def _open(selected: Session) -> bool:
     return open_session(current, sessions)
 
 
+def _wait_for_close() -> None:
+    try:
+        input("Press Enter to close.")
+    except EOFError:
+        return
+
+
 def _pick() -> int:
     if not sys.stdin.isatty():
         raise RuntimeError(
@@ -51,7 +58,12 @@ def _pick() -> int:
             "Loading laptop and agent-server sessions...", file=sys.stderr, flush=True
         )
         sessions, errors = collect_sessions()
-        selected = choose_session(sessions, [*errors, *last_error])
+        try:
+            selected = choose_session(sessions, [*errors, *last_error])
+        except RuntimeError as error:
+            print(str(error), file=sys.stderr)
+            _wait_for_close()
+            return 1
         if selected is None:
             return 0
         try:

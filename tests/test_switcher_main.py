@@ -2,11 +2,14 @@
 
 import json
 import os
+import pty
+import select
 import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -285,6 +288,49 @@ pathlib.Path({str(self.events)!r}).write_text(json.dumps({{'program':'ghostty','
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid window inventory", result.stderr.lower())
         self.assertFalse(self.events.exists())
+
+    def test_fatal_inventory_error_stays_visible_until_enter(self):
+        (self.state / "control.sqlite").unlink()
+        self.remote_file.write_text(
+            json.dumps({"sessions": [], "errors": ["agent-server unavailable"]})
+        )
+        pid, terminal = pty.fork()
+        if pid == 0:
+            os.execve(
+                sys.executable,
+                [sys.executable, str(SCRIPT), "--pick"],
+                self.environment,
+            )
+        output = bytearray()
+        reaped = False
+        try:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if select.select([terminal], [], [], 0.1)[0]:
+                    try:
+                        chunk = os.read(terminal, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if b"Press Enter to close" in output:
+                        break
+            self.assertIn(b"agent-server unavailable", output)
+            self.assertIn(b"Press Enter to close", output)
+            self.assertEqual(os.waitpid(pid, os.WNOHANG)[0], 0)
+            os.write(terminal, b"\n")
+            _, status = os.waitpid(pid, 0)
+            reaped = True
+            self.assertEqual(os.waitstatus_to_exitcode(status), 1)
+        finally:
+            os.close(terminal)
+            if not reaped:
+                try:
+                    os.kill(pid, 15)
+                except ProcessLookupError:
+                    pass
+                os.waitpid(pid, 0)
 
 
 if __name__ == "__main__":
