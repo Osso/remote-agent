@@ -64,7 +64,10 @@ class InventoryTests(unittest.TestCase):
             " print('ssh: Connection refused', file=sys.stderr); sys.exit(1)\n"
             "if mode == 'permanent':\n"
             " print('Permission denied (publickey)', file=sys.stderr); sys.exit(1)\n"
-            "print((root / 'payload.json').read_text())\n"
+            "if '--user' not in sys.argv: print((root / 'payload.json').read_text())\n"
+            "elif (root / 'allison-payload.json').exists():\n"
+            " print((root / 'allison-payload.json').read_text())\n"
+            "else: print('{\"sessions\": []}')\n"
         )
         executable.chmod(0o755)
         self.env = {
@@ -400,8 +403,33 @@ class InventoryTests(unittest.TestCase):
         sessions, errors = inventory.collect_sessions()
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0].backend, "local")
-        self.assertEqual(len(errors), 1)
-        self.assertIn("remote", errors[0].lower())
+        self.assertEqual(
+            [error.split(":")[0] for error in errors],
+            [
+                "Remote inventory (agent-server)",
+                "Remote inventory (allison@agent-server)",
+            ],
+        )
+
+    def test_collect_lists_allison_sessions_under_her_account(self):
+        self.remote_payload([self.remote_row(name="Own")])
+        (self.root / "allison-payload.json").write_text(
+            json.dumps({"sessions": [self.remote_row(name="Allison work")]})
+        )
+        sessions, errors = inventory.collect_sessions()
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [(s.name, s.host, s.user) for s in sessions],
+            [
+                ("Allison work", "agent-server", "allison"),
+                ("Own", "agent-server", None),
+            ],
+        )
+        self.assertNotEqual(sessions[0].key, sessions[1].key)
+        self.assertIn(
+            ["--host", "agent-server", "--user", "allison", "list"],
+            [json.loads(line) for line in self.requests.read_text().splitlines()],
+        )
 
     def test_local_control_db_path_uses_shared_environment_precedence(self):
         self.assertEqual(inventory.local_control_db_path(), self.db)

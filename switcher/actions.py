@@ -82,7 +82,7 @@ def _attach_target(args: list[str]) -> tuple[str, str | None, list[str]]:
 
 def _attach_clients(session: Session) -> list[int]:
     """PIDs of local remote-agent clients attached to this account's session."""
-    expected = (session.host, None, ["attach", session.handle])
+    expected = (session.host, session.user, ["attach", session.handle])
     clients = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -147,7 +147,16 @@ def _title_tab(pane_id: int | str, session: Session) -> None:
 
 def _spawn_arguments(session: Session) -> list[str]:
     if session.backend == "remote":
-        return ["--", "remote-agent", "--host", session.host, "attach", session.handle]
+        account = ["--user", session.user] if session.user else []
+        return [
+            "--",
+            "remote-agent",
+            "--host",
+            session.host,
+            *account,
+            "attach",
+            session.handle,
+        ]
     return ["--cwd", session.cwd, "--", "pi", "--session", session.handle]
 
 

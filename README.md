@@ -217,8 +217,9 @@ attachment passed at `7831e16` on an arm64 macOS 26.6.2 laptop; see the
 ## Pi session switcher
 
 The local `agent-switcher` provides searchable Pi sessions from the laptop's
-read-only Pi control database and the configured `agent-server` account, through
-its registered installed `remote-agent` client.
+read-only Pi control database, the configured `agent-server` account, and
+`allison`'s agent-server sessions (shown as `allison@agent-server`, opened with
+`--user allison`), through its registered installed `remote-agent` client.
 
 ```text
 ./deploy.sh --switcher

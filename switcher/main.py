@@ -24,7 +24,7 @@ def _refresh_selection(selected: Session) -> Session:
     if selected.backend == "local":
         sessions = load_local_sessions(local_control_db_path(), socket.gethostname())
     else:
-        sessions = load_remote_sessions(selected.host)
+        sessions = load_remote_sessions(selected.host, selected.user)
     matches = [session for session in sessions if session.key == selected.key]
     if len(matches) != 1:
         raise RuntimeError(

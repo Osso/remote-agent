@@ -62,6 +62,7 @@ class PickerTests(unittest.TestCase):
             "status": "running",
             "backend": "pi",
             "handle": handle,
+            "user": None,
         }
         fields.update(changes)
         # The inventory contract exposes an opaque key; the picker must not decode it.
@@ -110,6 +111,16 @@ class PickerTests(unittest.TestCase):
         self.assertNotIn("\x1b", local_row)
         self.assertIn("agent-server", remote_row)
         self.assertIn("--ansi", record["argv"])
+
+    def test_other_account_rows_show_the_account_with_the_host(self):
+        own = self.session("own", host="agent-server", backend="remote")
+        other = self.session(
+            "other", host="agent-server", backend="remote", user="allison"
+        )
+        self.choose([own, other])
+        own_row, other_row = self.recorded()["stdin"].splitlines()
+        self.assertNotIn("@", own_row)
+        self.assertIn("allison@agent-server", other_row)
 
     @unittest.skipUnless(NATIVE_FZF, "Native fzf is not installed")
     def test_remote_selection_round_trips_through_real_fzf(self):

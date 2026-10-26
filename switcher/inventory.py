@@ -16,6 +16,8 @@ from typing import Literal
 
 _REMOTE_TIMEOUT = 10
 _FRESH_SECONDS = 5 * 60  # Pi SESSION_CHECK_STALE_MS.
+# Remote accounts listed besides the SSH default; None is the default account.
+REMOTE_USERS = (None, "allison")
 
 
 @dataclass(frozen=True)
@@ -28,11 +30,19 @@ class Session:
     backend: Literal["local", "remote"]
     handle: str
     pid: int | None = None
+    user: str | None = None
 
     @property
     def key(self) -> str:
         encoded = json.dumps(
-            [self.host, self.backend, self.handle, self.session_id, self.cwd],
+            [
+                self.host,
+                self.user,
+                self.backend,
+                self.handle,
+                self.session_id,
+                self.cwd,
+            ],
             ensure_ascii=True,
         )
         return base64.urlsafe_b64encode(encoded.encode()).decode().rstrip("=")
@@ -177,7 +187,7 @@ def load_local_sessions(control_db: Path, host: str) -> list[Session]:
     return sessions
 
 
-def _parse_remote(output: str, host: str) -> list[Session]:
+def _parse_remote(output: str, host: str, user: str | None) -> list[Session]:
     try:
         payload = json.loads(output)
     except ValueError as error:
@@ -220,6 +230,7 @@ def _parse_remote(output: str, host: str) -> list[Session]:
                 status,
                 "remote",
                 row["name"],
+                user=user,
             )
         )
     if errors:
@@ -248,7 +259,9 @@ def _transient(message: str) -> bool:
     )
 
 
-def load_remote_sessions(host: str = "agent-server") -> list[Session]:
+def load_remote_sessions(
+    host: str = "agent-server", user: str | None = None
+) -> list[Session]:
     """Query only the registered installed executable and its requested host/account."""
     if host.lower() in {
         "localhost",
@@ -257,10 +270,11 @@ def load_remote_sessions(host: str = "agent-server") -> list[Session]:
         socket.gethostname().lower(),
     }:
         raise InventoryError("Local session inventory must not use SSH")
+    account = ["--user", user] if user else []
     for attempt in range(3):
         try:
             result = subprocess.run(
-                ["remote-agent", "--host", host, "list"],
+                ["remote-agent", "--host", host, *account, "list"],
                 timeout=_REMOTE_TIMEOUT,
                 capture_output=True,
                 text=True,
@@ -282,12 +296,12 @@ def load_remote_sessions(host: str = "agent-server") -> list[Session]:
                 )
                 if result.stdout.lstrip().startswith("{"):
                     try:
-                        _parse_remote(result.stdout, host)
+                        _parse_remote(result.stdout, host, user)
                     except InventoryError as error:
                         failure = InventoryError(f"{failure}: {error}", error.sessions)
             else:
                 try:
-                    return _parse_remote(result.stdout, host)
+                    return _parse_remote(result.stdout, host, user)
                 except InventoryError as error:
                     failure = error
             if attempt == 2 or not _transient(str(failure)):
@@ -328,13 +342,15 @@ def collect_sessions() -> tuple[list[Session], list[str]]:
         )
     except (OSError, sqlite3.Error, ValueError) as error:
         errors.append(f"Local inventory: {error}")
-    try:
-        sessions.extend(load_remote_sessions())
-    except InventoryError as error:
-        sessions.extend(error.sessions)
-        errors.append(f"Remote inventory (agent-server): {error}")
-    except OSError as error:
-        errors.append(f"Remote inventory (agent-server): {error}")
+    for user in REMOTE_USERS:
+        source = f"{user}@agent-server" if user else "agent-server"
+        try:
+            sessions.extend(load_remote_sessions(user=user))
+        except InventoryError as error:
+            sessions.extend(error.sessions)
+            errors.append(f"Remote inventory ({source}): {error}")
+        except OSError as error:
+            errors.append(f"Remote inventory ({source}): {error}")
     pinned = pinned_session_ids()
     return sorted(
         sessions,

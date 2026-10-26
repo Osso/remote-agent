@@ -66,7 +66,12 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
 
     columns = [("NAME", "HOST", "STATUS", "PATH")]
     columns.extend(
-        (_shorten_name(_safe(s.name)), _safe(s.host), _safe(s.status), _safe(s.cwd))
+        (
+            _shorten_name(_safe(s.name)),
+            _safe(f"{s.user}@{s.host}" if s.user else s.host),
+            _safe(s.status),
+            _safe(s.cwd),
+        )
         for s in sessions
     )
     widths = [max(_width(row[i]) for row in columns) for i in range(3)]

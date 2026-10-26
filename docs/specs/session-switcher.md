@@ -13,6 +13,11 @@ for the installed remote-agent backend or protocol.
   session names, host, and state. Local inventory reads Pi's control SQLite
   database read-only; remote inventory invokes the registered installed
   `remote-agent --host agent-server list`, not a repository build artifact.
+- [x] Remote inventory also lists `allison`'s agent-server sessions through
+  `remote-agent --host agent-server --user allison list`. Her rows display host
+  `allison@agent-server`; the account is part of selection identity, so equal
+  names across accounts stay distinct. Each account's failure is reported
+  separately without discarding other sources. No other account is listed.
 - [x] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
 - [x] Session IDs listed one per line in `$XDG_CONFIG_HOME/agent-switcher/pinned`
   (default `~/.config`) appear above all other rows, in file order; a missing file
@@ -38,8 +43,8 @@ Each session lives in one WezTerm tab. A session's terminal is the `/dev/pts`
 device on stdin of its process: the bound local Pi PID, or every local process
 the kernel names `remote-agent` (`/proc/PID/comm`: the binary, or the script under
 an interpreter) whose parsed arguments are `attach NAME` for the session's host
-(global `--host` in any position or `--host=`; absent means `agent-server`) and no
-`--user`. Several processes on one terminal are one client. WezTerm panes are listed with `wezterm cli --no-auto-start list`
+(global `--host` in any position or `--host=`; absent means `agent-server`) and
+the session's account (`--user allison` for her rows, no `--user` otherwise). Several processes on one terminal are one client. WezTerm panes are listed with `wezterm cli --no-auto-start list`
 and matched by `tty_name`; titles are never used for identity.
 
 - [x] A running session whose terminal is a WezTerm pane, including a hidden tab,
@@ -48,7 +53,7 @@ and matched by `tty_name`; titles are never used for identity.
 - [x] A session with no client opens in one new tab (`wezterm cli spawn`) of the
   lowest-numbered WezTerm window other than the picker's, or a new window when
   none exists: running remote sessions run installed `remote-agent --host HOST
-  attach NAME`; stopped local sessions run `pi --session SESSION_PATH` in their
+  [--user allison] attach NAME`; stopped local sessions run `pi --session SESSION_PATH` in their
   saved directory.
 - [x] Each activated or spawned tab is titled with the session name the picker
   shows (`wezterm cli set-tab-title`), for example `Assistant` or `wow-ui-sim`;
@@ -73,7 +78,7 @@ and matched by `tty_name`; titles are never used for identity.
 - [x] `./deploy.sh --switcher` installs the local switcher only. It does not
   replace backend/server/protocol components or restart existing sessions.
 - [x] Discovery and selection make no provider calls, scan no transcript
-  filesystem, and perform no cross-account discovery.
+  filesystem, and perform no account discovery beyond the fixed `allison` account.
 
 ## How it works
 
@@ -96,12 +101,13 @@ These paths identify the implementation scope; they do not assert acceptance.
 Checked requirements have passing backing tests at `6f39ebd`. Fixture acceptance
 is not live desktop acceptance.
 
-- `tests/test_switcher_inventory.py` (26): read-only inventory sources, process
+- `tests/test_switcher_inventory.py` (27, including Allison listing and per-account errors): read-only inventory sources, process
   identity, invalid data, partial failures, bounded retries, and remote-first ordering.
-- `tests/test_switcher_picker.py` (14): names/host/state display, selection identity,
+- `tests/test_switcher_picker.py` (15, including `allison@agent-server` display): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
   layout, remote color, and selection through native fzf's ANSI-stripped output.
-- `tests/test_switcher_main.py` (23): combined inventory without transcript changes,
+- `tests/test_switcher_main.py` (26, including Allison attach with `--user` and
+  pane reselection that ignores a same-named default-account client): combined inventory without transcript changes,
   stale selections, stopped-remote refusal, and WezTerm actions with real PTY child
   processes and executable `wezterm`/`niri` fixtures: hidden-tab activation for local
   and remote, one new tab for local resume and remote attach, new window when none
