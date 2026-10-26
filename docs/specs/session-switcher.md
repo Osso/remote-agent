@@ -180,6 +180,14 @@ default launcher and fzf (`/tmp/pi-wezterm-switcher/live_accept.py`, result
 | Second select `clank` | Title `[3/3] π - Clank sandbox - wowdecomp` 0.279 s after Enter; same client PID, no new attach |
 | Detach (Ctrl+\\) | Client exited, tab closed; backend PID/child PID/conversation unchanged |
 
+Local live run at `1e0eb3c` (`live_local.py`, result `live-local.json`):
+
+| Step | Observation |
+| --- | --- |
+| Hidden running local Pi | Assistant tab hidden (`[1/2] zsh`); selecting `Assistant` showed `[2/2] π - Assistant - osso` 0.134 s after Enter; same PID 1481183, pane count unchanged |
+| Stopped local resume | A disposable one-message session opened in exactly one new tab; its `pi` process ran on that pane's PTY in the saved cwd and the same session file, running 1.865 s after Enter; `/quit` closed the tab |
+| Cleanup | The disposable session was removed with Pi's native `deleteSessionTree` (trash); metadata and picker row gone |
+
 Active tab is read from the window title: `wezterm cli list-clients`
 `focused_pane_id` did not follow `activate-pane` and is not evidence.
 `live-refusal.txt`: selecting `clank` while attached in Ghostty displayed
@@ -198,8 +206,8 @@ allowed a duplicate tab, and a wrapper with its child on one PTY reported ambigu
 
 - [ ] Physical Super+A launch and Super+S Session Menu acceptance remain unverified;
   source binding review and Niri validation do not test physical shortcuts.
-- [ ] Local Pi activation/resume and multiple-window refusal have fixtures only;
-  live acceptance covered a remote session.
+- [ ] Multiple-window refusal has fixtures only. Physical Super+A keypresses were not
+  injected; live runs executed the same installed `agent-switcher` command.
 - [ ] Stopped-remote refusal is tested, but its fixture asserts only nonzero exit,
   a stopped message, and no replacement launch. Exact manual resume/new-name
   instructions lack a backing assertion, so that full requirement stays unchecked.
