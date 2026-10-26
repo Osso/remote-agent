@@ -162,6 +162,15 @@ class PickerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "selection"):
                     self.choose([self.session("one")])
 
+    def test_long_names_keep_host_and_state_visible_without_changing_identity(self):
+        session = self.session("long", name="Very long session title " * 12)
+        self.write_fzf("print(rows[0])")
+        self.assertIs(self.choose([session]), session)
+        row = self.recorded()["stdin"].split("\t", 1)[1]
+        self.assertLess(row.index("aso"), 60)
+        self.assertIn("…", row)
+        self.assertIn("running", row)
+
     def test_empty_healthy_inventory_reports_no_sessions_without_fzf(self):
         output = io.StringIO()
         with contextlib.redirect_stderr(output), contextlib.redirect_stdout(output):

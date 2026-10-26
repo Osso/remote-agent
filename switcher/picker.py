@@ -29,6 +29,18 @@ def _width(value: str) -> int:
     )
 
 
+def _shorten_name(value: str) -> str:
+    maximum_cells = 48
+    if _width(value) <= maximum_cells:
+        return value
+    cells = 0
+    for index, char in enumerate(value):
+        cells += _width(char)
+        if cells >= maximum_cells:
+            return value[:index] + "…"
+    return value
+
+
 def choose_session(sessions: list[Session], errors: list[str]) -> Session | None:
     """Return the selected original session, or None for cancellation/empty inventory.
 
@@ -44,7 +56,7 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
 
     columns = [("NAME", "HOST", "STATUS", "PATH")]
     columns.extend(
-        tuple(_safe(value) for value in (s.name, s.host, s.status, s.cwd))
+        (_shorten_name(_safe(s.name)), _safe(s.host), _safe(s.status), _safe(s.cwd))
         for s in sessions
     )
     widths = [max(_width(row[i]) for row in columns) for i in range(3)]
