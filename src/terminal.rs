@@ -409,6 +409,9 @@ fn update_bytes(update: &DisplayUpdate) -> usize {
             .sum::<usize>()
 }
 
+/// 256-color background for physical cells outside the negotiated PTY size.
+const MARGIN_COLOR: u8 = 236;
+
 /// Renders the virtual screen at physical row zero without an alternate screen.
 /// Physical size is validated by render(), as construction/resize are infallible.
 pub struct DisplayRenderer {
@@ -476,12 +479,17 @@ impl DisplayRenderer {
         if !duplicate {
             self.apply_display(update)?;
         }
-        if reset || resized || self.repaint {
+        let margin_lost = if reset || resized || self.repaint {
             self.clear_viewport(&mut output);
+            true
         } else {
             // Each native history row scrolled the physical viewport up by one.
             let scrolled = native_rows - self.native_rows;
             self.painted.drain(..scrolled.min(self.painted.len()));
+            scrolled > 0
+        };
+        if margin_lost {
+            self.write_margin(&mut output, update.size);
         }
         self.write_changed_rows(&mut output);
         if !duplicate || reset {
@@ -560,6 +568,22 @@ impl DisplayRenderer {
     fn clear_viewport(&mut self, output: &mut Vec<u8>) {
         output.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
         self.painted.clear();
+    }
+
+    /// Greys physical cells outside the PTY, which another smaller client pins.
+    fn write_margin(&self, output: &mut Vec<u8>, display: Size) {
+        let fill = format!("\x1b[48;5;{MARGIN_COLOR}m");
+        if self.physical.cols > display.cols {
+            for row in 1..=display.rows {
+                let start = format!("\x1b[{row};{}H{fill}\x1b[K", display.cols + 1);
+                output.extend_from_slice(start.as_bytes());
+            }
+        }
+        if self.physical.rows > display.rows {
+            let below = format!("\x1b[{};1H{fill}\x1b[J", display.rows + 1);
+            output.extend_from_slice(below.as_bytes());
+        }
+        output.extend_from_slice(b"\x1b[0m");
     }
 
     /// Paints only virtual rows that differ from the physical viewport.
@@ -851,6 +875,35 @@ mod tests {
     fn one_changed_pi_row_sends_a_one_row_wire_update() {
         let cost = typed_editor_row_cost(PI_SIZE);
         assert!(cost.live_wire * 20 < cost.reference_wire, "{cost:?}");
+    }
+
+    fn assert_margin_grey(outer: &vt100::Parser, display: Size) {
+        let (rows, cols) = outer.screen().size();
+        for row in 0..rows.get() {
+            for col in 0..cols.get() {
+                let cell = outer.screen().cell(row, col).unwrap();
+                let outside = row >= display.rows || col >= display.cols;
+                let expected = if outside {
+                    vt100::Color::Idx(MARGIN_COLOR)
+                } else {
+                    vt100::Color::Default
+                };
+                assert_eq!(cell.bgcolor(), expected, "cell {row},{col}");
+            }
+        }
+    }
+
+    #[test]
+    fn space_outside_a_smaller_pty_is_grey_after_attach_and_scroll() {
+        let display = size(4, 10);
+        let mut state = TerminalState::new(display, 10_000).unwrap();
+        let (mut renderer, mut outer) = attach_client(&state, size(6, 20), 100);
+        assert_margin_grey(&outer, display);
+        let scrolled = state.feed(b"a\r\nb\r\nc\r\nd\r\ne\r\nf").unwrap();
+        assert_eq!(scrolled.scrolled.len(), 2);
+        outer.process(&renderer.render(&scrolled).unwrap());
+        assert_margin_grey(&outer, display);
+        assert_eq!(all_text(&mut outer).matches('a').count(), 1);
     }
 
     #[test]
