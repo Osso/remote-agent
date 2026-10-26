@@ -86,7 +86,7 @@ These paths identify the implementation scope; they do not assert acceptance.
 
 ## Tests asserting this spec
 
-Checked requirements have passing backing tests at `e855767`. Fixture acceptance
+Checked requirements have passing backing tests at `6f39ebd`. Fixture acceptance
 is not live desktop acceptance.
 
 - `tests/test_switcher_inventory.py` (26): read-only inventory sources, process
@@ -174,7 +174,7 @@ default launcher and fzf (`/tmp/pi-wezterm-switcher/live_accept.py`, result
 | Step | Observation |
 | --- | --- |
 | Before | `clank` backend PID/child PID `1164956`/`1164957`, conversation `50a99d03…`, running |
-| Launch | `agent-switcher` opened the picker in the running GUI (`wezterm-gui` PID unchanged) |
+| Launch | `agent-switcher` opened the picker; `wezterm start` reported spawning via the existing GUI instance |
 | First select `clank` | One attach client (`comm` `remote-agent`) in a new tab of the main window, 0.42 s after Enter; Niri focused WezTerm; picker closed |
 | Hide | Main window title `[1/3] zsh` |
 | Second select `clank` | Title `[3/3] π - Clank sandbox - wowdecomp` 0.279 s after Enter; same client PID, no new attach |

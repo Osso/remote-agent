@@ -249,7 +249,8 @@ title. Otherwise the session opens in one new tab: running remote sessions throu
 installed remote-agent attachment to the same runtime, stopped local sessions with
 `pi --session SESSION_PATH` in their saved directory. Sessions open outside
 WezTerm (for example Ghostty), ambiguous attachments and multiple WezTerm windows
-fail explicitly without starting anything. `--open` outside WezTerm needs
+fail explicitly without starting anything. When the target tab is in the picker's
+own window, that window is already focused and Niri is not consulted. `--open` outside WezTerm needs
 `WEZTERM_UNIX_SOCKET` set to the GUI socket.
 Stopped remote saved names require manual resume with a new name; automatic
 rename and UUID handling are not provided. Unknown or stale selections fail

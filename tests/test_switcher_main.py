@@ -1,5 +1,6 @@
 """Switcher CLI tests use isolated SQLite, real child processes and executable fixtures."""
 
+import contextlib
 import json
 import os
 import pty
@@ -288,10 +289,8 @@ else:
         self.assertEqual(self.recorded(), [])
 
     def stop_group(self, child):
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(child.pid, 9)
-        except ProcessLookupError:
-            pass
         child.wait(timeout=5)
 
     def stop_child(self, child):
