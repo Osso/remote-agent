@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Open the laptop and agent-server Pi session selector."""
+
+from switcher.main import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

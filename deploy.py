@@ -344,6 +344,23 @@ def deploy_worker(host=DEFAULT_HOST):
         )
 
 
+def install_switcher():
+    """Install only the local frontend; preserve remote clients, workers and maps."""
+    source = ROOT / "agent-switcher"
+    if not source.is_file() or not os.access(source, os.X_OK):
+        raise RuntimeError("Missing executable switcher: " + str(source))
+    destination = Path.home() / ".local/bin/agent-switcher"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink():
+        if destination.resolve() != source.resolve():
+            raise RuntimeError("Not replacing foreign symlink " + str(destination))
+    elif destination.exists():
+        raise RuntimeError("Not replacing unmanaged " + str(destination))
+    else:
+        destination.symlink_to(source)
+    print("agent-switcher installed locally: " + str(destination))
+
+
 def deploy_remote(profile, target, program, request, capture_output=False):
     encoded = base64.b64encode(program.encode()).decode()
     argv = [
@@ -368,13 +385,21 @@ def deploy_remote(profile, target, program, request, capture_output=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--rust",
         action="store_true",
         help="Install the native client as remote-agent and the Linux server",
     )
+    mode.add_argument(
+        "--switcher",
+        action="store_true",
+        help="Install only the local Pi session switcher",
+    )
     args = parser.parse_args()
-    if args.rust:
+    if args.switcher:
+        install_switcher()
+    elif args.rust:
         deploy_rust(args.host)
     else:
         deploy_worker(args.host)
