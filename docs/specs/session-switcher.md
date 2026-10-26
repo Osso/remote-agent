@@ -164,20 +164,21 @@ terminal rendering, not physical global-key acceptance.
 
 ### WezTerm tab selection proof
 
-At `8117cef`, `./run-tests.sh unit 'test_switcher_*.py'` passes 62/62; Ruff check and
+At `6f39ebd`, `./run-tests.sh unit 'test_switcher_*.py'` passes 66/66; Ruff check and
 format of switcher files are clean.
 
-Installed live runs against the existing WezTerm GUI, driving the real default
-launcher and fzf (`/tmp/pi-wezterm-switcher/live_accept.py`, result
-`live-accept.json`):
+Installed live run at `6f39ebd` against the existing WezTerm GUI, driving the real
+default launcher and fzf (`/tmp/pi-wezterm-switcher/live_accept.py`, result
+`live-accept-2.json`; the main window also held a zsh tab and the Assistant tab):
 
 | Step | Observation |
 | --- | --- |
-| Launch | `agent-switcher` opened the picker in the running GUI (no new GUI process) |
-| First select `clank` | One attach client in a new tab of the main window, 0.385 s after Enter; Niri focused WezTerm; picker closed |
-| Hide | Main window title `[1/2] zsh` |
-| Second select `clank` | Title `[2/2] π - Clank sandbox - wowdecomp` 0.277 s after Enter; same client PID, no new attach |
-| Detach (Ctrl+\\) | Client exited, tab closed; backend PID/child PID `1164956`/`1164957` unchanged |
+| Before | `clank` backend PID/child PID `1164956`/`1164957`, conversation `50a99d03…`, running |
+| Launch | `agent-switcher` opened the picker in the running GUI (`wezterm-gui` PID unchanged) |
+| First select `clank` | One attach client (`comm` `remote-agent`) in a new tab of the main window, 0.42 s after Enter; Niri focused WezTerm; picker closed |
+| Hide | Main window title `[1/3] zsh` |
+| Second select `clank` | Title `[3/3] π - Clank sandbox - wowdecomp` 0.279 s after Enter; same client PID, no new attach |
+| Detach (Ctrl+\\) | Client exited, tab closed; backend PID/child PID/conversation unchanged |
 
 Active tab is read from the window title: `wezterm cli list-clients`
 `focused_pane_id` did not follow `activate-pane` and is not evidence.
@@ -188,7 +189,10 @@ Live runs found three defects, each fixed with a failing test first: exact-argv
 matching missed `attach NAME --host H` and created a duplicate client (`a076ddd`);
 an unfocused picker counted as a second WezTerm window (`33a1b81`); the transient
 `wezterm cli spawn -- remote-agent ...` process counted as a client (`8117cef`).
-The verifier finding that multi-window refusal spawned first was fixed in `751be3d`.
+Verifier findings fixed: multi-window refusal spawned first (`751be3d`); any program
+given `remote-agent` as argv[1] counted as a client, a terminal-less remote client
+allowed a duplicate tab, and a wrapper with its child on one PTY reported ambiguity
+(`6f39ebd`).
 
 ## Known gaps (current cycle)
 
