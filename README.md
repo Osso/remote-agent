@@ -214,6 +214,41 @@ Run `40226091616` passed both jobs at `fdaa0d6`. Installed macOS-to-Linux
 attachment passed at `7831e16` on an arm64 macOS 26.6.2 laptop; see the
 [proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remaining-acceptance).
 
+## Pi session switcher
+
+The local `agent-switcher` provides searchable Pi sessions from the laptop's
+read-only Pi control database and the configured `agent-server` account, through
+its registered installed `remote-agent` client.
+
+```text
+./deploy.sh --switcher
+agent-switcher
+agent-switcher --list
+agent-switcher --pick
+agent-switcher --open KEY
+```
+
+Deployment is local-only; it does not replace the remote backend, server, or
+protocol. The selector requires Ghostty and fzf; local window focus uses Niri.
+Default invocation opens Ghostty with fzf; `--pick` uses the current terminal,
+`--list` emits JSON, and `--open` revalidates a selection key before acting.
+Esc cancels. Errors must remain visible. The desktop binding contract is Super+A
+for this selector, Super+S unchanged for Noctalia Session Menu, and removal of
+the Settings shortcut.
+
+A running local session can be focused only when its exact native Pi title,
+process ancestry, and uniqueness identify one visible Ghostty window. Hidden or
+ambiguous tabs report already-open/unavailable, never a duplicate launch.
+Running remote sessions use installed remote-agent attachment to the same runtime.
+Stopped local sessions use `pi --session SESSION_PATH` in their saved directory.
+Stopped remote saved names require manual resume with a new name; automatic
+rename and UUID handling are not provided. Unknown or stale selections fail
+without fallback. Discovery makes no provider calls, scans no transcripts, and
+does not discover other accounts.
+
+Implementation and acceptance remain unverified in this documentation update;
+see the [session-switcher contract](docs/specs/session-switcher.md).
+
 ## Session commands
 
 After deployment, ensure `~/.local/bin` is in the controller's `PATH`. Before
