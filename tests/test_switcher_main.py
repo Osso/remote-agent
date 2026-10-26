@@ -442,9 +442,9 @@ else:
         )
         self.set_windows(
             [
-                {"id": 91, "app_id": WEZTERM_APP, "is_focused": True},
-                {"id": 92, "app_id": WEZTERM_APP, "is_focused": False},
-                {"id": 93, "app_id": "firefox", "is_focused": False},
+                {"id": 91, "app_id": WEZTERM_APP, "title": "Agent sessions"},
+                {"id": 92, "app_id": WEZTERM_APP, "title": "zsh"},
+                {"id": 93, "app_id": "firefox", "title": "Agent sessions"},
             ]
         )
         result = self.run_cli("--open", self.entry_key("remote"))

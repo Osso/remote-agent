@@ -45,8 +45,9 @@ and matched by `tty_name`; titles are never used for identity.
 - [x] A session open outside WezTerm (for example a Ghostty tab) reports its
   terminal and starts nothing. A running local Pi without a terminal reports
   already-open. Two clients for one remote session report ambiguity.
-- [x] Niri focus targets the only `org.wezfurlong.wezterm` window that is not the
-  focused picker window. Two or more candidates fail before any activation or
+- [x] Niri focus targets the only `org.wezfurlong.wezterm` window that is not a
+  picker window, recognized by the `Agent sessions` title the picker sets; the
+  picker may be unfocused. Two or more candidates fail before any activation or
   spawn instead of guessing; WezTerm X11 windows expose no window ID that Niri reports.
 - [ ] For a stopped remote saved name, report explicit manual resume/new-name
   instructions. Do not start under the same existing session directory, invent

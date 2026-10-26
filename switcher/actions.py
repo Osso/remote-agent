@@ -8,6 +8,7 @@ from pathlib import Path
 from .inventory import Session
 
 WEZTERM_APP = "org.wezfurlong.wezterm"
+PICKER_TITLE = "Agent sessions"
 DEFAULT_HOST = "agent-server"  # remote-agent's implicit --host.
 
 
@@ -113,14 +114,14 @@ def _session_terminals(session: Session) -> list[str]:
 
 
 def _niri_window(target_window: int, picker_window: int | None) -> int | None:
-    """The only WezTerm Niri window that is not the picker's own; None if already focused."""
+    """The only WezTerm Niri window not titled as a picker; None if already focused."""
     if target_window == picker_window:
         return None
     candidates = [
         window
         for window in _list_windows()
         if window.get("app_id") == WEZTERM_APP
-        and not (picker_window is not None and window.get("is_focused"))
+        and not (picker_window is not None and window.get("title") == PICKER_TITLE)
     ]
     if len(candidates) != 1 or type(candidates[0].get("id")) is not int:
         raise RuntimeError(

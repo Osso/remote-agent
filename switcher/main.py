@@ -9,7 +9,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .actions import open_session
+from .actions import PICKER_TITLE, open_session
 from .inventory import (
     Session,
     collect_sessions,
@@ -49,7 +49,7 @@ def _pick() -> int:
         raise RuntimeError(
             "The picker needs a terminal. Run agent-switcher to open it in WezTerm."
         )
-    sys.stdout.write("\x1b]0;Agent sessions\x07")
+    sys.stdout.write(f"\x1b]0;{PICKER_TITLE}\x07")
     sys.stdout.flush()
     last_error: list[str] = []
     while True:
