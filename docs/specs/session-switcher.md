@@ -158,22 +158,38 @@ terminal rendering, not physical global-key acceptance.
 
 ### WezTerm tab selection proof
 
-At `a076ddd`, `./run-tests.sh unit 'test_switcher_*.py'` passes 61/61; Ruff check and
-format are clean. Installed live run against the existing WezTerm GUI
-(`/tmp/pi-wezterm-switcher/live-refusal.txt`): `agent-switcher` opened the picker in
-the running GUI; selecting `clank`, attached in Ghostty, displayed
-`Session is open outside WezTerm on /dev/pts/7`, left the only client (the Ghostty
-one) unchanged, and Escape closed the picker. An earlier live run at `33a94ff`
-exposed that exact-argv matching missed `attach clank --host agent-server`, creating
-a duplicate client; it was detached and `a076ddd` fixed matching.
+At `8117cef`, `./run-tests.sh unit 'test_switcher_*.py'` passes 62/62; Ruff check and
+format of switcher files are clean.
+
+Installed live runs against the existing WezTerm GUI, driving the real default
+launcher and fzf (`/tmp/pi-wezterm-switcher/live_accept.py`, result
+`live-accept.json`):
+
+| Step | Observation |
+| --- | --- |
+| Launch | `agent-switcher` opened the picker in the running GUI (no new GUI process) |
+| First select `clank` | One attach client in a new tab of the main window, 0.385 s after Enter; Niri focused WezTerm; picker closed |
+| Hide | Main window title `[1/2] zsh` |
+| Second select `clank` | Title `[2/2] π - Clank sandbox - wowdecomp` 0.277 s after Enter; same client PID, no new attach |
+| Detach (Ctrl+\\) | Client exited, tab closed; backend PID/child PID `1164956`/`1164957` unchanged |
+
+Active tab is read from the window title: `wezterm cli list-clients`
+`focused_pane_id` did not follow `activate-pane` and is not evidence.
+`live-refusal.txt`: selecting `clank` while attached in Ghostty displayed
+`Session is open outside WezTerm on /dev/pts/7` and started nothing.
+
+Live runs found three defects, each fixed with a failing test first: exact-argv
+matching missed `attach NAME --host H` and created a duplicate client (`a076ddd`);
+an unfocused picker counted as a second WezTerm window (`33a1b81`); the transient
+`wezterm cli spawn -- remote-agent ...` process counted as a client (`8117cef`).
+The verifier finding that multi-window refusal spawned first was fixed in `751be3d`.
 
 ## Known gaps (current cycle)
 
 - [ ] Physical Super+A launch and Super+S Session Menu acceptance remain unverified;
   source binding review and Niri validation do not test physical shortcuts.
-- [ ] Live hidden-tab activation and new-tab spawn are not yet proven: every remote
-  session was attached in Ghostty during acceptance. Local Pi activation/resume
-  and multiple-window refusal have fixtures only.
+- [ ] Local Pi activation/resume and multiple-window refusal have fixtures only;
+  live acceptance covered a remote session.
 - [ ] Stopped-remote refusal is tested, but its fixture asserts only nonzero exit,
   a stopped message, and no replacement launch. Exact manual resume/new-name
   instructions lack a backing assertion, so that full requirement stays unchecked.
