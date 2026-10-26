@@ -246,8 +246,8 @@ rename and UUID handling are not provided. Unknown or stale selections fail
 without fallback. Discovery makes no provider calls, scans no transcripts, and
 does not discover other accounts.
 
-Implementation and acceptance remain unverified in this documentation update;
-see the [session-switcher contract](docs/specs/session-switcher.md).
+See the [session-switcher contract](docs/specs/session-switcher.md) for verified
+behavior, test evidence, and remaining desktop acceptance limits.
 
 ## Session commands
 
