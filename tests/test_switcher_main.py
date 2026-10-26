@@ -112,9 +112,11 @@ else:
     def terminal_process(self, *argv):
         controller, terminal = pty.openpty()
         self.addCleanup(os.close, controller)
-        child = subprocess.Popen(argv or SLEEPER, stdin=terminal)
+        child = subprocess.Popen(
+            argv or SLEEPER, stdin=terminal, start_new_session=True
+        )
         os.close(terminal)
-        self.addCleanup(self.stop_child, child)
+        self.addCleanup(self.stop_group, child)
         return child, os.readlink(f"/proc/{child.pid}/fd/0")
 
     def attach_process(self, *args):
@@ -285,6 +287,13 @@ else:
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.recorded(), [])
 
+    def stop_group(self, child):
+        try:
+            os.killpg(child.pid, 9)
+        except ProcessLookupError:
+            pass
+        child.wait(timeout=5)
+
     def stop_child(self, child):
         if child.poll() is None:
             child.kill()
@@ -420,6 +429,63 @@ else:
         result = self.run_cli("--open", self.entry_key("remote"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.recorded()[0]["args"][2], "spawn")
+
+    def test_a_program_given_remote_agent_as_an_argument_is_not_a_client(self):
+        # argv ["printf", "remote-agent", "attach", NAME]; the running program is Python.
+        script = self.home / "remote-agent"
+        script.write_text("import time\ntime.sleep(60)\n")
+        controller, terminal = pty.openpty()
+        self.addCleanup(os.close, controller)
+        child = subprocess.Popen(
+            ["printf", "remote-agent", "attach", "remote-work"],
+            executable=sys.executable,
+            cwd=self.home,
+            stdin=terminal,
+            start_new_session=True,
+        )
+        os.close(terminal)
+        self.addCleanup(self.stop_group, child)
+        self.set_panes(
+            [self.pane(31, window=3, tty=os.readlink(f"/proc/{child.pid}/fd/0"))]
+        )
+        result = self.run_cli("--open", self.entry_key("remote"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.recorded()[0]["args"][2], "spawn")
+
+    def test_terminal_less_remote_client_is_not_duplicated(self):
+        attached = self.home / "attached"
+        attached.mkdir(exist_ok=True)
+        client = attached / "remote-agent"
+        client.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+        client.chmod(0o755)
+        child = subprocess.Popen(
+            [str(client), "attach", "remote-work"], stdin=subprocess.DEVNULL
+        )
+        self.addCleanup(self.stop_child, child)
+        result = self.run_cli("--open", self.entry_key("remote"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already open", result.stderr.lower())
+        self.assertEqual(self.recorded(), [])
+
+    def test_client_and_its_wrapper_on_one_terminal_are_one_session(self):
+        attached = self.home / "attached"
+        attached.mkdir(exist_ok=True)
+        client = attached / "remote-agent"
+        client.write_text(
+            f"#!{sys.executable}\nimport os,subprocess,sys,time\n"
+            "if not os.environ.get('CHILD'):\n"
+            " subprocess.Popen(sys.argv, env={**os.environ,'CHILD':'1'})\n"
+            "time.sleep(60)\n"
+        )
+        client.chmod(0o755)
+        _, terminal = self.terminal_process(str(client), "attach", "remote-work")
+        self.set_panes([self.pane(31, window=3, tty=terminal)])
+        time.sleep(0.5)
+        result = self.run_cli("--open", self.entry_key("remote"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.recorded()[0]["args"][2:], ["activate-pane", "--pane-id", "31"]
+        )
 
     def test_session_open_outside_wezterm_is_not_duplicated(self):
         child, terminal = self.terminal_process()

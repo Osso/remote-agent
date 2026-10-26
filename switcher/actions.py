@@ -62,7 +62,8 @@ def _terminal(pid: int) -> str | None:
         path = os.readlink(f"/proc/{pid}/fd/0")
     except OSError:
         return None
-    return path if path.startswith("/dev/pts/") else None
+    live = path.startswith("/dev/pts/") and not path.endswith(" (deleted)")
+    return path if live else None
 
 
 def _attach_target(args: list[str]) -> tuple[str, str | None, list[str]]:
@@ -79,40 +80,42 @@ def _attach_target(args: list[str]) -> tuple[str, str | None, list[str]]:
     return options["--host"] or "", options["--user"], positionals
 
 
-def _attach_terminals(session: Session) -> list[str]:
-    """Terminals of local remote-agent clients attached to this account's session."""
+def _attach_clients(session: Session) -> list[int]:
+    """PIDs of local remote-agent clients attached to this account's session."""
     expected = (session.host, None, ["attach", session.handle])
-    terminals = []
+    clients = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            argv = (entry / "cmdline").read_bytes().decode(errors="replace")
+            # The kernel names a process after the executed file: the binary, or
+            # the script under an interpreter (whose path is then argv[1]).
+            if (entry / "comm").read_text().strip() != "remote-agent":
+                continue
+            args = (entry / "cmdline").read_bytes().decode(errors="replace")
         except OSError:
             continue
-        args = argv.split("\0")[:-1]
-        # The program is argv[0], or argv[1] under a script interpreter; later
-        # tokens are arguments of another command, such as `wezterm cli spawn`.
-        if any(
-            Path(arg).name == "remote-agent"
-            and _attach_target(args[index + 1 :]) == expected
-            for index, arg in enumerate(args[:2])
-        ):
-            terminal = _terminal(int(entry.name))
-            if terminal:
-                terminals.append(terminal)
-    return terminals
+        args = args.split("\0")[:-1]
+        program = next(
+            (i for i, arg in enumerate(args[:2]) if Path(arg).name == "remote-agent"),
+            None,
+        )
+        if program is not None and _attach_target(args[program + 1 :]) == expected:
+            clients.append(int(entry.name))
+    return clients
 
 
 def _session_terminals(session: Session) -> list[str]:
     if session.backend == "remote":
-        return _attach_terminals(session)
-    terminal = _terminal(session.pid) if session.pid else None
-    if terminal is None:
+        pids = _attach_clients(session)
+    else:
+        pids = [session.pid] if session.pid else [0]
+    terminals = {_terminal(pid) for pid in pids}
+    if None in terminals:
         raise RuntimeError(
             "Session is already open, but its process has no terminal. No duplicate was started."
         )
-    return [terminal]
+    return sorted(terminals)
 
 
 def _niri_window(target_window: int, picker_window: int | None) -> int | None:

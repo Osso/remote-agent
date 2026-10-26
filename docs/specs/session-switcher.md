@@ -31,10 +31,11 @@ for the installed remote-agent backend or protocol.
 ### Open and resume
 
 Each session lives in one WezTerm tab. A session's terminal is the `/dev/pts`
-device on stdin of its process: the bound local Pi PID, or every local
-`remote-agent` client whose parsed arguments are `attach NAME` for the session's
-host (global `--host` in any position or `--host=`; absent means `agent-server`)
-and no `--user`. WezTerm panes are listed with `wezterm cli --no-auto-start list`
+device on stdin of its process: the bound local Pi PID, or every local process
+the kernel names `remote-agent` (`/proc/PID/comm`: the binary, or the script under
+an interpreter) whose parsed arguments are `attach NAME` for the session's host
+(global `--host` in any position or `--host=`; absent means `agent-server`) and no
+`--user`. Several processes on one terminal are one client. WezTerm panes are listed with `wezterm cli --no-auto-start list`
 and matched by `tty_name`; titles are never used for identity.
 
 - [x] A running session whose terminal is a WezTerm pane, including a hidden tab,
@@ -46,12 +47,14 @@ and matched by `tty_name`; titles are never used for identity.
   attach NAME`; stopped local sessions run `pi --session SESSION_PATH` in their
   saved directory.
 - [x] A session open outside WezTerm (for example a Ghostty tab) reports its
-  terminal and starts nothing. A running local Pi without a terminal reports
-  already-open. Two clients for one remote session report ambiguity.
+  terminal and starts nothing. A running local Pi or remote client without a live
+  terminal reports already-open. Clients on two terminals report ambiguity.
 - [x] Niri focus targets the only `org.wezfurlong.wezterm` window that is not a
   picker window, recognized by the `Agent sessions` title the picker sets; the
   picker may be unfocused. Two or more candidates fail before any activation or
   spawn instead of guessing; WezTerm X11 windows expose no window ID that Niri reports.
+  When the target is the picker's own window (`--pick` run inside a session window),
+  it is already focused and Niri is not consulted.
 - [ ] For a stopped remote saved name, report explicit manual resume/new-name
   instructions. Do not start under the same existing session directory, invent
   UUID handling, or automatically rename the session.
@@ -86,12 +89,12 @@ These paths identify the implementation scope; they do not assert acceptance.
 Checked requirements have passing backing tests at `e855767`. Fixture acceptance
 is not live desktop acceptance.
 
-- `tests/test_switcher_inventory.py` (25): read-only inventory sources, process
+- `tests/test_switcher_inventory.py` (26): read-only inventory sources, process
   identity, invalid data, partial failures, bounded retries, and remote-first ordering.
 - `tests/test_switcher_picker.py` (14): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
   layout, remote color, and selection through native fzf's ANSI-stripped output.
-- `tests/test_switcher_main.py` (19): combined inventory without transcript changes,
+- `tests/test_switcher_main.py` (23): combined inventory without transcript changes,
   stale selections, stopped-remote refusal, and WezTerm actions with real PTY child
   processes and executable `wezterm`/`niri` fixtures: hidden-tab activation for local
   and remote, one new tab for local resume and remote attach, new window when none
