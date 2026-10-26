@@ -14,6 +14,9 @@ for the installed remote-agent backend or protocol.
   database read-only; remote inventory invokes the registered installed
   `remote-agent --host agent-server list`, not a repository build artifact.
 - [x] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
+- [x] Session IDs listed one per line in `$XDG_CONFIG_HOME/agent-switcher/pinned`
+  (default `~/.config`) appear above all other rows, in file order; a missing file
+  pins nothing. This keeps the machine assistant at the top.
 - [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
 - [x] Default invocation opens a WezTerm window with an fzf selector through
   `wezterm start`, reusing the running WezTerm GUI. `--pick` runs the selector in

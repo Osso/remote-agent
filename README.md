@@ -232,7 +232,9 @@ Deployment is local-only; it does not replace the remote backend, server, or
 protocol. The selector requires WezTerm and fzf; window focus uses Niri.
 Default invocation opens a WezTerm window with fzf; `--pick` uses the current terminal,
 `--list` emits JSON, and `--open` revalidates a selection key before acting.
-Named remote sessions appear first, alphabetically, above the local sessions.
+Session IDs listed one per line in `~/.config/agent-switcher/pinned` appear at
+the top, in file order. Named remote sessions follow, alphabetically, above the
+local sessions.
 Remote rows are cyan; local rows use the default foreground, with host/state labels
 visible in both groups.
 The prompt and initial list start at the top; typing retains normal search ranking.

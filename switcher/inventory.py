@@ -308,6 +308,16 @@ def local_control_db_path() -> Path:
     return state_dir / "control.sqlite"
 
 
+def pinned_session_ids() -> list[str]:
+    """Session IDs listed one per line in agent-switcher/pinned; shown first, in order."""
+    config = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    try:
+        lines = (Path(config) / "agent-switcher" / "pinned").read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    return [line.strip() for line in lines if line.strip()]
+
+
 def collect_sessions() -> tuple[list[Session], list[str]]:
     """Merge independent sources; return source errors for visible presentation."""
     sessions: list[Session] = []
@@ -325,9 +335,13 @@ def collect_sessions() -> tuple[list[Session], list[str]]:
         errors.append(f"Remote inventory (agent-server): {error}")
     except OSError as error:
         errors.append(f"Remote inventory (agent-server): {error}")
+    pinned = pinned_session_ids()
     return sorted(
         sessions,
         key=lambda session: (
+            pinned.index(session.session_id)
+            if session.session_id in pinned
+            else len(pinned),
             session.backend != "remote",
             session.name.casefold(),
             session.host,

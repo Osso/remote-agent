@@ -449,6 +449,21 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertEqual([s.backend for s in sessions], ["remote", "remote", "local"])
 
+    def test_pinned_session_ids_precede_remote_sessions_in_file_order(self):
+        self.metadata("assistant", name="Zulu assistant")
+        self.metadata("other", name="Alpha local")
+        self.remote_payload([self.remote_row(name="Bravo remote")])
+        config = self.root / "config" / "agent-switcher"
+        config.mkdir(parents=True)
+        (config / "pinned").write_text("assistant\n")
+        os.environ["XDG_CONFIG_HOME"] = str(self.root / "config")
+        sessions, errors = inventory.collect_sessions()
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [s.name for s in sessions],
+            ["Zulu assistant", "Bravo remote", "Alpha local"],
+        )
+
     def test_collect_default_db_resolution_and_merge(self):
         self.metadata(name="Zulu")
         self.remote_payload([self.remote_row(name="Alpha")])
