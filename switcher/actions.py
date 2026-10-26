@@ -8,6 +8,7 @@ from pathlib import Path
 from .inventory import Session
 
 WEZTERM_APP = "org.wezfurlong.wezterm"
+DEFAULT_HOST = "agent-server"  # remote-agent's implicit --host.
 
 
 def _run(arguments: list[str]) -> str:
@@ -63,9 +64,23 @@ def _terminal(pid: int) -> str | None:
     return path if path.startswith("/dev/pts/") else None
 
 
+def _attach_target(args: list[str]) -> tuple[str, str | None, list[str]]:
+    """Host, user and positionals of remote-agent arguments; --host/--user are global."""
+    options: dict[str, str | None] = {"--host": DEFAULT_HOST, "--user": None}
+    positionals = []
+    remaining = iter(args)
+    for arg in remaining:
+        option, separator, value = arg.partition("=")
+        if option in options:
+            options[option] = value if separator else next(remaining, "")
+        else:
+            positionals.append(arg)
+    return options["--host"] or "", options["--user"], positionals
+
+
 def _attach_terminals(session: Session) -> list[str]:
-    """Terminals of local clients running exactly `remote-agent --host H attach NAME`."""
-    expected = ["--host", session.host, "attach", session.handle]
+    """Terminals of local remote-agent clients attached to this account's session."""
+    expected = (session.host, None, ["attach", session.handle])
     terminals = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -76,7 +91,8 @@ def _attach_terminals(session: Session) -> list[str]:
             continue
         args = argv.split("\0")[:-1]
         if any(
-            Path(arg).name == "remote-agent" and args[index + 1 :] == expected
+            Path(arg).name == "remote-agent"
+            and _attach_target(args[index + 1 :]) == expected
             for index, arg in enumerate(args)
         ):
             terminal = _terminal(int(entry.name))

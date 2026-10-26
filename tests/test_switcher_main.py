@@ -117,14 +117,14 @@ else:
         self.addCleanup(self.stop_child, child)
         return child, os.readlink(f"/proc/{child.pid}/fd/0")
 
-    def attach_process(self, handle="remote-work"):
+    def attach_process(self, *args):
         attached = self.home / "attached"
         attached.mkdir(exist_ok=True)
         client = attached / "remote-agent"
         client.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
         client.chmod(0o755)
         return self.terminal_process(
-            str(client), "--host", "agent-server", "attach", handle
+            str(client), *(args or ("--host", "agent-server", "attach", "remote-work"))
         )
 
     def write_command(self, name, body):
@@ -381,10 +381,26 @@ else:
         )
 
     def test_attachment_of_another_remote_name_is_not_selected(self):
-        self.attach_process("remote-work-2")
+        self.attach_process("--host", "agent-server", "attach", "remote-work-2")
+        self.attach_process("--host", "desktop", "attach", "remote-work")
+        self.attach_process("attach", "remote-work", "--user", "allison")
         result = self.run_cli("--open", self.entry_key("remote"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.recorded()[0]["args"][2], "spawn")
+
+    def test_attach_with_trailing_or_default_host_is_the_same_session(self):
+        for args in (
+            ("attach", "remote-work", "--host", "agent-server"),
+            ("attach", "remote-work", "--host=agent-server"),
+            ("attach", "remote-work"),
+        ):
+            with self.subTest(args=args):
+                client, terminal = self.attach_process(*args)
+                result = self.run_cli("--open", self.entry_key("remote"))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"outside wezterm on {terminal}", result.stderr.lower())
+                self.assertEqual(self.recorded(), [])
+                self.stop_child(client)
 
     def test_session_open_outside_wezterm_is_not_duplicated(self):
         child, terminal = self.terminal_process()
