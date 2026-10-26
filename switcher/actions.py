@@ -112,10 +112,10 @@ def _session_terminals(session: Session) -> list[str]:
     return [terminal]
 
 
-def _focus_window(target_window: int, picker_window: int | None) -> None:
-    """Focus the only WezTerm Niri window that is not the picker's own."""
+def _niri_window(target_window: int, picker_window: int | None) -> int | None:
+    """The only WezTerm Niri window that is not the picker's own; None if already focused."""
     if target_window == picker_window:
-        return
+        return None
     candidates = [
         window
         for window in _list_windows()
@@ -124,9 +124,14 @@ def _focus_window(target_window: int, picker_window: int | None) -> None:
     ]
     if len(candidates) != 1 or type(candidates[0].get("id")) is not int:
         raise RuntimeError(
-            f"Selected tab is active, but {len(candidates)} WezTerm windows exist; cannot identify which to focus."
+            f"{len(candidates)} WezTerm windows exist; cannot identify which to focus. Nothing was changed."
         )
-    _run(["niri", "msg", "action", "focus-window", "--id", str(candidates[0]["id"])])
+    return candidates[0]["id"]
+
+
+def _focus(niri_window: int | None) -> None:
+    if niri_window is not None:
+        _run(["niri", "msg", "action", "focus-window", "--id", str(niri_window)])
 
 
 def _spawn_arguments(session: Session) -> list[str]:
@@ -159,12 +164,14 @@ def open_session(session: Session) -> None:
             raise RuntimeError(
                 f"Session is open outside WezTerm on {terminals[0]}. Switch to it there; no duplicate was started."
             )
+        niri_window = _niri_window(pane["window_id"], picker_window)
         _wezterm("activate-pane", "--pane-id", str(pane["pane_id"]))
-        _focus_window(pane["window_id"], picker_window)
+        _focus(niri_window)
         return
     windows = sorted({pane["window_id"] for pane in panes} - {picker_window})
     if not windows:
         _wezterm("spawn", "--new-window", *_spawn_arguments(session))
         return
+    niri_window = _niri_window(windows[0], picker_window)
     _wezterm("spawn", "--window-id", str(windows[0]), *_spawn_arguments(session))
-    _focus_window(windows[0], picker_window)
+    _focus(niri_window)

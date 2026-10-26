@@ -46,8 +46,8 @@ and matched by `tty_name`; titles are never used for identity.
   terminal and starts nothing. A running local Pi without a terminal reports
   already-open. Two clients for one remote session report ambiguity.
 - [x] Niri focus targets the only `org.wezfurlong.wezterm` window that is not the
-  focused picker window. Two or more candidates fail after tab activation instead
-  of guessing; WezTerm X11 windows expose no window ID that Niri reports.
+  focused picker window. Two or more candidates fail before any activation or
+  spawn instead of guessing; WezTerm X11 windows expose no window ID that Niri reports.
 - [ ] For a stopped remote saved name, report explicit manual resume/new-name
   instructions. Do not start under the same existing session directory, invent
   UUID handling, or automatically rename the session.

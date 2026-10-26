@@ -463,7 +463,7 @@ else:
         result = self.run_cli("--open", self.entry_key("remote"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("2 wezterm windows", result.stderr.lower())
-        self.assertNotIn("niri", [event["program"] for event in self.recorded()])
+        self.assertEqual(self.recorded(), [])
 
     def test_desktop_launcher_opens_the_selector_in_wezterm_not_a_new_pi(self):
         result = self.run_cli()
