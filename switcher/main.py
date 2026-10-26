@@ -20,7 +20,7 @@ from .inventory import (
 from .picker import choose_session
 
 
-def _refresh_selection(selected: Session) -> tuple[Session, list[Session]]:
+def _refresh_selection(selected: Session) -> Session:
     if selected.backend == "local":
         sessions = load_local_sessions(local_control_db_path(), socket.gethostname())
     else:
@@ -30,12 +30,11 @@ def _refresh_selection(selected: Session) -> tuple[Session, list[Session]]:
         raise RuntimeError(
             "Session identity changed or disappeared. Refresh and select it again."
         )
-    return matches[0], sessions
+    return matches[0]
 
 
-def _open(selected: Session) -> bool:
-    current, sessions = _refresh_selection(selected)
-    return open_session(current, sessions)
+def _open(selected: Session) -> None:
+    open_session(_refresh_selection(selected))
 
 
 def _wait_for_close() -> None:
@@ -48,7 +47,7 @@ def _wait_for_close() -> None:
 def _pick() -> int:
     if not sys.stdin.isatty():
         raise RuntimeError(
-            "The picker needs a terminal. Run agent-switcher to open it in Ghostty."
+            "The picker needs a terminal. Run agent-switcher to open it in WezTerm."
         )
     sys.stdout.write("\x1b]0;Agent sessions\x07")
     sys.stdout.flush()
@@ -67,9 +66,8 @@ def _pick() -> int:
         if selected is None:
             return 0
         try:
-            if _open(selected):
-                return 0
-            last_error = []
+            _open(selected)
+            return 0
         except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
             last_error = [str(error)]
 
@@ -120,9 +118,9 @@ def run(arguments: list[str] | None = None) -> int:
     if args.open:
         return _open_key(args.open)
     launcher = str(Path(sys.argv[0]).resolve())
-    result = subprocess.run(["ghostty", "-e", launcher, "--pick"], check=False)
+    result = subprocess.run(["wezterm", "start", "--", launcher, "--pick"], check=False)
     if result.returncode:
-        raise RuntimeError(f"Ghostty exited with status {result.returncode}.")
+        raise RuntimeError(f"WezTerm exited with status {result.returncode}.")
     return 0
 
 

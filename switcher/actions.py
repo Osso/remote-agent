@@ -1,109 +1,154 @@
-"""Select an existing terminal or use the installed native session commands."""
+"""Select a session's existing WezTerm pane or open it in one new tab."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 from .inventory import Session
 
-
-def _read_process_ancestors(pid: int) -> set[int]:
-    ancestors = set()
-    while pid > 0 and pid not in ancestors:
-        ancestors.add(pid)
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text()
-        except (FileNotFoundError, ProcessLookupError) as error:
-            raise RuntimeError(
-                "Session process exited; refresh the session list."
-            ) from error
-        pid = int(stat.rsplit(")", 1)[1].split()[1])
-    return ancestors
+WEZTERM_APP = "org.wezfurlong.wezterm"
 
 
-def _run_terminal(arguments: list[str], cwd: str | None = None) -> None:
-    try:
-        result = subprocess.run(arguments, cwd=cwd, check=False)
-    except OSError as error:
-        raise RuntimeError(
-            f"Cannot open session with {arguments[0]}: {error}"
-        ) from error
-    if result.returncode:
-        raise RuntimeError(f"{arguments[0]} exited with status {result.returncode}.")
-
-
-def _query_windows() -> list[dict]:
+def _run(arguments: list[str]) -> str:
     try:
         result = subprocess.run(
-            ["niri", "msg", "--json", "windows"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
+            arguments, capture_output=True, text=True, timeout=5, check=False
         )
-        windows = json.loads(result.stdout) if result.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(
-            f"Session is already open; cannot identify its terminal: {error}"
-        ) from error
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Cannot run {arguments[0]}: {error}") from error
     if result.returncode:
-        raise RuntimeError(f"Cannot inspect Niri windows: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"{' '.join(arguments[:3])} failed: {result.stderr.strip() or result.returncode}"
+        )
+    return result.stdout
+
+
+def _wezterm(*arguments: str) -> str:
+    return _run(["wezterm", "cli", "--no-auto-start", *arguments])
+
+
+def _list_panes() -> list[dict]:
+    try:
+        panes = json.loads(_wezterm("list", "--format", "json"))
+    except ValueError as error:
+        raise RuntimeError(f"Invalid WezTerm pane inventory: {error}") from error
+    if not isinstance(panes, list) or any(
+        not isinstance(pane, dict)
+        or type(pane.get("pane_id")) is not int
+        or type(pane.get("window_id")) is not int
+        for pane in panes
+    ):
+        raise RuntimeError("Invalid WezTerm pane inventory.")
+    return panes
+
+
+def _list_windows() -> list[dict]:
+    try:
+        windows = json.loads(_run(["niri", "msg", "--json", "windows"]))
+    except ValueError as error:
+        raise RuntimeError(f"Invalid Niri window inventory: {error}") from error
     if not isinstance(windows, list) or any(
         not isinstance(window, dict) for window in windows
     ):
-        raise RuntimeError("Niri returned an invalid window inventory.")
+        raise RuntimeError("Invalid Niri window inventory.")
     return windows
 
 
-def _matches_window(window: dict, session: Session, ancestors: set[int]) -> bool:
-    expected_app = window.get("app_id") == "com.mitchellh.ghostty"
-    expected_title = window.get("title") == session.window_title
-    pid = window.get("pid")
-    expected_process = type(pid) is int and pid in ancestors
-    return expected_app and expected_title and expected_process
+def _terminal(pid: int) -> str | None:
+    try:
+        path = os.readlink(f"/proc/{pid}/fd/0")
+    except OSError:
+        return None
+    return path if path.startswith("/dev/pts/") else None
 
 
-def _focus_local(session: Session, sessions: list[Session]) -> None:
-    same_title = [
-        s
-        for s in sessions
-        if s.backend == "local"
-        and s.status != "stopped"
-        and s.window_title == session.window_title
-    ]
-    if len(same_title) != 1 or session.pid is None:
-        raise RuntimeError(
-            "Session is already open, but its terminal identity is ambiguous. No duplicate was started."
-        )
-    ancestors = _read_process_ancestors(session.pid)
-    matches = [
-        window
-        for window in _query_windows()
-        if _matches_window(window, session, ancestors)
-    ]
-    if len(matches) != 1:
-        raise RuntimeError(
-            "Session is already open in an unidentified or hidden Ghostty tab. Bring that tab forward; no duplicate was started."
-        )
-    window_id = matches[0].get("id")
-    if type(window_id) is not int:
-        raise RuntimeError("Niri returned an invalid window identity.")
-    _run_terminal(["niri", "msg", "action", "focus-window", "--id", str(window_id)])
+def _attach_terminals(session: Session) -> list[str]:
+    """Terminals of local clients running exactly `remote-agent --host H attach NAME`."""
+    expected = ["--host", session.host, "attach", session.handle]
+    terminals = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().decode(errors="replace")
+        except OSError:
+            continue
+        args = argv.split("\0")[:-1]
+        if any(
+            Path(arg).name == "remote-agent" and args[index + 1 :] == expected
+            for index, arg in enumerate(args)
+        ):
+            terminal = _terminal(int(entry.name))
+            if terminal:
+                terminals.append(terminal)
+    return terminals
 
 
-def open_session(session: Session, sessions: list[Session]) -> bool:
-    """Return True after focusing; terminal commands return False after exiting."""
+def _session_terminals(session: Session) -> list[str]:
     if session.backend == "remote":
-        if session.status != "running":
-            raise RuntimeError(
-                f"Remote session is {session.status}. Resume it explicitly with remote-agent start PROJECT NEW-NAME --resume {session.session_id}; no replacement was created."
-            )
-        _run_terminal(
-            ["remote-agent", "--host", session.host, "attach", session.handle]
+        return _attach_terminals(session)
+    terminal = _terminal(session.pid) if session.pid else None
+    if terminal is None:
+        raise RuntimeError(
+            "Session is already open, but its process has no terminal. No duplicate was started."
         )
-        return False
-    if session.status == "stopped":
-        _run_terminal(["pi", "--session", session.handle], cwd=session.cwd)
-        return False
-    _focus_local(session, sessions)
-    return True
+    return [terminal]
+
+
+def _focus_window(target_window: int, picker_window: int | None) -> None:
+    """Focus the only WezTerm Niri window that is not the picker's own."""
+    if target_window == picker_window:
+        return
+    candidates = [
+        window
+        for window in _list_windows()
+        if window.get("app_id") == WEZTERM_APP
+        and not (picker_window is not None and window.get("is_focused"))
+    ]
+    if len(candidates) != 1 or type(candidates[0].get("id")) is not int:
+        raise RuntimeError(
+            f"Selected tab is active, but {len(candidates)} WezTerm windows exist; cannot identify which to focus."
+        )
+    _run(["niri", "msg", "action", "focus-window", "--id", str(candidates[0]["id"])])
+
+
+def _spawn_arguments(session: Session) -> list[str]:
+    if session.backend == "remote":
+        return ["--", "remote-agent", "--host", session.host, "attach", session.handle]
+    return ["--cwd", session.cwd, "--", "pi", "--session", session.handle]
+
+
+def open_session(session: Session) -> None:
+    """Activate the session's existing WezTerm pane, or open it in one new tab."""
+    if session.backend == "remote" and session.status != "running":
+        raise RuntimeError(
+            f"Remote session is {session.status}. Resume it explicitly with remote-agent start PROJECT NEW-NAME --resume {session.session_id}; no replacement was created."
+        )
+    panes = _list_panes()
+    own_pane = os.environ.get("WEZTERM_PANE")
+    picker_window = next(
+        (pane["window_id"] for pane in panes if str(pane["pane_id"]) == own_pane),
+        None,
+    )
+    running = session.backend == "remote" or session.status != "stopped"
+    terminals = _session_terminals(session) if running else []
+    if len(terminals) > 1:
+        raise RuntimeError(
+            f"Session attachment is ambiguous: {len(terminals)} terminals ({', '.join(terminals)}). No tab was selected."
+        )
+    if terminals:
+        pane = next((p for p in panes if p.get("tty_name") == terminals[0]), None)
+        if pane is None:
+            raise RuntimeError(
+                f"Session is open outside WezTerm on {terminals[0]}. Switch to it there; no duplicate was started."
+            )
+        _wezterm("activate-pane", "--pane-id", str(pane["pane_id"]))
+        _focus_window(pane["window_id"], picker_window)
+        return
+    windows = sorted({pane["window_id"] for pane in panes} - {picker_window})
+    if not windows:
+        _wezterm("spawn", "--new-window", *_spawn_arguments(session))
+        return
+    _wezterm("spawn", "--window-id", str(windows[0]), *_spawn_arguments(session))
+    _focus_window(windows[0], picker_window)

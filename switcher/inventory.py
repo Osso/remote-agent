@@ -27,7 +27,6 @@ class Session:
     status: Literal["running", "stopped", "unknown"]
     backend: Literal["local", "remote"]
     handle: str
-    window_title: str | None = None
     pid: int | None = None
 
     @property
@@ -160,11 +159,6 @@ def load_local_sessions(control_db: Path, host: str) -> list[Session]:
         raw_name = row["name"]
         message = row["first_message"].strip().splitlines()
         name = (raw_name or "").strip() or (message[0] if message else cwd)
-        title = (
-            f"π - {raw_name} - {Path(cwd).name}"
-            if raw_name
-            else f"π - {Path(cwd).name}"
-        )
         status, pid = _local_status(
             row, health.get(row["id"]), listeners.get(row["id"]), now
         )
@@ -177,7 +171,6 @@ def load_local_sessions(control_db: Path, host: str) -> list[Session]:
                 status,
                 "local",
                 row["session_path"],
-                title,
                 pid,
             )
         )

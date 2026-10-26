@@ -208,18 +208,11 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(by_id["message"].name, "Investigate the error")
         self.assertIn("widget", by_id["cwd"].name)
 
-    def test_local_window_title_uses_raw_name_and_bound_pid(self):
+    def test_running_local_session_keeps_its_bound_pid(self):
         path = self.metadata(name="Raw title", cwd="/projects/widget")
         child = self.process()
         self.bind(path, child.pid)
-        session = self.local()[0]
-        self.assertEqual(session.window_title, "π - Raw title - widget")
-        self.assertEqual(session.pid, child.pid)
-        self.conn.execute("UPDATE session_metadata SET name=NULL")
-        self.conn.commit()
-        unnamed = self.local()[0]
-        self.assertEqual(unnamed.window_title, "π - widget")
-        self.assertEqual(unnamed.name, "First user request")
+        self.assertEqual(self.local()[0].pid, child.pid)
 
     def test_missing_db_does_not_create_parent_or_database(self):
         missing = self.root / "absent" / "control.sqlite"
