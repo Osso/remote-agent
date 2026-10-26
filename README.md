@@ -229,8 +229,8 @@ agent-switcher --open KEY
 ```
 
 Deployment is local-only; it does not replace the remote backend, server, or
-protocol. The selector requires Ghostty and fzf; local window focus uses Niri.
-Default invocation opens Ghostty with fzf; `--pick` uses the current terminal,
+protocol. The selector requires WezTerm and fzf; window focus uses Niri.
+Default invocation opens a WezTerm window with fzf; `--pick` uses the current terminal,
 `--list` emits JSON, and `--open` revalidates a selection key before acting.
 Named remote sessions appear first, alphabetically, above the local sessions.
 Remote rows are cyan; local rows use the default foreground, with host/state labels
@@ -240,11 +240,15 @@ Esc cancels. Errors must remain visible. The desktop binding contract is Super+A
 for this selector, Super+S unchanged for Noctalia Session Menu, and removal of
 the Settings shortcut.
 
-A running local session can be focused only when its exact native Pi title,
-process ancestry, and uniqueness identify one visible Ghostty window. Hidden or
-ambiguous tabs report already-open/unavailable, never a duplicate launch.
-Running remote sessions use installed remote-agent attachment to the same runtime.
-Stopped local sessions use `pi --session SESSION_PATH` in their saved directory.
+Each session uses one WezTerm tab. Selecting a session whose Pi process or
+`remote-agent attach` client runs in a WezTerm pane activates that pane, even in a
+hidden tab, and focuses its window; the pane is identified by its PTY, not its
+title. Otherwise the session opens in one new tab: running remote sessions through
+installed remote-agent attachment to the same runtime, stopped local sessions with
+`pi --session SESSION_PATH` in their saved directory. Sessions open outside
+WezTerm (for example Ghostty), ambiguous attachments and multiple WezTerm windows
+fail explicitly without starting anything. `--open` outside WezTerm needs
+`WEZTERM_UNIX_SOCKET` set to the GUI socket.
 Stopped remote saved names require manual resume with a new name; automatic
 rename and UUID handling are not provided. Unknown or stale selections fail
 without fallback. Discovery makes no provider calls, scans no transcripts, and

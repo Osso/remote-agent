@@ -15,8 +15,9 @@ for the installed remote-agent backend or protocol.
   `remote-agent --host agent-server list`, not a repository build artifact.
 - [x] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
 - [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
-- [x] Default invocation opens Ghostty with an fzf selector. `--pick` runs the
-  selector in the current terminal; `--open KEY` acts on one selected entry.
+- [x] Default invocation opens a WezTerm window with an fzf selector through
+  `wezterm start`, reusing the running WezTerm GUI. `--pick` runs the selector in
+  the current terminal; `--open KEY` acts on one selected entry.
 - [x] Search covers local and remote entries. Esc cancels without opening a
   session; failures remain visible instead of closing an unreadable terminal.
   Fatal chooser errors wait for Enter before exit 1; normal cancellation exits 0.
@@ -26,17 +27,27 @@ for the installed remote-agent backend or protocol.
 
 ### Open and resume
 
-- [x] Focus a running local Pi through Niri when a visible Ghostty window matches
-  its exact native Pi title and process ancestry; reject a wrong process match.
-- [ ] Reject duplicate matching windows rather than choosing one.
-- [x] If a running local Pi has no identifiable visible Ghostty window, report
-  already-open/unavailable. Never start a duplicate Pi to bypass the missing mapping.
-- [ ] Apply the same refusal to arbitrary hidden tabs and non-unique window matches;
-  the missing-visible-window fixture is not a real hidden-tab acceptance test.
-- [x] Attach a running remote managed session through the installed remote-agent
-  attach command, preserving that session's existing runtime.
-- [x] Resume a stopped local session with native `pi --session SESSION_PATH` in
-  its saved working directory.
+Each session lives in one WezTerm tab. A session's terminal is the `/dev/pts`
+device on stdin of its process: the bound local Pi PID, or every local
+`remote-agent` client whose parsed arguments are `attach NAME` for the session's
+host (global `--host` in any position or `--host=`; absent means `agent-server`)
+and no `--user`. WezTerm panes are listed with `wezterm cli --no-auto-start list`
+and matched by `tty_name`; titles are never used for identity.
+
+- [x] A running session whose terminal is a WezTerm pane, including a hidden tab,
+  is selected with `wezterm cli activate-pane`, then its window is focused through
+  Niri. No process is started or attached.
+- [x] A session with no client opens in one new tab (`wezterm cli spawn`) of the
+  lowest-numbered WezTerm window other than the picker's, or a new window when
+  none exists: running remote sessions run installed `remote-agent --host HOST
+  attach NAME`; stopped local sessions run `pi --session SESSION_PATH` in their
+  saved directory.
+- [x] A session open outside WezTerm (for example a Ghostty tab) reports its
+  terminal and starts nothing. A running local Pi without a terminal reports
+  already-open. Two clients for one remote session report ambiguity.
+- [x] Niri focus targets the only `org.wezfurlong.wezterm` window that is not the
+  focused picker window. Two or more candidates fail after tab activation instead
+  of guessing; WezTerm X11 windows expose no window ID that Niri reports.
 - [ ] For a stopped remote saved name, report explicit manual resume/new-name
   instructions. Do not start under the same existing session directory, invent
   UUID handling, or automatically rename the session.
@@ -76,12 +87,15 @@ is not live desktop acceptance.
 - `tests/test_switcher_picker.py` (14): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
   layout, remote color, and selection through native fzf's ANSI-stripped output.
-- `tests/test_switcher_main.py` (12): combined inventory without transcript changes,
-  native local resume argv/cwd, remote attach without start/resume, stale selections,
-  exact-title/ancestry focus, missing-window refusal, and desktop launcher argv.
+- `tests/test_switcher_main.py` (19): combined inventory without transcript changes,
+  stale selections, stopped-remote refusal, and WezTerm actions with real PTY child
+  processes and executable `wezterm`/`niri` fixtures: hidden-tab activation for local
+  and remote, one new tab for local resume and remote attach, new window when none
+  exists, picker window excluded, outside-WezTerm/ambiguous/terminal-less refusal,
+  attach-argument variants, multiple-window refusal, malformed pane inventory, and
+  the `wezterm start` launcher argv.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
-  the error, live dismissal wait, Enter, and exit 1. Other fatal causes have
-  picker fixtures, not separate end-to-end PTY acceptance.
+  the error, live dismissal wait, Enter, and exit 1.
 - `tests/test_switcher_deploy.py` (3): repeatable local-only installation, unchanged
   maps/backend executable, and unmanaged-file/foreign-symlink refusal.
 
@@ -110,7 +124,8 @@ verifier establishes applicability to unchanged successful picker/action paths:
 - `remote-attach-smoke.json`: installed `agent-switcher --open KEY` uses native
   SSH/QUIC attachment and Ctrl+backslash detach, exits 0, and preserves conversation
   and server/child process identities without submitting a prompt.
-- `desktop-launch-smoke.json`: default installed invocation opens actual Ghostty.
+- `desktop-launch-smoke.json`: default installed invocation opened actual Ghostty
+  (superseded by the WezTerm launcher at `33a94ff`).
   The harness waited synchronously for the GUI, then backgrounded; its own job
   was canceled and only verified owned process groups were terminated. All owned
   test processes exited. This is launch proof, not normal desktop-close proof.
@@ -140,24 +155,33 @@ match and Escape exits 0 without selecting or starting a session. Evidence:
 `remote-first-screen.ansi` under `/tmp/pi-switcher/`. These observations establish
 terminal rendering, not physical global-key acceptance.
 
+### WezTerm tab selection proof
+
+At `a076ddd`, `./run-tests.sh unit 'test_switcher_*.py'` passes 61/61; Ruff check and
+format are clean. Installed live run against the existing WezTerm GUI
+(`/tmp/pi-wezterm-switcher/live-refusal.txt`): `agent-switcher` opened the picker in
+the running GUI; selecting `clank`, attached in Ghostty, displayed
+`Session is open outside WezTerm on /dev/pts/7`, left the only client (the Ghostty
+one) unchanged, and Escape closed the picker. An earlier live run at `33a94ff`
+exposed that exact-argv matching missed `attach clank --host agent-server`, creating
+a duplicate client; it was detached and `a076ddd` fixed matching.
+
 ## Known gaps (current cycle)
 
 - [ ] Physical Super+A launch and Super+S Session Menu acceptance remain unverified;
   source binding review and Niri validation do not test physical shortcuts.
-- [ ] Normal desktop close remains unverified; the Ghostty launch smoke required
-  owned-process cleanup rather than a physical close-key acceptance test.
-- [ ] Local native Pi focus/resume and hidden-tab refusal have fixtures only, not
-  live user-session acceptance. Duplicate-window rejection and unknown-remote
-  actions also lack live acceptance. Duplicate matching-window refusal and
-  ambiguous-selection refusal lack a mapped passing assertion in this ledger.
+- [ ] Live hidden-tab activation and new-tab spawn are not yet proven: every remote
+  session was attached in Ghostty during acceptance. Local Pi activation/resume
+  and multiple-window refusal have fixtures only.
 - [ ] Stopped-remote refusal is tested, but its fixture asserts only nonzero exit,
   a stopped message, and no replacement launch. Exact manual resume/new-name
   instructions lack a backing assertion, so that full requirement stays unchecked.
 
 ## Out of scope
 
-- Hidden Ghostty tab activation: an arbitrary hidden tab has no reliable window
-  mapping in this contract; report unavailable rather than duplicate it.
+- Ghostty tab selection: Ghostty 1.3.1 exposes no tab list or focus API. Sessions
+  open in Ghostty are refused, not switched; detach them there and select them again
+  to move them into WezTerm.
 - Automatic stopped-remote restart: an existing saved-name directory cannot be
   reused by start; manual resume with a new name remains explicit.
 - Cross-account discovery, transcript scanning, and provider requests: inventory
