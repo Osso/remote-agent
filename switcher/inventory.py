@@ -32,7 +32,10 @@ class Session:
 
     @property
     def key(self) -> str:
-        encoded = json.dumps([self.host, self.backend, self.handle], ensure_ascii=True)
+        encoded = json.dumps(
+            [self.host, self.backend, self.handle, self.session_id, self.cwd],
+            ensure_ascii=True,
+        )
         return base64.urlsafe_b64encode(encoded.encode()).decode().rstrip("=")
 
 

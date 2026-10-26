@@ -172,9 +172,17 @@ class InventoryTests(unittest.TestCase):
         ]
         self.assertEqual(len({item.key for item in variants}), 4)
         renamed = inventory.Session(
-            "host", "changed", "Other", "/else", "running", "local", "/a"
+            "host", "same", "Other", "/cwd", "running", "local", "/a"
         )
         self.assertEqual(session.key, renamed.key)
+        reassigned = inventory.Session(
+            "host", "different", "Name", "/cwd", "stopped", "local", "/a"
+        )
+        moved = inventory.Session(
+            "host", "same", "Name", "/different", "stopped", "local", "/a"
+        )
+        self.assertNotEqual(session.key, reassigned.key)
+        self.assertNotEqual(session.key, moved.key)
 
     def test_local_filters_children_archives_residents_and_keeps_duplicate_ids(self):
         first = self.metadata(path="/a/session.jsonl")
