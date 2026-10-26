@@ -402,6 +402,25 @@ else:
                 self.assertEqual(self.recorded(), [])
                 self.stop_child(client)
 
+    def test_a_command_that_merely_mentions_attach_is_not_a_client(self):
+        launcher = self.home / "wezterm-spawn"
+        launcher.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+        launcher.chmod(0o755)
+        self.terminal_process(
+            str(launcher),
+            "cli",
+            "spawn",
+            "--",
+            "remote-agent",
+            "--host",
+            "agent-server",
+            "attach",
+            "remote-work",
+        )
+        result = self.run_cli("--open", self.entry_key("remote"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.recorded()[0]["args"][2], "spawn")
+
     def test_session_open_outside_wezterm_is_not_duplicated(self):
         child, terminal = self.terminal_process()
         self.bind_process(child)

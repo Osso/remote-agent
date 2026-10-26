@@ -91,10 +91,12 @@ def _attach_terminals(session: Session) -> list[str]:
         except OSError:
             continue
         args = argv.split("\0")[:-1]
+        # The program is argv[0], or argv[1] under a script interpreter; later
+        # tokens are arguments of another command, such as `wezterm cli spawn`.
         if any(
             Path(arg).name == "remote-agent"
             and _attach_target(args[index + 1 :]) == expected
-            for index, arg in enumerate(args)
+            for index, arg in enumerate(args[:2])
         ):
             terminal = _terminal(int(entry.name))
             if terminal:
