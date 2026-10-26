@@ -233,6 +233,8 @@ protocol. The selector requires Ghostty and fzf; local window focus uses Niri.
 Default invocation opens Ghostty with fzf; `--pick` uses the current terminal,
 `--list` emits JSON, and `--open` revalidates a selection key before acting.
 Named remote sessions appear first, alphabetically, above the local sessions.
+Remote rows are cyan; local rows use the default foreground, with host/state labels
+visible in both groups.
 The prompt and initial list start at the top; typing retains normal search ranking.
 Esc cancels. Errors must remain visible. The desktop binding contract is Super+A
 for this selector, Super+S unchanged for Noctalia Session Menu, and removal of

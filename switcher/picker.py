@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .inventory import Session
 
+REMOTE_ROW_COLOR = "\x1b[36m"
+RESET_COLOR = "\x1b[0m"
+
 
 def _safe(value: str) -> str:
     """Replace terminal controls, including Unicode format and line separators."""
@@ -39,6 +42,13 @@ def _shorten_name(value: str) -> str:
         if cells >= maximum_cells:
             return value[:index] + "…"
     return value
+
+
+def _render_row(row: str, session: Session) -> str:
+    if session.backend != "remote":
+        return row
+    selector, label = row.split("\t", 1)
+    return f"{selector}\t{REMOTE_ROW_COLOR}{label}{RESET_COLOR}"
 
 
 def choose_session(sessions: list[Session], errors: list[str]) -> Session | None:
@@ -88,6 +98,7 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
             [
                 "fzf",
                 "--no-height",
+                "--ansi",
                 "--layout=reverse",
                 "--no-multi",
                 "--no-preview",
@@ -97,7 +108,8 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
                 header,
                 "--prompt=Session> ",
             ],
-            input="\n".join(rows) + "\n",
+            input="\n".join(_render_row(row, session) for row, session in rows.items())
+            + "\n",
             capture_output=True,
             text=True,
             encoding="utf-8",

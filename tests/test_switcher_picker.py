@@ -5,6 +5,7 @@ import importlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+NATIVE_FZF = shutil.which("fzf")
 sys.path.insert(0, str(ROOT))
 
 
@@ -41,9 +43,9 @@ class PickerTests(unittest.TestCase):
     def write_fzf(self, result="print(rows[1])", exit_code=0):
         self.fzf.write_text(
             f"#!{sys.executable}\n"
-            "import json, os, pathlib, sys\n"
+            "import json, os, pathlib, re, sys\n"
             "data = sys.stdin.read()\n"
-            "rows = data.splitlines()\n"
+            "rows = [re.sub(r'\\x1b\\[[0-9;]*m', '', row) for row in data.splitlines()]\n"
             f"pathlib.Path({str(self.record)!r}).write_text(json.dumps(\n"
             "    {'stdin': data, 'argv': sys.argv[1:], 'env': dict(os.environ)}))\n"
             f"{result}\n"
@@ -93,6 +95,32 @@ class PickerTests(unittest.TestCase):
             self.assertIn(label, header)
         self.assertIn("--no-height", record["argv"])
         self.assertIn("--with-nth=2..", record["argv"])
+
+    def test_remote_rows_are_colored_and_native_plain_output_keeps_identity(self):
+        remote = self.session(
+            "remote", host="agent-server", backend="remote", name="Remote session"
+        )
+        local = self.session("local", backend="local", name="Local session")
+        self.write_fzf("print(rows[0])")
+        self.assertIs(self.choose([remote, local]), remote)
+        record = self.recorded()
+        remote_row, local_row = record["stdin"].splitlines()
+        self.assertIn("\x1b[36mRemote session", remote_row)
+        self.assertTrue(remote_row.endswith("\x1b[0m"))
+        self.assertNotIn("\x1b", local_row)
+        self.assertIn("agent-server", remote_row)
+        self.assertIn("--ansi", record["argv"])
+
+    @unittest.skipUnless(NATIVE_FZF, "Native fzf is not installed")
+    def test_remote_selection_round_trips_through_real_fzf(self):
+        self.fzf.write_text(
+            f"#!{sys.executable}\nimport os,sys\nos.execv({NATIVE_FZF!r}, [{NATIVE_FZF!r}, *sys.argv[1:], '--filter=Remote'])\n"
+        )
+        remote = self.session(
+            "remote", host="agent-server", backend="remote", name="Remote session"
+        )
+        local = self.session("local", backend="local", name="Local session")
+        self.assertIs(self.choose([remote, local]), remote)
 
     def test_requests_top_to_bottom_layout_without_disabling_search_relevance(self):
         self.write_fzf("print(rows[0])")
