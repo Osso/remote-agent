@@ -13,8 +13,8 @@ for the installed remote-agent backend or protocol.
   session names, host, and state. Local inventory reads Pi's control SQLite
   database read-only; remote inventory invokes the registered installed
   `remote-agent --host agent-server list`, not a repository build artifact.
-- [ ] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
-- [ ] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
+- [x] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
+- [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
 - [x] Default invocation opens Ghostty with an fzf selector. `--pick` runs the
   selector in the current terminal; `--open KEY` acts on one selected entry.
 - [x] Search covers local and remote entries. Esc cancels without opening a
@@ -68,13 +68,14 @@ These paths identify the implementation scope; they do not assert acceptance.
 
 ## Tests asserting this spec
 
-Checked requirements have passing backing tests at `43f4e93`. Fixture acceptance
+Checked requirements have passing backing tests at `e855767`. Fixture acceptance
 is not live desktop acceptance.
 
-- `tests/test_switcher_inventory.py` (24): read-only inventory sources, process
-  identity, invalid data, partial failures, and bounded retries.
-- `tests/test_switcher_picker.py` (11): names/host/state display, selection identity,
-  cancellation, missing/broken fzf, invalid selections, and inventory errors.
+- `tests/test_switcher_inventory.py` (25): read-only inventory sources, process
+  identity, invalid data, partial failures, bounded retries, and remote-first ordering.
+- `tests/test_switcher_picker.py` (14): names/host/state display, selection identity,
+  cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
+  layout, remote color, and selection through native fzf's ANSI-stripped output.
 - `tests/test_switcher_main.py` (12): combined inventory without transcript changes,
   native local resume argv/cwd, remote attach without start/resume, stale selections,
   exact-title/ancestry focus, missing-window refusal, and desktop launcher argv.
@@ -124,6 +125,20 @@ Outside this feature, `test_deploy_users.py` has two failing subtests in
 `f4df7b895619fa9bbc1606cb4e352a5aa6c2c515`; baseline integrity is recorded in
 `followup-baseline-integrity.json`. The unchanged `deploy.py:262` S102 `exec`
 warning is also outside feature scope. Neither is fixed or suppressed here.
+
+### Remote priority and color proof
+
+At `e855767`, `./run-tests.sh unit 'test_switcher_*.py'` passes all 54 tests,
+including the native fzf ANSI roundtrip. Feature Ruff checks and formatting pass;
+`/tmp/pi-switcher/priority-color-VERIFIED.md` records independent results.
+
+The installed picker was also rendered in a private real tmux PTY. The prompt is
+at row 0, remote entries occupy rows 4–8, and local entries begin at row 9. All
+five rendered remote rows carry cyan foreground. Search still finds the remote
+match and Escape exits 0 without selecting or starting a session. Evidence:
+`remote-first-color-smoke.json`, `remote-first-screen.txt`, and
+`remote-first-screen.ansi` under `/tmp/pi-switcher/`. These observations establish
+terminal rendering, not physical global-key acceptance.
 
 ## Known gaps (current cycle)
 
