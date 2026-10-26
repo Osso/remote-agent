@@ -9,27 +9,31 @@ for the installed remote-agent backend or protocol.
 
 ### Inventory and command surface
 
-- [ ] `agent-switcher --list` emits JSON inventory with selection keys, meaningful
+- [x] `agent-switcher --list` emits JSON inventory with selection keys, meaningful
   session names, host, and state. Local inventory reads Pi's control SQLite
   database read-only; remote inventory invokes the registered installed
   `remote-agent --host agent-server list`, not a repository build artifact.
-- [ ] Default invocation opens Ghostty with an fzf selector. `--pick` runs the
+- [x] Default invocation opens Ghostty with an fzf selector. `--pick` runs the
   selector in the current terminal; `--open KEY` acts on one selected entry.
-- [ ] Search covers local and remote entries. Esc cancels without opening a
+- [x] Search covers local and remote entries. Esc cancels without opening a
   session; failures remain visible instead of closing an unreadable terminal.
-- [ ] Before any action, re-read the selected entry. Unknown, stale, or ambiguous
-  selections fail explicitly without fallback.
+  Fatal chooser errors wait for Enter before exit 1; normal cancellation exits 0.
+- [x] Before any action, re-read the selected entry. Unknown or stale selections
+  fail explicitly without fallback.
+- [ ] Ambiguous selections fail explicitly without fallback.
 
 ### Open and resume
 
-- [ ] Focus a running local Pi only when one visible Ghostty window is identified
-  by its exact native Pi title, process ancestry, and uniqueness; focus uses Niri.
-- [ ] If a running local Pi is in an arbitrary hidden Ghostty tab, or its window
-  cannot be identified uniquely, report already-open/unavailable. Never start a
-  duplicate Pi to bypass the missing mapping.
-- [ ] Attach a running remote managed session through the installed remote-agent
+- [x] Focus a running local Pi through Niri when a visible Ghostty window matches
+  its exact native Pi title and process ancestry; reject a wrong process match.
+- [ ] Reject duplicate matching windows rather than choosing one.
+- [x] If a running local Pi has no identifiable visible Ghostty window, report
+  already-open/unavailable. Never start a duplicate Pi to bypass the missing mapping.
+- [ ] Apply the same refusal to arbitrary hidden tabs and non-unique window matches;
+  the missing-visible-window fixture is not a real hidden-tab acceptance test.
+- [x] Attach a running remote managed session through the installed remote-agent
   attach command, preserving that session's existing runtime.
-- [ ] Resume a stopped local session with native `pi --session SESSION_PATH` in
+- [x] Resume a stopped local session with native `pi --session SESSION_PATH` in
   its saved working directory.
 - [ ] For a stopped remote saved name, report explicit manual resume/new-name
   instructions. Do not start under the same existing session directory, invent
@@ -39,9 +43,9 @@ for the installed remote-agent backend or protocol.
 
 - [ ] Super+A launches `agent-switcher`. Super+S remains the Noctalia Session Menu;
   remove the Settings shortcut without replacing the Session Menu binding.
-- [ ] `./deploy.sh --switcher` installs the local switcher only. It does not
+- [x] `./deploy.sh --switcher` installs the local switcher only. It does not
   replace backend/server/protocol components or restart existing sessions.
-- [ ] Discovery and selection make no provider calls, scan no transcript
+- [x] Discovery and selection make no provider calls, scan no transcript
   filesystem, and perform no cross-account discovery.
 
 ## How it works
@@ -62,21 +66,76 @@ These paths identify the implementation scope; they do not assert acceptance.
 
 ## Tests asserting this spec
 
-The integration owner must supply results and confirm the assertions in these
-planned test files. No passing result is claimed here.
+Checked requirements have passing backing tests at `43f4e93`. Fixture acceptance
+is not live desktop acceptance.
 
-- `tests/test_switcher_inventory.py`: inventory sources, identity, and invalid data.
-- `tests/test_switcher_picker.py`: searchable selection and cancellation.
-- `tests/test_switcher_main.py`: commands, actions, stale selections, and visible errors.
-- `tests/test_switcher_deploy.py`: local-only installation boundaries.
+- `tests/test_switcher_inventory.py` (24): read-only inventory sources, process
+  identity, invalid data, partial failures, and bounded retries.
+- `tests/test_switcher_picker.py` (11): names/host/state display, selection identity,
+  cancellation, missing/broken fzf, invalid selections, and inventory errors.
+- `tests/test_switcher_main.py` (12): combined inventory without transcript changes,
+  native local resume argv/cwd, remote attach without start/resume, stale selections,
+  exact-title/ancestry focus, missing-window refusal, and desktop launcher argv.
+  `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
+  the error, live dismissal wait, Enter, and exit 1. Other fatal causes have
+  picker fixtures, not separate end-to-end PTY acceptance.
+- `tests/test_switcher_deploy.py` (3): repeatable local-only installation, unchanged
+  maps/backend executable, and unmanaged-file/foreign-symlink refusal.
+
+### Proof ledger
+
+Existing evidence was inspected, not rerun for this documentation update.
+Commands below cover `43f4e93b1ca909850a17fefc106beaac94a1e795`;
+`/tmp/pi-switcher/FINAL-VERIFIER-2.md` records full results and applicability.
+
+| Command | Result | Evidence under `/tmp/pi-switcher/` |
+| --- | --- | --- |
+| `./run-tests.sh unit 'test_switcher_*.py'` | 50/50 pass | `followup-feature-tests.log` |
+| `ruff check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_deploy.py` | Clean | `followup-ruff-check.log` |
+| `ruff format --check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_deploy.py deploy.py` | 11 files formatted | `followup-ruff-format.log` |
+
+Retained `tests/test_rust_deploy.py` proof is 8/8 Python deployment fixtures in
+`final-scoped-suite.log`, not Rust compilation. The verifier confirms those
+files and deployment paths are unchanged since the prior `39f765f` verification.
+
+Stored installed-command smoke artifacts do not embed a source revision; the
+verifier establishes applicability to unchanged successful picker/action paths:
+
+- `picker-smoke.json` and `screen-search.txt`: real fzf in an isolated tmux PTY;
+  search `world-of-osso` displays an `agent-server` running row; Escape exits 0
+  without selection.
+- `remote-attach-smoke.json`: installed `agent-switcher --open KEY` uses native
+  SSH/QUIC attachment and Ctrl+backslash detach, exits 0, and preserves conversation
+  and server/child process identities without submitting a prompt.
+- `desktop-launch-smoke.json`: default installed invocation opens actual Ghostty.
+  The harness waited synchronously for the GUI, then backgrounded; its own job
+  was canceled and only verified owned process groups were terminated. All owned
+  test processes exited. This is launch proof, not normal desktop-close proof.
+- Provisioning `350fce8526c19d1d72ab13f5b9cbc90e49aa34d4`: source bindings preserve
+  Super+A/S as specified and `niri validate` passed (`niri-validate.log`, with
+  unchanged-config applicability in the verifier). No physical keys were injected.
+
+Outside this feature, `test_deploy_users.py` has two failing subtests in
+`test_unconfigured_deploy_keeps_default_behavior_and_leaves_other_worker_stale`
+(`setting=None` and `setting=[]`), both expecting a controller symlink at line 290.
+`baseline-deploy-users.log` reproduces them identically on exact pre-feature
+`f4df7b895619fa9bbc1606cb4e352a5aa6c2c515`; baseline integrity is recorded in
+`followup-baseline-integrity.json`. The unchanged `deploy.py:262` S102 `exec`
+warning is also outside feature scope. Neither is fixed or suppressed here.
 
 ## Known gaps (current cycle)
 
-- [ ] Supply test evidence before marking any requirement verified.
-- [ ] Establish installed Ghostty/Niri focus, Super+A, and cancellation behavior;
-  fixture results alone do not prove desktop integration.
-- [ ] Establish that installed remote attachment preserves the selected runtime;
-  this documentation update does not exercise attachment.
+- [ ] Physical Super+A launch and Super+S Session Menu acceptance remain unverified;
+  source binding review and Niri validation do not test physical shortcuts.
+- [ ] Normal desktop close remains unverified; the Ghostty launch smoke required
+  owned-process cleanup rather than a physical close-key acceptance test.
+- [ ] Local native Pi focus/resume and hidden-tab refusal have fixtures only, not
+  live user-session acceptance. Duplicate-window rejection and unknown-remote
+  actions also lack live acceptance. Duplicate matching-window refusal and
+  ambiguous-selection refusal lack a mapped passing assertion in this ledger.
+- [ ] Stopped-remote refusal is tested, but its fixture asserts only nonzero exit,
+  a stopped message, and no replacement launch. Exact manual resume/new-name
+  instructions lack a backing assertion, so that full requirement stays unchecked.
 
 ## Out of scope
 
