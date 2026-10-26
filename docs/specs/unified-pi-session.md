@@ -27,7 +27,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Preserve typed input, PTY dimensions, clean detach and local terminal restoration within the tested native attachment boundaries.
 - [ ] Establish complete Pi VT capability coverage and per-display geometry. Alternate-screen applications and unknown VT callbacks remain unsupported.
 - [ ] Prove simultaneous real Pi clients with shared PTY dimensions set to the smallest attached dimensions; fixtures alone are not full acceptance.
-- [x] Grey (256-color 236 background) the physical cells outside a smaller shared PTY, and keep them grey after native history scrolls the viewport.
+- [x] Grey (256-color 240 background, distinct from dark terminal backgrounds such as `#1f2430`) the physical cells outside a smaller shared PTY, and keep them grey after native history scrolls the viewport.
 
 ### Login and image paste
 

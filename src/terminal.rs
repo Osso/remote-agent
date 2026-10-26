@@ -410,7 +410,7 @@ fn update_bytes(update: &DisplayUpdate) -> usize {
 }
 
 /// 256-color background for physical cells outside the negotiated PTY size.
-const MARGIN_COLOR: u8 = 236;
+const MARGIN_COLOR: u8 = 240;
 
 /// Renders the virtual screen at physical row zero without an alternate screen.
 /// Physical size is validated by render(), as construction/resize are infallible.
