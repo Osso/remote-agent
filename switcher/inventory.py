@@ -133,8 +133,7 @@ def load_local_sessions(control_db: Path, host: str) -> list[Session]:
         metadata = db.execute(
             """SELECT session_path, id, cwd, name, first_message
                FROM session_metadata
-               WHERE is_subagent = 0 AND archived_at IS NULL
-                 AND parent_session_path IS NULL"""
+               WHERE is_subagent = 0 AND archived_at IS NULL"""
         ).fetchall()
         health = {
             row["session_id"]: row for row in db.execute("SELECT * FROM session_health")
@@ -260,7 +259,6 @@ def load_remote_sessions(host: str = "agent-server") -> list[Session]:
         "127.0.0.1",
         "::1",
         socket.gethostname().lower(),
-        socket.getfqdn().lower(),
     }:
         raise InventoryError("Local session inventory must not use SSH")
     for attempt in range(3):
@@ -302,8 +300,8 @@ def load_remote_sessions(host: str = "agent-server") -> list[Session]:
     raise AssertionError("Retry loop exhausted")
 
 
-def collect_sessions() -> tuple[list[Session], list[str]]:
-    """Merge independent sources; return source errors for visible presentation."""
+def local_control_db_path() -> Path:
+    """Resolve Pi's current control database without creating its state directory."""
     state = os.environ.get("PI_CODING_AGENT_STATE_DIR")
     state_dir = (
         Path(state)
@@ -311,11 +309,16 @@ def collect_sessions() -> tuple[list[Session], list[str]]:
         else Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
         / "pi"
     )
+    return state_dir / "control.sqlite"
+
+
+def collect_sessions() -> tuple[list[Session], list[str]]:
+    """Merge independent sources; return source errors for visible presentation."""
     sessions: list[Session] = []
     errors: list[str] = []
     try:
         sessions.extend(
-            load_local_sessions(state_dir / "control.sqlite", socket.gethostname())
+            load_local_sessions(local_control_db_path(), socket.gethostname())
         )
     except (OSError, sqlite3.Error, ValueError) as error:
         errors.append(f"Local inventory: {error}")

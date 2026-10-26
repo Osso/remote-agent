@@ -180,16 +180,16 @@ class InventoryTests(unittest.TestCase):
         first = self.metadata(path="/a/session.jsonl")
         second = self.metadata(path="/b/session.jsonl")
         self.metadata("child", is_subagent=1)
-        self.metadata("parented", parent_session_path=first)
+        fork = self.metadata("parented", parent_session_path=first)
         self.metadata("archived", archived_at=self.now)
         self.metadata("architect")
         self.metadata("supervisor")
         self.metadata("resident", path="/state/supervisor-sessions/a.jsonl")
         self.metadata("resident2", path="/state/architect-sessions/a.jsonl")
         sessions = self.local()
-        self.assertEqual({s.handle for s in sessions}, {first, second})
+        self.assertEqual({s.handle for s in sessions}, {first, second, fork})
         self.assertEqual({s.status for s in sessions}, {"stopped"})
-        self.assertEqual(len({s.key for s in sessions}), 2)
+        self.assertEqual(len({s.key for s in sessions}), 3)
 
     def test_names_use_metadata_first_message_then_cwd(self):
         self.metadata(
@@ -255,7 +255,9 @@ class InventoryTests(unittest.TestCase):
                     (status, generation, checked),
                 )
                 self.conn.commit()
-                self.assertEqual(self.local()[0].status, "unknown")
+                session = self.local()[0]
+                self.assertEqual(session.status, "unknown")
+                self.assertEqual(session.pid, child.pid)
         self.assertIsNone(child.poll())
 
     def test_live_duplicate_id_cannot_bind_wrong_project(self):
@@ -399,6 +401,35 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(sessions[0].backend, "local")
         self.assertEqual(len(errors), 1)
         self.assertIn("remote", errors[0].lower())
+
+    def test_local_control_db_path_uses_shared_environment_precedence(self):
+        self.assertEqual(inventory.local_control_db_path(), self.db)
+        os.environ["XDG_STATE_HOME"] = str(self.root / "xdg")
+        self.assertEqual(inventory.local_control_db_path(), self.db)
+        del os.environ["PI_CODING_AGENT_STATE_DIR"]
+        self.assertEqual(
+            inventory.local_control_db_path(), self.root / "xdg/pi/control.sqlite"
+        )
+        del os.environ["XDG_STATE_HOME"]
+        os.environ["HOME"] = str(self.root / "home")
+        self.assertEqual(
+            inventory.local_control_db_path(),
+            self.root / "home/.local/state/pi/control.sqlite",
+        )
+
+    def test_local_hosts_are_rejected_without_invoking_remote(self):
+        for host in ("localhost", "127.0.0.1", "::1"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(ValueError, "must not use SSH"):
+                    inventory.load_remote_sessions(host)
+        self.assertFalse(self.requests.exists())
+
+    def test_remote_inventory_does_not_resolve_dns_locally(self):
+        with patch(
+            "socket.getfqdn",
+            side_effect=AssertionError("local DNS must not block inventory"),
+        ):
+            self.assertEqual(inventory.load_remote_sessions(), [])
 
     def test_collect_default_db_resolution_and_merge(self):
         self.metadata(name="Zulu")
