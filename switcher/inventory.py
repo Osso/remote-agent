@@ -10,7 +10,7 @@ import subprocess
 import time
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -69,7 +69,7 @@ def _fresh(timestamp: str | None, now: datetime) -> bool:
     if not timestamp:
         return False
     try:
-        stamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(timestamp)
         age = (now - stamp).total_seconds()
     except (ValueError, TypeError):
         return False
@@ -148,7 +148,7 @@ def load_local_sessions(control_db: Path, host: str) -> list[Session]:
             )
         }
     sessions = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for row in metadata:
         path_parts = row["session_path"].replace("\\", "/").split("/")
         if row["id"] in {"architect", "supervisor"} or {

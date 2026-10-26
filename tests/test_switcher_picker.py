@@ -5,11 +5,11 @@ import importlib
 import io
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,15 +52,15 @@ class PickerTests(unittest.TestCase):
         self.fzf.chmod(0o755)
 
     def session(self, handle, **changes):
-        fields = dict(
-            host="aso",
-            session_id="conversation " + handle,
-            name="same name 日本語",
-            cwd="/projects/a path",
-            status="running",
-            backend="pi",
-            handle=handle,
-        )
+        fields = {
+            "host": "aso",
+            "session_id": "conversation " + handle,
+            "name": "same name 日本語",
+            "cwd": "/projects/a path",
+            "status": "running",
+            "backend": "pi",
+            "handle": handle,
+        }
         fields.update(changes)
         # The inventory contract exposes an opaque key; the picker must not decode it.
         fields["key"] = (fields["host"], fields["backend"], handle)

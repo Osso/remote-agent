@@ -6,8 +6,8 @@ import hashlib
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
 import unicodedata
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .inventory import Session

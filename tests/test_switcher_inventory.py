@@ -9,7 +9,7 @@ import tempfile
 import time
 import unittest
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,7 +43,7 @@ class InventoryTests(unittest.TestCase):
                 PRIMARY KEY (recipient_session_id, recipient_agent_id_key)
             );
         """)
-        self.now = datetime.now(timezone.utc).isoformat()
+        self.now = datetime.now(UTC).isoformat()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.requests = self.root / "requests.jsonl"
@@ -254,7 +254,7 @@ class InventoryTests(unittest.TestCase):
             ("timeout", 7, self.now),
             ("dead", 7, self.now),
             ("ok", 6, self.now),
-            ("ok", 7, (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()),
+            ("ok", 7, (datetime.now(UTC) - timedelta(minutes=10)).isoformat()),
         ]
         for status, generation, checked in cases:
             with self.subTest(status=status, generation=generation, checked=checked):
@@ -374,11 +374,11 @@ class InventoryTests(unittest.TestCase):
 
     def test_timeouts_are_bounded_and_reported(self):
         os.environ["INVENTORY_MODE"] = "timeout"
-        with patch.object(inventory, "_REMOTE_TIMEOUT", 0.1):
-            with self.assertRaisesRegex(
-                (ValueError, RuntimeError), "timed out|timeout"
-            ):
-                inventory.load_remote_sessions()
+        with (
+            patch.object(inventory, "_REMOTE_TIMEOUT", 0.1),
+            self.assertRaisesRegex((ValueError, RuntimeError), "timed out|timeout"),
+        ):
+            inventory.load_remote_sessions()
         self.assertEqual(len(self.requests.read_text().splitlines()), 3)
 
     def test_root_errors_are_visible_without_discarding_local_results(self):
@@ -427,9 +427,11 @@ class InventoryTests(unittest.TestCase):
 
     def test_local_hosts_are_rejected_without_invoking_remote(self):
         for host in ("localhost", "127.0.0.1", "::1"):
-            with self.subTest(host=host):
-                with self.assertRaisesRegex(ValueError, "must not use SSH"):
-                    inventory.load_remote_sessions(host)
+            with (
+                self.subTest(host=host),
+                self.assertRaisesRegex(ValueError, "must not use SSH"),
+            ):
+                inventory.load_remote_sessions(host)
         self.assertFalse(self.requests.exists())
 
     def test_remote_inventory_does_not_resolve_dns_locally(self):
