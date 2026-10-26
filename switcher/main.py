@@ -117,10 +117,34 @@ def run(arguments: list[str] | None = None) -> int:
         return _pick()
     if args.open:
         return _open_key(args.open)
+    return _launch_picker()
+
+
+def _launch_picker() -> int:
+    """Open the picker window inside the running WezTerm GUI; never start another GUI."""
     launcher = str(Path(sys.argv[0]).resolve())
-    result = subprocess.run(["wezterm", "start", "--", launcher, "--pick"], check=False)
+    result = subprocess.run(
+        [
+            "wezterm",
+            "cli",
+            "--no-auto-start",
+            "spawn",
+            "--new-window",
+            "--",
+            launcher,
+            "--pick",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if result.returncode:
-        raise RuntimeError(f"WezTerm exited with status {result.returncode}.")
+        error = f"Cannot open the picker in the running WezTerm: {result.stderr.strip() or result.returncode}"
+        subprocess.run(
+            ["notify-send", "--app-name=agent-switcher", "Agent switcher", error],
+            check=False,
+        )
+        raise RuntimeError(error)
     return 0
 
 

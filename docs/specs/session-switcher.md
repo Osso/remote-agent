@@ -18,9 +18,13 @@ for the installed remote-agent backend or protocol.
   (default `~/.config`) appear above all other rows, in file order; a missing file
   pins nothing. This keeps the machine assistant at the top.
 - [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
-- [x] Default invocation opens a WezTerm window with an fzf selector through
-  `wezterm start`, reusing the running WezTerm GUI. `--pick` runs the selector in
-  the current terminal; `--open KEY` acts on one selected entry.
+- [x] Default invocation opens a WezTerm window with an fzf selector inside the
+  running WezTerm GUI (`wezterm cli --no-auto-start spawn --new-window`). It never
+  starts a second GUI: `wezterm start` silently does so when WezTerm's discovery
+  symlink (`/run/user/UID/wezterm/<display>-org.wezfurlong.wezterm`) is stale, and a
+  picker there opens sessions in that GUI's new window. An unreachable GUI is
+  reported with `notify-send`. `--pick` runs the selector in the current terminal;
+  `--open KEY` acts on one selected entry.
 - [x] Search covers local and remote entries. Esc cancels without opening a
   session; failures remain visible instead of closing an unreadable terminal.
   Fatal chooser errors wait for Enter before exit 1; normal cancellation exits 0.
@@ -103,7 +107,8 @@ is not live desktop acceptance.
   and remote, one new tab for local resume and remote attach, new window when none
   exists, picker window excluded, outside-WezTerm/ambiguous/terminal-less refusal,
   attach-argument variants, multiple-window refusal, malformed pane inventory, and
-  the `wezterm start` launcher argv.
+  the `cli spawn --new-window` launcher argv, and a desktop error without any second
+  GUI when WezTerm is unreachable.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
   the error, live dismissal wait, Enter, and exit 1.
 - `tests/test_switcher_deploy.py` (3): repeatable local-only installation, unchanged

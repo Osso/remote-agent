@@ -76,9 +76,18 @@ with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({
             f"""import json,pathlib,sys
 args=sys.argv[1:]
 if args[-3:]==['list','--format','json']: print(pathlib.Path({str(self.panes_file)!r}).read_text())
+elif pathlib.Path({str(self.home / "gui-unreachable")!r}).exists():
+ with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'wezterm','args':args}})+'\\n')
+ sys.exit('failed to connect to Socket("/run/user/1000/wezterm/gui-sock-1553894")')
 else:
  with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'wezterm','args':args}})+'\\n')
  if 'spawn' in args: print(77)
+""",
+        )
+        self.write_command(
+            "notify-send",
+            f"""import json,pathlib,sys
+with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'notify-send','args':sys.argv[1:]}})+'\\n')
 """,
         )
         self.set_windows([{"id": 92, "app_id": WEZTERM_APP, "is_focused": False}])
@@ -609,8 +618,32 @@ else:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.recorded(),
-            [{"program": "wezterm", "args": ["start", "--", str(SCRIPT), "--pick"]}],
+            [
+                {
+                    "program": "wezterm",
+                    "args": [
+                        "cli",
+                        "--no-auto-start",
+                        "spawn",
+                        "--new-window",
+                        "--",
+                        str(SCRIPT),
+                        "--pick",
+                    ],
+                }
+            ],
         )
+
+    def test_unreachable_wezterm_reports_on_the_desktop_without_a_second_gui(self):
+        (self.home / "gui-unreachable").touch()
+        result = self.run_cli()
+        self.assertNotEqual(result.returncode, 0)
+        attempted, alert = self.recorded()
+        self.assertEqual(
+            attempted["args"][:4], ["cli", "--no-auto-start", "spawn", "--new-window"]
+        )
+        self.assertEqual(alert["program"], "notify-send")
+        self.assertIn("gui-sock-1553894", alert["args"][-1])
 
     def test_reassigned_remote_name_invalidates_the_old_selection(self):
         key = self.entry_key("remote")
