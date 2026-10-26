@@ -441,6 +441,21 @@ class InventoryTests(unittest.TestCase):
         ):
             self.assertEqual(inventory.load_remote_sessions(), [])
 
+    def test_named_remote_sessions_precede_alphabetically_earlier_local_sessions(self):
+        self.metadata(name="Alpha local")
+        self.remote_payload(
+            [
+                self.remote_row(name="Zulu remote"),
+                self.remote_row(name="Bravo remote"),
+            ]
+        )
+        sessions, errors = inventory.collect_sessions()
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [s.name for s in sessions], ["Bravo remote", "Zulu remote", "Alpha local"]
+        )
+        self.assertEqual([s.backend for s in sessions], ["remote", "remote", "local"])
+
     def test_collect_default_db_resolution_and_merge(self):
         self.metadata(name="Zulu")
         self.remote_payload([self.remote_row(name="Alpha")])

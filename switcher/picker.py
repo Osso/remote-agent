@@ -88,6 +88,7 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
             [
                 "fzf",
                 "--no-height",
+                "--layout=reverse",
                 "--no-multi",
                 "--no-preview",
                 "--delimiter=\t",

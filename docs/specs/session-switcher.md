@@ -13,6 +13,7 @@ for the installed remote-agent backend or protocol.
   session names, host, and state. Local inventory reads Pi's control SQLite
   database read-only; remote inventory invokes the registered installed
   `remote-agent --host agent-server list`, not a repository build artifact.
+- [ ] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
 - [x] Default invocation opens Ghostty with an fzf selector. `--pick` runs the
   selector in the current terminal; `--open KEY` acts on one selected entry.
 - [x] Search covers local and remote entries. Esc cancels without opening a

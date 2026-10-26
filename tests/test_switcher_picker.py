@@ -94,6 +94,14 @@ class PickerTests(unittest.TestCase):
         self.assertIn("--no-height", record["argv"])
         self.assertIn("--with-nth=2..", record["argv"])
 
+    def test_requests_top_to_bottom_layout_without_disabling_search_relevance(self):
+        self.write_fzf("print(rows[0])")
+        session = self.session("remote", host="agent-server")
+        self.assertIs(self.choose([session]), session)
+        arguments = self.recorded()["argv"]
+        self.assertIn("--layout=reverse", arguments)
+        self.assertNotIn("--no-sort", arguments)
+
     def test_aligns_columns_and_keeps_selectors_stable_when_reordered(self):
         sessions = [
             self.session("one", name="a"),

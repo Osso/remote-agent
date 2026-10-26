@@ -334,5 +334,10 @@ def collect_sessions() -> tuple[list[Session], list[str]]:
         errors.append(f"Remote inventory (agent-server): {error}")
     return sorted(
         sessions,
-        key=lambda session: (session.name.casefold(), session.host, session.key),
+        key=lambda session: (
+            session.backend != "remote",
+            session.name.casefold(),
+            session.host,
+            session.key,
+        ),
     ), errors
