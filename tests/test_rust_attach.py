@@ -630,6 +630,22 @@ class NativeRustAttachTests(unittest.TestCase):
         argv = json.loads(argv_log.read_text().splitlines()[-1])
         self.assertEqual(argv[:2], ["--session", started["conversation"]])
 
+    def test_restart_refuses_unrelated_live_server_pid(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        path = self.state / "runtime.json"
+        original = path.read_bytes()
+        try:
+            runtime = json.loads(original)
+            runtime["pid"] = os.getpid()
+            path.write_text(json.dumps(runtime))
+            result = self.cli("restart", "bulk-proof", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not own this session", result.stderr)
+            self.assertTrue(process_exists(started["pid"]))
+        finally:
+            path.write_bytes(original)
+
     def test_restart_reports_service_failure(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))

@@ -259,6 +259,15 @@ async fn restart_session(home: &Path, name: &str) -> Result<Value> {
         "launch name does not match session directory"
     );
     let previous = control::status(home, name)?;
+    if let Some(pid) = previous["pid"].as_u64() {
+        let pid = u32::try_from(pid).context("invalid recorded server PID")?;
+        if process_is_live(pid)? {
+            ensure!(
+                control::server_matches_state(pid, &state)?,
+                "refusing to restart: recorded PID does not own this session"
+            );
+        }
+    }
     launch.resume = true;
     launch.prompt = None;
     control::write_private_json(&state.join("launch.json"), &launch)?;
