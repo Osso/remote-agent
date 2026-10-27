@@ -250,6 +250,22 @@ fn stop_session_unit_with(systemctl: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn restart_session_unit(name: &str) -> Result<()> {
+    let unit = session_unit(name)?;
+    let output = Command::new("systemctl")
+        .args(["--user", "restart", &unit])
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("restart session unit {unit}"))?;
+    ensure!(
+        output.status.success(),
+        "restart session unit {unit} failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
 pub fn build_pi_login_command(pi: &Path, provider: &str) -> Command {
     let mut command = Command::new(pi);
     command.arg("login").arg(provider);

@@ -10,6 +10,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Support installed macOS-to-Linux attachment (arm64 macOS laptop at `7831e16`).
 - [x] Start each session as an enabled systemd user service in the user's `agents.slice`; deploy its template and reload each server account's user manager.
 - [x] Cancel by disabling and stopping the service, wait for the server PID to exit, then invoke the configured project cancellation hook with the conversation ID. Repeated stop must be a no-op so a failed hook can be retried. Preserve errors and retry state.
+- [x] Support `remote-agent restart NAME` for the systemd session service on the selected host and user account. Resume the saved conversation. Restart interrupts foreground work and jobs in the service control group; do not promise to restore them.
 - [x] Keep sessions manageable after binary upgrades by validating exact server argv and absolute state path, without requiring the current executable inode.
 - [x] Restore the same conversation, session name, project and account after server loss and restart using the saved launch configuration. Do not promise restoration of running jobs, in-progress model turns or unsent editor text.
 - [ ] Restore enabled sessions after an actual host reboot when the user manager starts with linger enabled. Simulated reboot and whole-unit kill/start proof do not establish actual reboot acceptance.

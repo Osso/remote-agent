@@ -162,6 +162,11 @@ For a separately provisioned experimental endpoint:
 ./target/debug/remote-agent-rs --host agent-server pi-login PROVIDER
 ```
 
+`restart NAME` targets the selected `--host` and `--user` account's systemd
+session service and resumes its saved conversation. Restart interrupts foreground
+work and jobs in the service control group; those jobs, in-progress model turns
+and unsent editor text are not restored.
+
 Other commands are `status NAME` and `cancel NAME`; cancel stops the experimental
 enabled user unit with `systemctl --user disable --now`, waits for the server PID
 to exit, then runs the project's `pi_cancel_executable` hook with the conversation

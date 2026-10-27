@@ -47,6 +47,10 @@ enum Action {
     Cancel {
         name: String,
     },
+    /// Restart the session service; its foreground work and service jobs are interrupted.
+    Restart {
+        name: String,
+    },
     Projects,
     PiLogin {
         provider: String,
@@ -182,6 +186,7 @@ async fn run_client_command(
         Action::Status { name } => ControlRequest::Status { name },
         Action::Logs { name } => ControlRequest::Logs { name },
         Action::Cancel { name } => ControlRequest::Cancel { name },
+        Action::Restart { name } => ControlRequest::Restart { name },
         _ => bail!("command is not a client action"),
     };
     let response = client::query_remote(config, host, user, &request).await?;
@@ -241,8 +246,31 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
             Ok(serde_json::to_value(read_running_ticket(home, &name)?)?)
         }
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
+        ControlRequest::Restart { name } => restart_session(home, &name).await,
         ControlRequest::PiLogin { .. } => bail!("Pi login needs a TTY; use pi-login PROVIDER"),
     }
+}
+
+async fn restart_session(home: &Path, name: &str) -> Result<Value> {
+    let state = control::session_dir(home, name)?;
+    let mut launch = control::read_launch(&state)?;
+    ensure!(
+        launch.name == name,
+        "launch name does not match session directory"
+    );
+    let previous = control::status(home, name)?;
+    launch.resume = true;
+    launch.prompt = None;
+    control::write_private_json(&state.join("launch.json"), &launch)?;
+    control::restart_session_unit(name)?;
+    for _ in 0..100 {
+        let status = control::status(home, name)?;
+        if status["running"] == true && status["pid"] != previous["pid"] {
+            return Ok(status);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    bail!("restarted session {name} did not become ready")
 }
 
 async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Result<()> {

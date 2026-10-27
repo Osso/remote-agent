@@ -132,6 +132,9 @@ pub enum ControlRequest {
     Cancel {
         name: String,
     },
+    Restart {
+        name: String,
+    },
     Projects,
     PiLogin {
         provider: String,

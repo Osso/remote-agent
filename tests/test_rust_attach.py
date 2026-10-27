@@ -105,6 +105,15 @@ def systemctl_bootstrap():
         start_unit_fixture(state)
     elif action == "start" and info and info["enabled"]:
         start_unit_fixture(state)
+    elif action == "restart" and info and info["enabled"]:
+        if (state / "fixture-restart-failure").exists():
+            print("fixture manager restart denied", file=sys.stderr)
+            sys.exit(1)
+        runtime = json.loads((state / "runtime.json").read_text())
+        for pid in (runtime["child_pid"], info["pid"]):
+            if pid and process_exists(pid):
+                os.kill(pid, signal.SIGKILL)
+        start_unit_fixture(state)
     elif arguments[1:3] == ["disable", "--now"]:
         if info and process_exists(info["pid"]):
             command = Path(f"/proc/{info['pid']}/cmdline").read_bytes().split(b"\0")
@@ -599,6 +608,36 @@ class NativeRustAttachTests(unittest.TestCase):
             self.assertTrue(process_exists(started["pid"]))
         finally:
             path.write_text(original)
+
+    def test_restart_resumes_named_conversation(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        argv_log = self.root / "pi-argv.jsonl"
+        deadline = time.monotonic() + 5
+        while not argv_log.exists() or not argv_log.read_text().endswith("\n"):
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        result = self.cli("restart", "bulk-proof")
+        self.owned.update((result["pid"], result["child_pid"]))
+        self.assertTrue(result["running"])
+        self.assertNotEqual(result["pid"], started["pid"])
+        self.assertEqual(result["conversation"], started["conversation"])
+        self.assertEqual(result["cwd"], started["cwd"])
+        deadline = time.monotonic() + 5
+        while not argv_log.exists() or len(argv_log.read_text().splitlines()) < 2:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        argv = json.loads(argv_log.read_text().splitlines()[-1])
+        self.assertEqual(argv[:2], ["--session", started["conversation"]])
+
+    def test_restart_reports_service_failure(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        (self.state / "fixture-restart-failure").touch()
+        result = self.cli("restart", "bulk-proof", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("fixture manager restart denied", result.stderr)
+        self.assertEqual(self.cli("status", "bulk-proof")["pid"], started["pid"])
 
     def test_enabled_session_unit_restores_after_simulated_reboot(self):
         # Verifier counterexample: a prompted session failed to restart (prompt.txt
