@@ -251,13 +251,24 @@ def run_session(config, arguments, conversation):
                 file=sys.stderr,
             )
 
-    previous = signal.signal(signal.SIGWINCH, forward_winch)
+    def stop_container(signum, frame):
+        # The container lives in dockerd's cgroup, so stopping the session unit
+        # would leave it running and block the restarted wrapper. remote-agent
+        # SIGKILLs this process group 2 s after SIGTERM; a separate session keeps
+        # `docker stop` alive in the unit cgroup until the container exits.
+        subprocess.run(["docker", "stop", name], check=False, start_new_session=True)
+        sys.exit(128 + signum)
+
+    handled = (signal.SIGWINCH, signal.SIGTERM, signal.SIGHUP)
+    handlers = (forward_winch, stop_container, stop_container)
+    previous = [signal.signal(s, h) for s, h in zip(handled, handlers)]
     try:
         return subprocess.run(
             ["docker", "start", "--attach", "--interactive", name], check=False
         ).returncode
     finally:
-        signal.signal(signal.SIGWINCH, previous)
+        for s, h in zip(handled, previous):
+            signal.signal(s, h)
 
 
 def main(arguments=None):

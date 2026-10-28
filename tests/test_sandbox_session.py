@@ -80,6 +80,13 @@ if args[0] == 'cp':
     p = pathlib.Path(src)
     state['containers'][name]['files'][target] = {'text': p.read_text(), 'mode': p.stat().st_mode & 0o777}
     finish()
+if args[0] == 'stop':
+    state['stop_session'] = os.getsid(0)
+    save()
+    time.sleep(state.get('stop_delay', 0))
+    state = json.loads(state_path.read_text())
+    state['containers'][args[-1]]['status'] = 'exited'
+    finish()
 if args[0] == 'kill':
     if state['containers'][args[-1]]['status'] != 'running':
         finish(1, 'container is not running')
@@ -300,6 +307,40 @@ class SandboxSessionTests(unittest.TestCase):
                     self.assertIs(signal.getsignal(signal.SIGWINCH), expected)
                     os.kill(os.getpid(), signal.SIGWINCH)
         self.assertEqual(observed, [signal.SIGWINCH, signal.SIGWINCH])
+
+    def test_unit_stop_stops_container_so_resume_recreates_it(self):
+        name = container_name("selected")
+        self.save(
+            {**self.state(), "block_attach": True, "keep_running": True, "stop_delay": 0.5}
+        )
+        # remote-agent starts the wrapper as a session leader, SIGTERMs its
+        # process group on unit stop and SIGKILLs the group 2 s later.
+        process = subprocess.Popen(
+            [sys.executable, str(WRAPPER), "--config", str(self.config)]
+            + ["--session", "selected"],
+            env=self.env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.addCleanup(process.wait)
+        self.wait_for(lambda: self.state_file.with_suffix(".created").exists())
+        self.release("created")
+        self.wait_for(lambda: self.state_file.with_suffix(".running").exists())
+        os.killpg(process.pid, signal.SIGTERM)
+        self.wait_for(lambda: "stop_session" in self.state())
+        os.killpg(process.pid, signal.SIGKILL)
+        self.wait_for(lambda: self.state()["containers"][name]["status"] == "exited")
+        self.assertNotEqual(self.state()["stop_session"], process.pid)
+
+        self.save({**self.state(), "block_attach": False, "commands": []})
+        self.settings["image"] = "clank-pi@sha256:def456"
+        self.config.write_text(json.dumps(self.settings))
+        self.assert_success(self.invoke("--resume", "selected"))
+        commands = self.state()["commands"]
+        self.assertIn(["docker", "rm", "--volumes", name], commands)
+        create = next(c for c in commands if c[:2] == ["docker", "create"])
+        self.assertIn("clank-pi@sha256:def456", create)
 
     def test_two_conversations_cancel_only_selected_and_repeat_is_idempotent(self):
         state = self.state()

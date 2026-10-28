@@ -35,8 +35,11 @@ Deployment preserves existing project maps and workloads, installs only the `cla
 remote-agent start clank clank --agent-harness pi
 remote-agent attach clank
 remote-agent status clank
+remote-agent restart clank
 remote-agent cancel clank
 ```
+
+`restart` resumes the recorded conversation on the image in `runtime.json`, so run it after `sandbox/deploy.sh`; no `docker stop` or `cancel` is needed. When the session unit stops, the host wrapper runs `docker stop` in its own process session, so the server's process-group SIGKILL cannot interrupt it and systemd holds the restart until the container exits. The restarted wrapper then replaces the exited container from the configured image, keeping the Pi-home and workspace volumes. An in-progress turn is interrupted; the anonymous `/tmp` volume is discarded.
 
 Detach with Ctrl+backslash; do not cancel to detach. History export uses a transient offline container with the same private Pi-home/workspace volumes. Resume uses the recorded conversation. Cancellation removes only the selected conversation container, including its descendants, after stopping its host launcher; its anonymous `/tmp` volume is discarded, while saved Pi history/workspace remains. The host session wrapper proxies SIGWINCH to the running container so Pi repaints after attachment.
 
