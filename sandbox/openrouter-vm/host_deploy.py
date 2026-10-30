@@ -93,7 +93,8 @@ def download(url, path):
 
 
 def verify_image(image, signature):
-    digest = hashlib.file_digest(image.open("rb"), "sha256").hexdigest()
+    with image.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
     if digest != SHA256:
         raise ValueError("cloud image SHA256 mismatch")
     run(
@@ -126,7 +127,7 @@ def install(stage, root=ROOT, unit=UNIT):
             raise ValueError(
                 "existing VM state differs or is incomplete; refusing to provision"
             )
-        for name in ("disk.qcow2", "seed.iso", "id_ed25519", "known_hosts"):
+        for name in (IMAGE, "disk.qcow2", "seed.iso", "id_ed25519", "known_hosts"):
             if not (root / name).is_file():
                 raise ValueError(f"existing VM state missing {name}")
         if not unit.is_file() or unit.read_text() != unit_text(root):

@@ -56,7 +56,7 @@ class ProvisionTest(TestCase):
             stage.mkdir()
             (root / "vm.json").write_text(json.dumps(host.config(root)))
             (root / "disk.qcow2").write_bytes(b"existing disk")
-            for name in ("seed.iso", "id_ed25519", "known_hosts"):
+            for name in (host.IMAGE, "seed.iso", "id_ed25519", "known_hosts"):
                 (root / name).write_text("existing")
             unit.write_text(host.unit_text(root))
             for name in host.SCRIPTS:
