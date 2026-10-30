@@ -116,6 +116,17 @@ class ProvisionTest(TestCase):
             (root / "disk.qcow2").write_bytes(b"existing disk")
             for name in (host.IMAGE, "seed.iso", "id_ed25519", "known_hosts"):
                 (root / name).write_text("existing")
+            for name in (
+                "id_ed25519.pub",
+                "ssh_host_ed25519_key",
+                "ssh_host_ed25519_key.pub",
+            ):
+                (root / name).write_text("key")
+            (root / "user-data").write_text(
+                "#cloud-config\n"
+                + json.dumps(host.cloud_config("key", "key", "key"))
+                + "\n"
+            )
             unit.write_text(host.unit_text(root))
             for name in host.SCRIPTS:
                 (stage / name).write_text("new " + name)
