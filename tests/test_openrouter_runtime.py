@@ -41,7 +41,11 @@ def test_staging_uses_proxy_and_only_installed_pi_files(tmp_path):
     with tarfile.open(archive) as staged:
         settings = json.load(staged.extractfile("settings.json"))
         models = json.load(staged.extractfile("models.json"))
-        assert settings["httpProxy"] == "http://172.30.253.1:3128"
+        assert "httpProxy" not in settings
+        assert (
+            models["providers"]["openrouter"]["baseUrl"]
+            == "http://172.30.253.1:3128/api/v1"
+        )
         assert {m["id"] for m in models["providers"]["openrouter"]["models"]} == {
             "particle-ai/particle-1",
             "minimax/minimax-m3.1-flash",

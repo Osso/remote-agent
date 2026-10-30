@@ -32,13 +32,16 @@ def stage(archive_path, pi):
     with tempfile.TemporaryDirectory() as tmp:
         context = Path(tmp)
         settings = json.loads((SANDBOX / "openrouter/settings.json").read_text())
-        settings["httpProxy"] = "http://172.30.253.1:3128"
+        settings.pop("httpProxy", None)
+        models = json.loads((SANDBOX / "openrouter/models.json").read_text())
+        models["providers"]["openrouter"]["baseUrl"] = "http://172.30.253.1:3128/api/v1"
         (context / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+        (context / "models.json").write_text(json.dumps(models, indent=2) + "\n")
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in ("host_deploy.py", "session.py", "launch.py", "Dockerfile"):
                 archive.add(HERE / name, arcname=name)
             archive.add(SANDBOX / "openrouter_proxy.py", arcname="openrouter_proxy.py")
-            archive.add(SANDBOX / "openrouter/models.json", arcname="models.json")
+            archive.add(context / "models.json", arcname="models.json")
             archive.add(context / "settings.json", arcname="settings.json")
             for name in (
                 "pi",
