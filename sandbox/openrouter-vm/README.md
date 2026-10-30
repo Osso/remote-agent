@@ -27,6 +27,8 @@ ssh -t agent-server 'ssh -F ~/.local/share/openrouter-vm/ssh_config wowdecomp-vm
 
 Use `root@wowdecomp-vm` instead for administration, including `arch install PACKAGE`. Root administration uses key-only SSH; password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
 
+For the standing restart authorization and recurring checks, see [operations](OPERATIONS.md).
+
 ## Network and packages
 
 QEMU user networking uses `restrict=on` with IPv6 disabled. Its only guest forwards are `10.0.2.100:3128`, which relays to the existing fixed OpenRouter proxy, and `10.0.2.100:3129`, which permits repository GET/HEAD requests to `https://geo.mirror.pkgbuild.com` with upstream TLS verification. The package mirror entry uses the latter endpoint; Arch package signatures remain required. SSH is forwarded only on host loopback port 22230. The planned WoW data exception below is the only host filesystem share; it is not yet deployed. No host home, host key, SSH agent or management socket is shared with the guest.

@@ -16,6 +16,7 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 ## How it works
 
 - [VM deployment and migration](../../sandbox/openrouter-vm/README.md).
+- [Standing restart authorization and recurring checks](../../sandbox/openrouter-vm/OPERATIONS.md).
 - [Existing container and tool-install proof](../../sandbox/openrouter-runtime/README.md).
 
 ## Implementation inventory
