@@ -38,8 +38,9 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - [x] Booted the KVM guest and installed tools and headless packages on its writable disk. The pinned image digest and signature, and both cloud-init schemas, were verified.
 - [x] Transferred 13 log files before cutover; all transferred files matched their SHA-256 manifest. The final home/workspace archive matched its transferred SHA-256 and was extracted. The old session was stopped without cancellation and its record and data were retained.
 - [x] Resumed the same conversation and reattached through the installed Rust client using SSH control and QUIC. The live Pi was running Ghidra analysis.
+- [x] A direct UID-1000 check used the existing Xvfb and a disposable Wine prefix: llvmpipe worked and a Notepad X11 window remained present for two seconds after creation. No game was launched as a test.
 - [x] Deployed the export fix without restarting Pi; the entire pre-migration saved history text remains an exact prefix of the resumed history after removing SGR color sequences. A real installed attachment resized the guest TTY and detached with exit 0 while preserving Pi and the existing user's geometry.
-- [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof; standalone Wine GUI smoke success is not established.
+- [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof.
 
 The exact evidence and limits are in the [migration record](../../sandbox/openrouter-vm/README.md#live-migration-evidence--2026-10-30).
 
