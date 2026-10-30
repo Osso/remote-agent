@@ -632,7 +632,8 @@ class NativeRustAttachTests(unittest.TestCase):
         self.assertNotEqual(restarted["pid"], started["pid"])
         self.assertNotEqual(restarted["child_pid"], started["child_pid"])
         output = bytearray()
-        deadline = time.monotonic() + 20
+        # The dead QUIC peer is detected by its idle timeout before reconnect.
+        deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             output.extend(self.drain(0.1))
             if b"server restarted" in output and any(
