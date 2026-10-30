@@ -192,6 +192,7 @@ def test_timing_deploy_rejects_unscoped_or_mutating_arguments():
             [sys.executable, str(RUNTIME / "deploy.py"), *arguments],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert outcome.returncode == 2
         assert "error:" in outcome.stderr
