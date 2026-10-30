@@ -13,6 +13,7 @@ SSH = ["-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10"
 FILES = (
     "host_deploy.py",
     "install_runtime.py",
+    "share.py",
     "vm.py",
     "relay.py",
     "repo_proxy.py",

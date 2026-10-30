@@ -229,6 +229,17 @@ def install(stage, root=ROOT, unit=UNIT):
     run("systemctl", "--user", "enable", "--now", "wowdecomp-vm.service")
 
 
+def configure_share(stage, guest):
+    from install_runtime import ssh_command, wait_ready
+
+    script = stage / "share.py"
+    if not script.is_file():
+        raise ValueError(f"missing staged file: {script}")
+    wait_ready(guest)
+    with script.open("rb") as source:
+        subprocess.run(ssh_command(guest, ["python3", "-"]), stdin=source, check=True)
+
+
 def install_launcher_only(stage, root=ROOT):
     metadata = root / "vm.json"
     if not metadata.is_file() or json.loads(metadata.read_text()) != config(root):
@@ -261,6 +272,7 @@ if __name__ == "__main__":
         install_launcher_only(args.stage)
     else:
         install(args.stage)
+        configure_share(args.stage, config(ROOT))
     if args.pi_image:
         from install_runtime import install_runtime
 
