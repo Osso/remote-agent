@@ -18,6 +18,35 @@ struct Peer {
     ready: bool,
     size: Size,
     sender: mpsc::Sender<ServerFrame>,
+    /// Last display sequence queued for this peer.
+    queued: u64,
+    /// The queue filled: live frames are skipped until it drains, then one
+    /// snapshot after `queued` replaces them. Disconnecting instead would
+    /// force a full-history replay, which refills the queue.
+    lagging: bool,
+}
+
+impl Peer {
+    /// Queues a display; returns false when the attachment is gone.
+    fn send_display(&mut self, update: DisplayUpdate) -> bool {
+        let sequence = update.sequence;
+        match self.sender.try_send(ServerFrame::Display { update }) {
+            Ok(()) => {
+                self.queued = sequence;
+                self.lagging = false;
+                true
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.lagging = true;
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+
+    fn drained(&self) -> bool {
+        self.sender.capacity() == self.sender.max_capacity()
+    }
 }
 
 enum Event {
@@ -270,7 +299,10 @@ impl Session {
                     Some(PtyEvent::Closed) | None => output_open = false,
                 },
                 event = events.recv() => if let Some(event) = event { self.dispatch(event)?; },
-                _ = tick.tick() => self.poll_exit()?,
+                _ = tick.tick() => {
+                    self.poll_exit()?;
+                    self.deliver(None);
+                },
                 _ = terminate.recv() => return Ok(()),
                 _ = interrupt.recv() => return Ok(()),
             }
@@ -283,13 +315,38 @@ impl Session {
         if !responses.is_empty() {
             self.pty.write_input(&responses)?;
         }
-        self.broadcast(ServerFrame::Display { update });
+        self.deliver(Some(&update));
         Ok(())
     }
 
-    fn broadcast(&mut self, frame: ServerFrame) {
-        self.peers
-            .retain(|_, peer| !peer.ready || peer.sender.try_send(frame.clone()).is_ok());
+    /// Queues `update` for current peers and catches up drained lagging peers.
+    fn deliver(&mut self, update: Option<&DisplayUpdate>) {
+        let (terminal, positions, exit_code) =
+            (&self.terminal, &self.input_positions, self.exit_code);
+        self.peers.retain(|id, peer| {
+            if !peer.ready {
+                return true;
+            }
+            if !peer.lagging {
+                return update.is_none_or(|update| peer.send_display(update.clone()));
+            }
+            if !peer.drained() {
+                return true;
+            }
+            if !peer.send_display(terminal.snapshot(Some(peer.queued))) {
+                return false;
+            }
+            // Acknowledgements and exit skipped while lagging are cumulative or final.
+            if let Some(&sequence) = positions.get(id) {
+                peer.sender
+                    .try_send(ServerFrame::InputAck { sequence })
+                    .ok();
+            }
+            if let Some(code) = exit_code {
+                peer.sender.try_send(ServerFrame::Exit { code }).ok();
+            }
+            true
+        });
     }
 
     fn poll_exit(&mut self) -> Result<()> {
@@ -303,7 +360,20 @@ impl Session {
             let mut runtime: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
             runtime["exit_code"] = json!(code);
             write_private_json(&path, &runtime)?;
-            self.broadcast(ServerFrame::Exit { code });
+            self.peers.retain(|_, peer| {
+                if !peer.ready || peer.lagging {
+                    return true;
+                }
+                match peer.sender.try_send(ServerFrame::Exit { code }) {
+                    Ok(()) => true,
+                    // Catch-up delivers the exit after the skipped displays.
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        peer.lagging = true;
+                        true
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => false,
+                }
+            });
         }
         Ok(())
     }
@@ -382,11 +452,14 @@ impl Session {
                 ready: false,
                 size,
                 sender,
+                queued: 0,
+                lagging: false,
             },
         );
         self.resize_to_smallest()?;
         let update = self.terminal.snapshot(after);
         if let Some(peer) = self.peers.get_mut(&id) {
+            peer.queued = update.sequence;
             peer.sender
                 .try_send(ServerFrame::Display { update })
                 .context("send initial replay")?;
@@ -420,7 +493,7 @@ impl Session {
         self.pty.resize(size)?;
         self.size = size;
         let update = self.terminal.resize(size)?;
-        self.broadcast(ServerFrame::Display { update });
+        self.deliver(Some(&update));
         Ok(())
     }
 
@@ -469,13 +542,20 @@ impl Session {
         self.ack_input(id, sequence)
     }
 
-    fn ack_input(&self, id: &str, sequence: u64) -> Result<()> {
-        self.peers
-            .get(id)
-            .context("unknown client")?
-            .sender
-            .try_send(ServerFrame::InputAck { sequence })
-            .context("input acknowledgement queue full")
+    fn ack_input(&mut self, id: &str, sequence: u64) -> Result<()> {
+        let peer = self.peers.get_mut(id).context("unknown client")?;
+        if peer.lagging {
+            return Ok(());
+        }
+        match peer.sender.try_send(ServerFrame::InputAck { sequence }) {
+            Ok(()) => Ok(()),
+            // Catch-up sends the latest cumulative acknowledgement.
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                peer.lagging = true;
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => bail!("attachment closed"),
+        }
     }
 }
 

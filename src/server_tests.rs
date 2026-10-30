@@ -16,7 +16,7 @@ impl Fixture {
     async fn start() -> Self {
         let root = tempfile::tempdir().unwrap();
         let pi = root.path().join("pi");
-        std::fs::write(&pi, "#!/usr/bin/python3\nimport sys,tty,time\ntime.sleep(.05)\ntty.setraw(0)\nprint('READY',flush=True)\nfor command in sys.stdin:\n if command.strip()=='bulk':\n  for i in range(80): print(f'BULK_LINE_{i:03}\\r',flush=True)\n if command.strip()=='offline':\n  time.sleep(.2)\n  print('OFFLINE_REPLY\\r',flush=True)\n").unwrap();
+        std::fs::write(&pi, "#!/usr/bin/python3\nimport sys,tty,time\ntime.sleep(.05)\ntty.setraw(0)\nprint('READY',flush=True)\nfor command in sys.stdin:\n if command.strip()=='bulk':\n  for i in range(80): print(f'BULK_LINE_{i:03}\\r',flush=True)\n if command.strip()=='flood':\n  for i in range(20000): print(f'FLOOD_LINE_{i:05} '+'f'*120+'\\r',flush=True)\n if command.strip()=='offline':\n  time.sleep(.2)\n  print('OFFLINE_REPLY\\r',flush=True)\n").unwrap();
         std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o700)).unwrap();
         let launch = Launch {
             name: "test".into(),
@@ -219,6 +219,72 @@ async fn quic_bulk_output_and_reconnect_preserve_every_line_and_child() {
         .await
         .unwrap();
     resumed.close(0u32.into(), b"done");
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn stalled_reader_is_caught_up_instead_of_disconnected() {
+    let fixture = Fixture::start().await;
+    let id = uuid::Uuid::new_v4().to_string();
+    let size = Size {
+        rows: 46,
+        cols: 165,
+    };
+    let (_endpoint, connection, mut writer, mut reader) = fixture.attach(&id, size, None).await;
+    let mut renderer = DisplayRenderer::new(size);
+    let mut terminal = vt100::Parser::new_with_callbacks(
+        NonZeroU16::new(46).unwrap(),
+        NonZeroU16::new(165).unwrap(),
+        0,
+        Rows::default(),
+    );
+    while !terminal_text(&terminal).contains("READY") {
+        terminal.process(&renderer.render(&next_display(&mut reader).await).unwrap());
+    }
+    send_frame(
+        &mut writer,
+        &ClientFrame::Input {
+            sequence: 1,
+            data: b"flood\n".to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    // Stop reading while Pi writes far more frames than the queue and QUIC windows hold.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let mut previous = None;
+    let mut skipped = false;
+    let mut acknowledged = false;
+    while !terminal_text(&terminal).contains("FLOOD_LINE_19999") {
+        let frame: ServerFrame =
+            tokio::time::timeout(Duration::from_secs(10), read_frame(&mut reader))
+                .await
+                .unwrap()
+                .expect("stalled attachment was disconnected");
+        match frame {
+            ServerFrame::Display { update } => {
+                skipped |= previous.is_some_and(|sequence| update.sequence > sequence + 1);
+                previous = Some(update.sequence);
+                terminal.process(&renderer.render(&update).unwrap());
+            }
+            ServerFrame::InputAck { sequence: 1 } => acknowledged = true,
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
+    assert!(
+        skipped,
+        "reader never fell behind; the test did not exercise catch-up"
+    );
+    assert!(acknowledged, "input acknowledgement was lost");
+    let text = terminal_text(&terminal);
+    for index in 0..20000 {
+        assert_eq!(
+            text.matches(&format!("FLOOD_LINE_{index:05}")).count(),
+            1,
+            "FLOOD_LINE_{index:05} absent or duplicated"
+        );
+    }
+    connection.close(0u32.into(), b"done");
     fixture.stop().await;
 }
 

@@ -22,6 +22,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Return `logs` only from a running server snapshot without joining the session or changing PTY dimensions.
 - [x] Recover ordered output through tested QUIC outages and NAT port migration without duplicating reconnect-notice rows.
 - [x] End attachment after five consecutive failed reconnect attempts; reset the count on any authenticated display frame. Use backoff ceilings of 500, 1000, 2000 and 4000 ms with 90–100% jitter.
+- [x] Keep an attachment whose display queue fills: skip live frames for it until the queue drains, then send one snapshot with every skipped row, the latest input acknowledgement and any exit. Never disconnect it for falling behind; a reconnect replays full history and refills the queue.
 - [x] Show reconnect, control, clipboard and server notices without scrolling terminal output; repaint over them on the next display, including a duplicate reconnect snapshot.
 - [x] Make steady-state display cost proportional to changed rows: live updates carry a diff from the previous display and the client repaints only rows that differ from its viewport. Fresh attachment, replay and virtual resize carry the complete display; reset, resize and repaint clear the viewport.
 - [x] Limit login frames to 8192 bytes before authentication; retain this limit by user decision.
@@ -58,6 +59,7 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 - `tests/test_rust_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
 - `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
 - `tests/test_rust_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_rust_deploy.py`: 8/8 deployment cases.
+- `server::tests::stalled_reader_is_caught_up_instead_of_disconnected`: a reader stalled for 3 s during 20000 output lines stays attached, observes a skipped sequence and receives each line exactly once plus its input acknowledgement; the pre-fix server resets the connection.
 - Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. `terminal::tests::one_changed_pi_row_*` and `scrolled_pi_chat_*` compare live diffs and row repaint at 165×46 against full snapshot repaints for identical screen and scrollback. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
 - `terminal::tests::space_outside_a_smaller_pty_is_grey_after_attach_and_scroll`: every cell outside a 4×10 PTY on a 6×20 terminal is grey after attach and after two rows scroll into native history; cells inside keep the default background.
 - `tests/test_rust_resize.py::test_physical_growth_with_second_client_pinning_pty_minimum`: a detached smaller client stops pinning the PTY within 2 seconds (RED before `0c6df6d`); the real agent-server paste run also asserts 40×120 with both clients and 46×165 after the smaller one detaches.
