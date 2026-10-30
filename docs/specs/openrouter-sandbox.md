@@ -26,6 +26,7 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 - `sandbox/openrouter-runtime/host_deploy.py` — host firewall, proxy service, network, image and volume setup.
 - `sandbox/openrouter-runtime/Dockerfile`, `launch.py` — container image, credentials and Pi configuration.
 - `sandbox/openrouter-runtime/session.py` — conversation container lifecycle and cancellation.
+- `sandbox/openrouter-runtime/request-timings.js` — conversation-scoped, timing-only request markers.
 - `sandbox/openrouter_proxy.py` — fixed-upstream host reverse proxy.
 - `sandbox/openrouter/models.json`, `settings.json` — provider, models and Pi profiles.
 
@@ -33,7 +34,10 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 
 - `tests/test_openrouter_firewall.py` — firewall policy and container network options.
 - `tests/test_openrouter_proxy.py` — reverse-proxy request and upstream behavior.
-- `tests/test_openrouter_runtime.py` — runtime configuration, staging and session behavior.
+- `tests/test_openrouter_runtime.py` — runtime configuration, staging, scoped timing installation and session behavior.
+- `tests/request-timings.test.mjs` — request-stage durations, privacy, permissions and session filtering.
+
+Timing capture deployment and the measured latency limits are recorded in the [timing observation](../../sandbox/openrouter-runtime/README.md#timing-observation--2026-10-30).
 
 On 2026-10-30, the three targeted test files passed (10 tests and 10 subtests). Live proof is recorded in the [runtime documentation](../../sandbox/openrouter-runtime/README.md#deployment-verification). Contract items remain unchecked where full lifecycle coverage is missing.
 
