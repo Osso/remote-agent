@@ -44,13 +44,22 @@ def cloud_config(public_key, host_private, host_public):
         "ssh_pwauth": False,
         "ssh_deletekeys": False,
         "ssh_genkeytypes": [],
+        "bootcmd": [
+            [
+                "systemctl",
+                "mask",
+                "--now",
+                "systemd-time-wait-sync.service",
+                "systemd-timesyncd.service",
+            ]
+        ],
         "ssh_keys": {"ed25519_private": host_private, "ed25519_public": host_public},
         "users": [
             {"name": "root", "ssh_authorized_keys": [public_key]},
             {
                 "name": "agent",
                 "uid": 1000,
-                "home": "/home/agent",
+                "homedir": "/home/agent",
                 "shell": "/bin/bash",
                 "lock_passwd": True,
                 "ssh_authorized_keys": [public_key],
@@ -175,7 +184,7 @@ def install(stage, root=ROOT, unit=UNIT):
             "-output",
             str(root / "seed.iso"),
             "-volid",
-            "cidata",
+            "CIDATA",
             "-joliet",
             "-rock",
             str(root / "user-data"),

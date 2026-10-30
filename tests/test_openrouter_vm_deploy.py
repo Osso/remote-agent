@@ -68,6 +68,19 @@ class ProvisionTest(TestCase):
     def test_cloud_config_limits_admin_and_uses_repository_proxy(self):
         data = host.cloud_config("ssh-ed25519 client", "private", "ssh-ed25519 host")
         self.assertFalse(data["ssh_pwauth"])
+        self.assertEqual(data["users"][1]["homedir"], "/home/agent")
+        self.assertEqual(
+            data["bootcmd"],
+            [
+                [
+                    "systemctl",
+                    "mask",
+                    "--now",
+                    "systemd-time-wait-sync.service",
+                    "systemd-timesyncd.service",
+                ]
+            ],
+        )
         self.assertEqual(data["ssh_keys"]["ed25519_private"], "private")
         self.assertEqual(
             [(u["name"], u.get("uid")) for u in data["users"]],
