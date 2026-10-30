@@ -1,6 +1,6 @@
 # Isolated clank Pi
 
-An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host wrappers integrate with remote-agent; [operation and isolation](../../sandbox/README.md) describes deployment.
+An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host wrappers integrate with remote-agent; [operation and isolation](../../sandbox/README.md) describes deployment. The [independent OpenRouter sandbox](openrouter-sandbox.md) has a separate contract.
 
 ## What it must do
 
