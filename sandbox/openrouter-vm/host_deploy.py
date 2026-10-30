@@ -229,16 +229,38 @@ def install(stage, root=ROOT, unit=UNIT):
     run("systemctl", "--user", "enable", "--now", "wowdecomp-vm.service")
 
 
+def install_launcher_only(stage, root=ROOT):
+    metadata = root / "vm.json"
+    if not metadata.is_file() or json.loads(metadata.read_text()) != config(root):
+        raise ValueError(
+            "existing VM state differs or is incomplete; refusing launcher update"
+        )
+    for name in SCRIPTS:
+        if not (stage / name).is_file():
+            raise ValueError(f"missing staged file: {name}")
+    for name in SCRIPTS:
+        shutil.copyfile(stage / name, root / name)
+        (root / name).chmod(0o700)
+    from install_runtime import install_launcher
+
+    install_launcher(stage, config(root))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", type=Path)
-    parser.add_argument("--pi-image")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pi-image")
+    mode.add_argument("--launcher-only", action="store_true")
     args = parser.parse_args()
     if args.pi_image:
         from install_runtime import validate_image
 
         validate_image(args.pi_image)
-    install(args.stage)
+    if args.launcher_only:
+        install_launcher_only(args.stage)
+    else:
+        install(args.stage)
     if args.pi_image:
         from install_runtime import install_runtime
 

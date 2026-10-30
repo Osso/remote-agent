@@ -49,7 +49,9 @@ def validate_image(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="agent-server")
-    parser.add_argument("--pi-image", type=validate_image)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pi-image", type=validate_image)
+    mode.add_argument("--launcher-only", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="openrouter-vm-") as temporary:
         archive = Path(temporary) / "inputs.tar.gz"
@@ -81,6 +83,8 @@ def main():
             command = ["python3", target + "/host_deploy.py", target]
             if args.pi_image:
                 command.extend(["--pi-image", args.pi_image])
+            if args.launcher_only:
+                command.append("--launcher-only")
             remote(args.host, command)
         finally:
             remote(

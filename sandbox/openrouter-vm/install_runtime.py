@@ -158,6 +158,23 @@ def install_packages(config, packages):
         time.sleep(delay)
 
 
+def install_launcher(stage, config):
+    launcher = stage / "guest_session.py"
+    if not launcher.is_file():
+        raise ValueError(f"missing staged file: {launcher}")
+    wait_ready(config)
+    with tempfile.TemporaryDirectory(prefix="openrouter-launcher-") as temporary:
+        archive = Path(temporary) / "launcher.tar"
+        with tarfile.open(archive, "w") as output:
+            info = output.gettarinfo(
+                str(launcher), arcname="usr/local/lib/openrouter-vm/guest_session.py"
+            )
+            info.mode = 0o755
+            with launcher.open("rb") as source:
+                output.addfile(info, source)
+        transfer(config, archive, "/")
+
+
 def install_runtime(stage, config, image):
     validate_image(image)
     packages = (stage / "tools-packages.txt").read_text().split()

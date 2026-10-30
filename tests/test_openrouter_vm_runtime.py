@@ -27,6 +27,72 @@ host = load("host_deploy")
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_launcher_only_preserves_guest_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            stage = base / "stage"
+            stage.mkdir()
+            (stage / "guest_session.py").write_bytes(b"new launcher")
+            guest = base / "guest"
+            files = {
+                "opt/pi/pi": b"running pi",
+                "home/agent/.pi/settings.json": b"settings",
+                "workspace/data": b"data",
+                "usr/local/lib/openrouter-vm/guest_session.py": b"old launcher",
+            }
+            for name, content in files.items():
+                path = guest / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            ssh = base / "ssh"
+            ssh.write_text("""#!/usr/bin/env python3
+import os, pathlib, shlex, sys, tarfile
+root = pathlib.Path(os.environ["FAKE_GUEST"])
+command = shlex.split(sys.argv[-1])
+with (root / "commands").open("a") as log:
+    log.write(repr(command) + "\\n")
+if command == ["cloud-init", "status", "--wait"]:
+    sys.exit(0)
+if command == ["tar", "-xf", "-", "-C", "/"]:
+    with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as archive:
+        archive.extractall(root, filter="data")
+    sys.exit(0)
+sys.exit("unexpected guest command")
+""")
+            ssh.chmod(0o755)
+            config = {
+                "known_hosts": "known",
+                "private_key": "key",
+                "ssh_port": 22,
+                "admin_user": "root",
+                "host": "localhost",
+            }
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PATH": str(base) + os.pathsep + os.environ["PATH"],
+                    "FAKE_GUEST": str(guest),
+                },
+            ):
+                runtime.install_launcher(stage, config)
+            for name, content in files.items():
+                expected = (
+                    b"new launcher" if name.endswith("guest_session.py") else content
+                )
+                self.assertEqual((guest / name).read_bytes(), expected)
+            self.assertEqual(
+                (guest / "usr/local/lib/openrouter-vm/guest_session.py").stat().st_mode
+                & 0o777,
+                0o755,
+            )
+            self.assertEqual(
+                (guest / "commands").read_text().splitlines(),
+                [
+                    "['cloud-init', 'status', '--wait']",
+                    "['tar', '-xf', '-', '-C', '/']",
+                ],
+            )
+
     def test_runtime_transfer_and_package_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
