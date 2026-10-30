@@ -122,6 +122,75 @@ class ProxyTests(unittest.TestCase):
 
         self.assertEqual(self.request(b"GET / HTTP/1.0\r\n\r\n", fail).status, 502)
 
+    def test_relay_rewrites_host_and_streams_binary_body_and_response(self):
+        left, right = socket.socketpair()
+        incoming_r, incoming_w = os.pipe()
+        outgoing_r, outgoing_w = os.pipe()
+        request = (
+            b"POST /api HTTP/1.1\r\nhOsT: 10.0.2.100:3128\r\n"
+            b"X-Test: unchanged\r\nContent-Length: 5\r\n\r\n\x00\xffabc"
+        )
+        expected = request.replace(b"10.0.2.100:3128", b"172.30.253.1:3128")
+        os.write(incoming_w, request)
+        os.close(incoming_w)
+        result = []
+        thread = threading.Thread(
+            target=lambda: result.append(
+                relay.serve(incoming_r, outgoing_w, lambda: left)
+            )
+        )
+        thread.start()
+        right.settimeout(3)
+        received = bytearray()
+        while chunk := right.recv(65536):
+            received.extend(chunk)
+        self.assertEqual(received, expected)
+        right.sendall(b"HTTP/1.1 200 OK\r\n\r\nfirst")
+        self.assertEqual(os.read(outgoing_r, 100), b"HTTP/1.1 200 OK\r\n\r\nfirst")
+        right.sendall(b"\x00second")
+        self.assertEqual(os.read(outgoing_r, 100), b"\x00second")
+        right.close()
+        thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, [0])
+        for fd in (incoming_r, outgoing_r, outgoing_w):
+            os.close(fd)
+
+    def test_relay_rejects_bad_headers_without_connecting(self):
+        for request in (
+            b"GET / HTTP/1.1\r\nHost: evil:3128\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: 10.0.2.100:3128\r\nHost: 10.0.2.100:3128\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: 10.0.2.100:3128\r\nBad header\r\n\r\n",
+            b"GET / HTTP/1.1\r\nHost: 10.0.2.100:3128\r\nX: " + b"a" * 65536,
+        ):
+            with self.subTest(request=request[:60]):
+                incoming_r, incoming_w = os.pipe()
+                outgoing_r, outgoing_w = os.pipe()
+
+                # Write large inputs concurrently because pipes have bounded capacity.
+                def write_request():
+                    try:
+                        with os.fdopen(incoming_w, "wb") as stream:
+                            stream.write(request)
+                    except BrokenPipeError:
+                        pass
+
+                writer = threading.Thread(target=write_request)
+                writer.start()
+
+                def unexpected_connect():
+                    self.fail("invalid request reached upstream")
+
+                self.assertEqual(
+                    relay.serve(incoming_r, outgoing_w, unexpected_connect), 1
+                )
+                self.assertTrue(os.read(outgoing_r, 100).startswith(b"HTTP/1.1 400 "))
+                os.close(incoming_r)
+                writer.join(3)
+                self.assertFalse(writer.is_alive())
+                os.close(outgoing_r)
+                os.close(outgoing_w)
+
     def test_relay_half_close_and_stream(self):
         left, right = socket.socketpair()
         incoming_r, incoming_w = os.pipe()
