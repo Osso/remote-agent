@@ -29,7 +29,12 @@ def key_bytes(path):
     return key
 
 
-def stage(archive_path, pi, config_only=False, timings_session=None):
+def stage(archive_path, pi, config_only=False, timings_session=None, tools_only=False):
+    if tools_only:
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for name in ("host_deploy.py", "tools-packages.txt"):
+                archive.add(HERE / name, arcname=name)
+        return
     if timings_session is not None:
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in ("host_deploy.py", "request-timings.js"):
@@ -44,7 +49,13 @@ def stage(archive_path, pi, config_only=False, timings_session=None):
         (context / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
         (context / "models.json").write_text(json.dumps(models, indent=2) + "\n")
         with tarfile.open(archive_path, "w:gz") as archive:
-            for name in ("host_deploy.py", "session.py", "launch.py", "Dockerfile"):
+            for name in (
+                "host_deploy.py",
+                "session.py",
+                "launch.py",
+                "Dockerfile",
+                "tools-packages.txt",
+            ):
                 archive.add(HERE / name, arcname=name)
             archive.add(SANDBOX / "openrouter_proxy.py", arcname="openrouter_proxy.py")
             archive.add(context / "models.json", arcname="models.json")
@@ -69,16 +80,25 @@ def stage(archive_path, pi, config_only=False, timings_session=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="agent-server")
-    parser.add_argument(
-        "--pi-install", type=Path, default=Path.home() / ".local/share/pi"
-    )
+    parser.add_argument("--pi-install", type=Path)
     parser.add_argument("--local-project", type=Path)
     parser.add_argument("--key-file", type=Path)
     parser.add_argument("--config-only", action="store_true")
+    parser.add_argument("--tools-only", action="store_true")
     parser.add_argument("--update-live-models", action="store_true")
     parser.add_argument("--timings-only", action="store_true")
     parser.add_argument("--session-id", type=lambda value: str(uuid.UUID(value)))
     args = parser.parse_args()
+    if args.tools_only and (
+        args.config_only
+        or args.timings_only
+        or args.update_live_models
+        or args.session_id
+        or args.key_file
+        or args.local_project
+        or args.pi_install
+    ):
+        parser.error("--tools-only cannot be combined with other deployment options")
     if args.timings_only:
         if not args.session_id or args.config_only or args.update_live_models:
             parser.error(
@@ -94,13 +114,24 @@ def main():
         parser.error(
             "--config-only cannot be combined with --key-file or --local-project"
         )
-    if not args.config_only and not args.timings_only and not args.local_project:
+    if (
+        not args.config_only
+        and not args.timings_only
+        and not args.tools_only
+        and not args.local_project
+    ):
         parser.error("--local-project is required for a full deployment")
     local = str(args.local_project.resolve(strict=True)) if args.local_project else None
     key = key_bytes(args.key_file) if args.key_file else None
     with tempfile.TemporaryDirectory(prefix="openrouter-stage-") as tmp:
         archive = Path(tmp) / "inputs.tar.gz"
-        stage(archive, args.pi_install, args.config_only, args.session_id)
+        stage(
+            archive,
+            args.pi_install or Path.home() / ".local/share/pi",
+            args.config_only,
+            args.session_id,
+            args.tools_only,
+        )
         target = remote(
             args.host,
             [
@@ -125,14 +156,16 @@ def main():
             ],
         )
         host_args = ["python3", target + "/host_deploy.py", target]
-        if args.timings_only:
+        if args.tools_only:
+            host_args.append("--tools-only")
+        elif args.timings_only:
             host_args.extend(["--timings-only", "--session-id", args.session_id])
         else:
             host_args.extend(["--config-only"] if args.config_only else [local])
         if args.update_live_models:
             host_args.append("--update-live-models")
         remote(args.host, host_args)
-        if args.config_only or args.timings_only:
+        if args.config_only or args.timings_only or args.tools_only:
             remote(
                 args.host,
                 [

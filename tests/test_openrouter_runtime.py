@@ -121,6 +121,133 @@ def test_config_only_staging_does_not_require_pi(tmp_path):
         assert not any(name.startswith("pi/") for name in staged.getnames())
 
 
+def test_tools_only_stages_only_host_and_shared_manifest(tmp_path):
+    deploy = load("deploy")
+    archive = tmp_path / "stage.tar.gz"
+    deploy.stage(archive, tmp_path / "missing", tools_only=True)
+    with tarfile.open(archive) as staged:
+        assert set(staged.getnames()) == {"host_deploy.py", "tools-packages.txt"}
+        assert staged.extractfile(
+            "tools-packages.txt"
+        ).read().decode().splitlines() == [
+            "python-capstone",
+            "python-unicorn",
+            "jdk-openjdk",
+            "ghidra",
+            "wine",
+        ]
+
+
+@pytest.mark.parametrize("fail_build", [False, True])
+def test_tools_only_preserves_runtime_and_private_state(
+    tmp_path, monkeypatch, fail_build
+):
+    host = load("host_deploy")
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(host, "ROOT", state)
+    runtime = {
+        "image": "sha256:old",
+        "network": "existing",
+        "home_volume": "home",
+        "secret_file": "key",
+    }
+    runtime_path = state / "runtime.json"
+    original = json.dumps(runtime)
+    runtime_path.write_text(original)
+    for name in ("settings.json", "models.json", "key"):
+        (state / name).write_text("private " + name)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "tools-packages.txt").write_text(
+        (RUNTIME / "tools-packages.txt").read_text()
+    )
+    calls = []
+
+    def docker(*args):
+        calls.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            assert args[-1] == "sha256:old"
+            return "sha256:old"
+        if args[:3] == ("docker", "image", "tag"):
+            return ""
+        assert args[:2] == ("docker", "build")
+        recipe = Path(args[args.index("--file") + 1]).read_text()
+        assert "FROM openrouter-sandbox-tools-base:latest\nUSER root\n" in recipe
+        assert (
+            "pacman -Syu --noconfirm --needed $(cat /tmp/tools-packages.txt)" in recipe
+        )
+        assert recipe.endswith("USER 1000:1000\n")
+        if fail_build:
+            raise subprocess.CalledProcessError(1, args)
+        Path(args[args.index("--iidfile") + 1]).write_text("sha256:new")
+        return ""
+
+    monkeypatch.setattr(host, "run", docker)
+    if fail_build:
+        with pytest.raises(subprocess.CalledProcessError):
+            host.install_tools(stage)
+        assert runtime_path.read_text() == original
+    else:
+        host.install_tools(stage)
+        assert json.loads(runtime_path.read_text()) == {
+            **runtime,
+            "image": "sha256:new",
+        }
+        assert runtime_path.stat().st_mode & 0o777 == 0o600
+    for name in ("settings.json", "models.json", "key"):
+        assert (state / name).read_text() == "private " + name
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--config-only"],
+        ["--timings-only"],
+        ["--update-live-models"],
+        ["--session-id", "e9f22590-027a-452a-bc36-a1312c9b5537"],
+        ["--local-project", "/tmp"],
+        ["--key-file", "/tmp/key"],
+        ["--pi-install", "/tmp/pi"],
+    ],
+)
+def test_tools_only_rejects_conflicting_controller_arguments(arguments):
+    outcome = subprocess.run(
+        [sys.executable, str(RUNTIME / "deploy.py"), "--tools-only", *arguments],
+        capture_output=True,
+        text=True,
+    )
+    assert outcome.returncode == 2
+    assert "error:" in outcome.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--config-only"],
+        ["--timings-only"],
+        ["--update-live-models"],
+        ["--session-id", "e9f22590-027a-452a-bc36-a1312c9b5537"],
+        ["project"],
+    ],
+)
+def test_tools_only_rejects_conflicting_host_arguments(tmp_path, arguments):
+    outcome = subprocess.run(
+        [
+            sys.executable,
+            str(RUNTIME / "host_deploy.py"),
+            str(tmp_path),
+            "--tools-only",
+            *arguments,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert outcome.returncode == 2
+    assert "error:" in outcome.stderr
+
+
 def test_timings_only_stages_diagnostics_without_models_or_pi(tmp_path):
     deploy = load("deploy")
     archive = tmp_path / "stage.tar.gz"

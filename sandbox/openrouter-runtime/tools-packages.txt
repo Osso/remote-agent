@@ -1,0 +1,5 @@
+python-capstone
+python-unicorn
+jdk-openjdk
+ghidra
+wine

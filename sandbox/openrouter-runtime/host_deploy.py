@@ -63,6 +63,44 @@ def save_mapping(path, projects):
     temp.replace(path)
 
 
+def save_runtime_image(runtime, config, image):
+    config["image"] = image
+    with tempfile.NamedTemporaryFile(mode="w", dir=ROOT, delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            json.dump(config, file, indent=2)
+            file.write("\n")
+            file.close()
+            temporary.replace(runtime)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def install_tools(stage):
+    runtime = ROOT / "runtime.json"
+    config = json.loads(runtime.read_text())
+    image = run("docker", "image", "inspect", "--format", "{{.Id}}", config["image"])
+    base = "openrouter-sandbox-tools-base:latest"
+    run("docker", "image", "tag", image, base)
+    dockerfile = stage / "Dockerfile.tools"
+    dockerfile.write_text(
+        f"FROM {base}\nUSER root\nCOPY tools-packages.txt /tmp/tools-packages.txt\n"
+        "RUN pacman -Syu --noconfirm --needed $(cat /tmp/tools-packages.txt) "
+        "&& pacman -Scc --noconfirm && rm /tmp/tools-packages.txt\nUSER 1000:1000\n"
+    )
+    image_id = stage / "image.id"
+    run(
+        "docker",
+        "build",
+        "--file",
+        str(dockerfile),
+        "--iidfile",
+        str(image_id),
+        str(stage),
+    )
+    save_runtime_image(runtime, config, image_id.read_text().strip())
+
+
 def install_configuration(stage, update_live_models=False):
     runtime = ROOT / "runtime.json"
     config = json.loads(runtime.read_text())
@@ -109,15 +147,7 @@ def install_configuration(stage, update_live_models=False):
             "-c",
             script,
         )
-    with tempfile.NamedTemporaryFile(mode="w", dir=ROOT, delete=False) as file:
-        temporary = Path(file.name)
-        try:
-            json.dump(config, file, indent=2)
-            file.write("\n")
-            file.close()
-            temporary.replace(runtime)
-        finally:
-            temporary.unlink(missing_ok=True)
+    save_runtime_image(runtime, config, config["image"])
 
 
 TIMING_INSTALL_PROGRAM = """import hashlib,json,os,pathlib,sys,tempfile
@@ -279,11 +309,24 @@ if __name__ == "__main__":
     parser.add_argument("stage", type=Path)
     parser.add_argument("local", nargs="?")
     parser.add_argument("--config-only", action="store_true")
+    parser.add_argument("--tools-only", action="store_true")
     parser.add_argument("--update-live-models", action="store_true")
     parser.add_argument("--timings-only", action="store_true")
     parser.add_argument("--session-id", type=lambda value: str(uuid.UUID(value)))
     args = parser.parse_args()
-    if args.timings_only:
+    if args.tools_only:
+        if (
+            args.local
+            or args.config_only
+            or args.timings_only
+            or args.update_live_models
+            or args.session_id
+        ):
+            parser.error(
+                "--tools-only cannot be combined with other deployment options"
+            )
+        install_tools(args.stage.resolve(strict=True))
+    elif args.timings_only:
         if (
             not args.session_id
             or args.local
