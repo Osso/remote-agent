@@ -116,13 +116,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def serve(input_stream, output_stream, connection_factory=None):
     class Server:
-        streams = (input_stream, output_stream)
-        connection_factory = staticmethod(
-            connection_factory
-            or (lambda: http.client.HTTPSConnection(UPSTREAM, 443, timeout=30))
-        )
+        pass
 
-    Handler(None, ("guest", 0), Server())
+    server = Server()
+    server.streams = (input_stream, output_stream)
+    server.connection_factory = connection_factory or (
+        lambda: http.client.HTTPSConnection(UPSTREAM, 443, timeout=30)
+    )
+    Handler(None, ("guest", 0), server)
 
 
 if __name__ == "__main__":
