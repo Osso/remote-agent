@@ -31,11 +31,15 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - `tests/test_openrouter_vm_proxies.py` — concrete HTTP transfer, denied requests and bidirectional relay behavior.
 - `tests/test_openrouter_vm_session.py` — Pi launch environment, identity and configuration preservation, process-lifetime conversation locking and SSH arguments.
 
-## Known gaps (current cycle)
+## Live evidence and gaps — 2026-10-30
 
-- [ ] Establish real guest boot, writable package installation and enforced network boundaries.
-- [ ] Transfer logs and session data with integrity evidence, then prove installed terminal attachment, resize and detach for the same conversation.
-- [ ] Verify restart lifetime: the host SSH process must not leave a duplicate guest Pi after restart.
+- [x] Booted the KVM guest and installed tools and headless packages on its writable disk. The pinned image digest and signature, and both cloud-init schemas, were verified.
+- [x] Transferred 13 log files before cutover; the first hash matched. The final home/workspace archive matched its transferred SHA-256 and was extracted. The old session was stopped without cancellation and its record and data were retained.
+- [x] Resumed the same conversation and reattached through the installed Rust client using SSH control and QUIC. The live Pi was running Ghidra analysis.
+- [ ] Prove terminal-history export integrity, resize and clean detach on the migrated attachment. The export fix and launcher-only deployment are not yet a completed source gate.
+- [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof; standalone Wine GUI smoke success is not established.
+
+The exact evidence and limits are in the [migration record](../../sandbox/openrouter-vm/README.md#live-migration-evidence--2026-10-30).
 
 ## Out of scope
 

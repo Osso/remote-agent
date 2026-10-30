@@ -1,5 +1,7 @@
 # Independent OpenRouter sandbox
 
+`wowdecomp` migrated from this container to the [live KVM VM](../openrouter-vm/README.md#live-migration-evidence--2026-10-30). The container evidence and commands below describe the original runtime, not the current `wowdecomp` attachment.
+
 This runtime is separate from Clank. It uses the `openrouter-sandbox` project and network, `br-or-sandbox` bridge, its own image, volumes, service units, state directory and key. Its fixed subnet is `172.30.253.0/24`; deployment fails if Docker cannot reserve it. It does not mount the mapped host project into the container. The project mapping provides the remote-agent working directory; the sandbox workspace is a separate Docker volume.
 
 Deploy:
