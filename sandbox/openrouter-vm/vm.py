@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 ROOT = Path.home() / ".local/share/openrouter-vm"
+WOW_INSTALL = Path("/syncthing/World of Warcraft")
 
 
 def command(root=ROOT):
@@ -39,9 +40,19 @@ def command(root=ROOT):
         network,
         "-device",
         "virtio-net-pci,netdev=net0",
+        "-fsdev",
+        f"local,id=wow_install,path={WOW_INSTALL},security_model=mapped-xattr,readonly=on",
+        "-device",
+        "virtio-9p-pci,fsdev=wow_install,mount_tag=wow-install",
     ]
 
 
-if __name__ == "__main__":
+def main():
+    if not WOW_INSTALL.is_dir():
+        raise SystemExit(f"VM share source is not a directory: {WOW_INSTALL}")
     args = command()
     os.execvp(args[0], args)
+
+
+if __name__ == "__main__":
+    main()

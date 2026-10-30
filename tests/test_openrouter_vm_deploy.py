@@ -96,15 +96,36 @@ class ProvisionTest(TestCase):
             files["/etc/ssh/sshd_config.d/10-openrouter.conf"],
         )
 
-    def test_network_and_disks_are_attached_without_host_shares(self):
+    def test_network_disks_and_read_only_host_share_are_attached(self):
         args = vm.command(Path("/home/osso/vm"))
         network = args[args.index("-netdev") + 1]
         self.assertEqual(
             network,
             "user,id=net0,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:22230-:22,guestfwd=tcp:10.0.2.100:3128-cmd:python3 /home/osso/vm/relay.py,guestfwd=tcp:10.0.2.100:3129-cmd:python3 /home/osso/vm/repo_proxy.py",
         )
-        self.assertNotIn("-virtfs", args)
         self.assertIn("file=/home/osso/vm/disk.qcow2,if=virtio,format=qcow2", args)
+        self.assertEqual(
+            args[args.index("-fsdev") + 1],
+            "local,id=wow_install,path=/syncthing/World of Warcraft,security_model=mapped-xattr,readonly=on",
+        )
+        self.assertIn("virtio-9p-pci,fsdev=wow_install,mount_tag=wow-install", args)
+
+    def test_missing_or_non_directory_share_prevents_launch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "share"
+            with (
+                mock.patch.object(vm, "WOW_INSTALL", source),
+                mock.patch.object(vm.os, "execvp") as launch,
+            ):
+                for existing_file in (False, True):
+                    if existing_file:
+                        source.write_text("not a directory")
+                    with self.subTest(existing_file=existing_file):
+                        with self.assertRaisesRegex(
+                            SystemExit, "VM share source is not a directory"
+                        ):
+                            vm.main()
+                launch.assert_not_called()
 
     def test_existing_vm_is_updated_without_replacing_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
