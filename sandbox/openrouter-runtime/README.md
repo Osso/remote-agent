@@ -36,9 +36,27 @@ This installs `request-timings.js` and its target file in the shared Pi home. Re
 
 The extension writes numeric stage markers during each request to `/home/agent/.config/pi/agent/logs/request-timings.jsonl`. The directory is mode `0700` and the log is mode `0600`. Markers cover request start, preparation through `before_provider_request`, response headers, first assistant stream, first thinking delta, first text or tool-call output, and end duration. Records include context message count, reported usage, and character counts, but no prompt or response text, headers, or credentials. Pending requests can therefore have markers before they finish.
 
-Preparation is not upload time or time to first token. First visible output excludes thinking. A single sample cannot establish the cause of a delay or demonstrate growth. The request index resets on startup.
+Preparation is not upload time or time to first token. The first assistant-stream marker is a message-start event; on an error it can be synthesized without a received stream. First visible output excludes thinking. A single sample cannot establish the cause of a delay or demonstrate growth. The request index resets on startup.
 
 Remove the extension and target file to stop capture on the next restart. This does not automatically delete existing logs.
+
+## Timing observation — 2026-10-30
+
+The scoped extension was installed through `--timings-only`, then `wowdecomp` was restarted once with conversation `e9f22590-027a-452a-bc36-a1312c9b5537` preserved. Source SHA-256 was `6e29be9ee505215995f8186309f486547709d85efb32d66dbfb24a5b96ef356c`; the image, home/workspace volumes, DeepSeek model, medium effort and sampled container isolation settings were unchanged. The running extension wrote session and request markers to a mode-`0600` log.
+
+Seven normal foreground requests recorded these durations from request start:
+
+| Request | Preparation | First thinking | First text/tool output | Total | Reported prompt tokens, including cache |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 10.3 ms | 1.75 s | 22.05 s | 26.79 s | 85,454 |
+| 2 | 7.4 ms | 1.29 s | 35.05 s | 42.11 s | 88,605 |
+| 3 | 8.2 ms | 1.10 s | 20.74 s | 32.85 s | 92,015 |
+| 4 | 6.4 ms | 2.24 s | 20.25 s | 25.78 s | 94,378 |
+| 5 | 4.0 ms | 1.96 s | 52.49 s | 58.43 s | 95,828 |
+| 6 | 3.9 ms | 1.32 s | 15.12 s | 20.15 s | 100,369 |
+| 7 | 8.5 ms | 1.06 s | 6.67 s | 13.56 s | 102,024 |
+
+All seven received HTTP 200 and ended with a tool call. Request 5 reproduced a near-minute cycle, including 7,719 thinking characters. Pi consumed 1.04 CPU-seconds over a separate 30.00-second observation spanning requests 5–6 (3.47% of one CPU). The observed delay was mainly after thinking began, rather than local preparation or initial response wait; local CPU saturation was not observed. Latency did not rise monotonically with prompt size in this window. These samples do not establish why latency increased earlier, prove a context-size relationship, measure provider-internal reasoning tokens, or exclude all local streaming overhead. No paid diagnostic prompt was sent.
 
 ## Deployment verification
 
