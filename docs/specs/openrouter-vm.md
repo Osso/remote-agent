@@ -5,7 +5,8 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 ## What it must do
 
 - [ ] Run a real KVM guest with its own kernel, writable persistent disk, four virtual CPUs, 8 GiB RAM, and a 64 GiB sparse disk; verify the pinned official Arch image's digest and signature before boot.
-- [ ] Provide key-only SSH administration and an unprivileged `agent` account with UID 1000. Do not share host directories, unrelated host credentials, management sockets, or an SSH agent with the guest.
+- [ ] Provide key-only SSH administration and an unprivileged `agent` account with UID 1000. Do not share host directories except the read-only WoW installation data specified below; do not share host homes, host keys, unrelated host credentials, management sockets, or an SSH agent with the guest.
+- [ ] Expose only `/syncthing/World of Warcraft` as a read-only host data share at the same guest path. Use 9p tag `wow-install`, `security_model=mapped-xattr`, and `readonly=on`; persist the guest mount with `ro,nodev,nosuid,trans=virtio,version=9p2000.L,cache=none`. Do not require `noexec` or make the guest disk read-only.
 - [ ] Allow only the fixed OpenRouter proxy and the fixed Arch package mirror. Keep arbitrary public, LAN, host-service, metadata, DNS, and IPv6 access blocked, including for guest root. Keep package signature checks enabled.
 - [ ] Permit persistent package installation without rebuilding the VM image. Provide Capstone, Unicorn, Java, Ghidra, and Wine without launching WoW as an installation test.
 - [ ] Install the shared container tools manifest, including the headless Wine software graphics packages, in the guest.
@@ -40,6 +41,7 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - [x] Resumed the same conversation and reattached through the installed Rust client using SSH control and QUIC. The live Pi was running Ghidra analysis.
 - [x] A direct UID-1000 check used the existing Xvfb and a disposable Wine prefix: llvmpipe worked and a Notepad X11 window remained present for two seconds after creation. No game was launched as a test.
 - [x] Deployed the export fix without restarting Pi; the entire pre-migration saved history text remains an exact prefix of the resumed history after removing SGR color sequences. A real installed attachment resized the guest TTY and detached with exit 0 while preserving Pi and the existing user's geometry.
+- [ ] Activate and verify the planned read-only WoW data share. Initial activation requires one VM restart because QEMU has no monitor; permission and checkpoint are pending. The configured Syncthing path is Windows → `aso` → `agent-server`, but actual transfer was not observed. See [the data share record](../../sandbox/openrouter-vm/README.md#planned-wow-installation-data-share).
 - [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof.
 
 The exact evidence and limits are in the [migration record](../../sandbox/openrouter-vm/README.md#live-migration-evidence--2026-10-30).
@@ -47,5 +49,5 @@ The exact evidence and limits are in the [migration record](../../sandbox/openro
 ## Out of scope
 
 - WoW execution as an installation test, live game connections and changes to analysis code. The installation task does not prohibit the agent's separately authorized analysis.
-- General internet access, arbitrary proxy targets, LAN access and shared host filesystems.
+- General internet access, arbitrary proxy targets, LAN access and host filesystem shares other than the specified read-only WoW data exception.
 - Preservation of an in-progress model turn, unsent editor text or the old PTY process across conversation resume.
