@@ -217,6 +217,14 @@ def install(stage, root=ROOT, unit=UNIT):
     for name in SCRIPTS:
         shutil.copyfile(stage / name, root / name)
         (root / name).chmod(0o700)
+    connection = root / "ssh_config"
+    connection.write_text(
+        "Host wowdecomp-vm\n  HostName 127.0.0.1\n  Port 22230\n  User agent\n"
+        f"  IdentityFile {json.dumps(str(root / 'id_ed25519'))}\n"
+        f"  UserKnownHostsFile {json.dumps(str(root / 'known_hosts'))}\n"
+        "  StrictHostKeyChecking yes\n  IdentitiesOnly yes\n  ForwardAgent no\n"
+    )
+    connection.chmod(0o600)
     run("systemctl", "--user", "daemon-reload")
     run("systemctl", "--user", "enable", "--now", "wowdecomp-vm.service")
 

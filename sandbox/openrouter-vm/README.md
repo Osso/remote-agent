@@ -9,13 +9,22 @@ Install host dependencies with the registered Arch CLI:
 ```text
 authsudo arch install qemu-system-x86 qemu-img xorriso
 sandbox/openrouter-vm/deploy.sh --host agent-server
+sandbox/openrouter-vm/deploy.sh --host agent-server --pi-image sha256:IMAGE_ID
 ```
+
+`--pi-image` installs the exact `/opt/pi` bytes from an immutable host Docker image into the guest. It also installs the registered Arch CLI, the guest launcher, and the shared tool/graphics package list through the controlled mirror. It does not copy conversation data or credentials. Transient package-download failures have at most three attempts; permanent failures stop deployment.
 
 The provisioner verifies the pinned official cloud image's SHA-256 and signature against `arch-boxes.asc`, the release CI key published in the official arch-boxes README (primary fingerprint `1B9A16984A4E8CB448712D2AE0B78BF4326C6F8F`), creates a writable 64 GiB QCOW2 overlay, and starts the user service `wowdecomp-vm.service`. It assigns four virtual CPUs and 8 GiB RAM. State, SSH keys and serial output live in the owner-only `~/.local/share/openrouter-vm/` directory. Re-running deployment updates helper scripts without replacing the disk or restarting the running VM. Unknown or incomplete state fails explicitly.
 
 The guest clock uses QEMU's host-backed RTC and KVM clock. External NTP is not allowed. Cloud-init masks the guest's network time synchronization and its blocking wait service during the early boot stage; otherwise the stock cloud image never reaches its final stage on the restricted network, so SSH startup would not run.
 
-Normal guest work uses `agent` (UID 1000). Root administration uses a separate SSH login with the dedicated key; password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
+Normal guest work uses `agent` (UID 1000). Connect through the host:
+
+```text
+ssh -t agent-server 'ssh -F ~/.local/share/openrouter-vm/ssh_config wowdecomp-vm'
+```
+
+Use `root@wowdecomp-vm` instead for administration, including `arch install PACKAGE`. Root administration uses key-only SSH; password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
 
 ## Network and packages
 
