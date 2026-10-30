@@ -27,10 +27,12 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - `sandbox/openrouter-vm/relay.py` — byte stream to the existing fixed OpenRouter proxy.
 - `sandbox/openrouter-vm/repo_proxy.py` — GET/HEAD access to the single HTTPS Arch mirror.
 - `sandbox/openrouter-vm/session.py`, `guest_session.py` — host SSH launch and guest Pi environment, working directory and conversation lock.
+- `sandbox/openrouter-vm/share.py` — persistent, fixed read-only WoW mount and guest module configuration.
 
 ## Tests asserting this spec
 
-- `tests/test_openrouter_vm_deploy.py` — provisioning metadata, cloud-init, image verification and existing disk preservation.
+- `tests/test_openrouter_vm_deploy.py` — provisioning metadata, cloud-init, image verification, read-only export arguments and existing disk preservation.
+- `tests/test_openrouter_vm_share.py` — preserved fstab content, escaped spaces, idempotence, conflicting entry rejection and mount/module configuration.
 - `tests/test_openrouter_vm_proxies.py` — concrete HTTP transfer, denied requests and bidirectional relay behavior.
 - `tests/test_openrouter_vm_session.py` — Pi launch environment, identity and configuration preservation, process-lifetime conversation locking, read-only export arguments and SSH arguments.
 - `tests/test_openrouter_vm_runtime.py`, `tests/test_openrouter_vm_signatures.py` — runtime deployment, transient download retries, launcher-only preservation and real signature acceptance/rejection.
@@ -42,7 +44,8 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - [x] Resumed the same conversation and reattached through the installed Rust client using SSH control and QUIC. The live Pi was running Ghidra analysis.
 - [x] A direct UID-1000 check used the existing Xvfb and a disposable Wine prefix: llvmpipe worked and a Notepad X11 window remained present for two seconds after creation. No game was launched as a test.
 - [x] Deployed the export fix without restarting Pi; the entire pre-migration saved history text remains an exact prefix of the resumed history after removing SGR color sequences. A real installed attachment resized the guest TTY and detached with exit 0 while preserving Pi and the existing user's geometry.
-- [ ] Activate and verify the planned read-only WoW data share. Initial activation requires one VM restart because QEMU has no monitor; permission and checkpoint are pending. The configured Syncthing path is Windows → `aso` → `agent-server`, but actual transfer was not observed. See [the data share record](../../sandbox/openrouter-vm/README.md#planned-wow-installation-data-share).
+- [x] Activated the read-only WoW share after an approved clean VM restart. The agent read both client executables with matching host hashes; root write-open returned `EROFS` even after a writable client remount. The configured Syncthing path is Windows → `aso` → `agent-server`; no folder modes were changed. See [the data share record](../../sandbox/openrouter-vm/README.md#wow-installation-data-share).
+- [ ] Recover and inform the agent, then start the requested 30-minute check loop. The display fix is committed, but deployment awaits the user's choice between backporting to the installed Pi 0.80.3 and upgrading only this VM to current-source 1.0.0.
 - [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof.
 
 The exact evidence and limits are in the [migration record](../../sandbox/openrouter-vm/README.md#live-migration-evidence--2026-10-30).

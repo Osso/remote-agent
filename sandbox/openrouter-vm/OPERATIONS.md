@@ -16,4 +16,4 @@ remote-agent --host agent-server --user osso attach wowdecomp
 
 Observe before input. Resolve routine prompts and recoverable failures only within the existing authorized task. Safe target restarts are covered above. Do not invent another task, raise spending limits, expose credentials, or approve new network destinations. Do not restart a session intentionally stopped by the user or whose task is complete.
 
-Keep the [network policy](README.md#network-and-packages) and [read-only WoW share](README.md#planned-wow-installation-data-share) unchanged. Detach check clients with Ctrl+backslash without stopping Pi. Escalate only a user-owned decision or a real blocker.
+Keep the [network policy](README.md#network-and-packages) and [read-only WoW share](README.md#wow-installation-data-share) unchanged. Detach check clients with Ctrl+backslash without stopping Pi. Escalate only a user-owned decision or a real blocker.

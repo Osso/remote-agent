@@ -31,19 +31,23 @@ For the standing restart authorization and recurring checks, see [operations](OP
 
 ## Network and packages
 
-QEMU user networking uses `restrict=on` with IPv6 disabled. Its only guest forwards are `10.0.2.100:3128`, which relays to the existing fixed OpenRouter proxy, and `10.0.2.100:3129`, which permits repository GET/HEAD requests to `https://geo.mirror.pkgbuild.com` with upstream TLS verification. The package mirror entry uses the latter endpoint; Arch package signatures remain required. SSH is forwarded only on host loopback port 22230. The planned WoW data exception below is the only host filesystem share; it is not yet deployed. No host home, host key, SSH agent or management socket is shared with the guest.
+QEMU user networking uses `restrict=on` with IPv6 disabled. Its only guest forwards are `10.0.2.100:3128`, which relays to the existing fixed OpenRouter proxy, and `10.0.2.100:3129`, which permits repository GET/HEAD requests to `https://geo.mirror.pkgbuild.com` with upstream TLS verification. The package mirror entry uses the latter endpoint; Arch package signatures remain required. SSH is forwarded only on host loopback port 22230. The read-only WoW data exception below is the only host filesystem share. No host home, host key, SSH agent or management socket is shared with the guest.
 
 The user approved this package-repository exception on 2026-10-30. It does not permit general internet or LAN access. Root inside the guest cannot alter the host's QEMU forwarding rules.
 
 Capstone provides instruction decoding, Unicorn provides CPU emulation, Java runs Ghidra, and Ghidra provides headless analysis. Wine is installed but WoW is not launched as part of deployment or verification.
 
-## Planned WoW installation data share
+## WoW installation data share
 
 On 2026-10-30, live Syncthing configuration showed folder `wow-install` (label `World of Warcraft Install`) as send-only on Windows desktop device `3NF6RRU`, at `C:\World of Warcraft`, shared only with `aso` (`4FP`). The `aso` copy is receive-only at `/syncthing/World of Warcraft` and shares with Windows and `agent-server`. The `agent-server` copy is receive-only at the same Linux path and lists Windows and `aso` as peers. This establishes the configured one-way flow Windows → `aso` → `agent-server`, not a direct Windows/server pair. Actual folder transfer was not observed; no Syncthing configuration was changed.
 
-The planned exception exposes only `/syncthing/World of Warcraft` at the same path in the guest, read-only through 9p with share tag `wow-install`, `security_model=mapped-xattr`, and `readonly=on`. Its persistent guest mount uses `ro,nodev,nosuid,trans=virtio,version=9p2000.L,cache=none`; `noexec` is not required. The restriction applies to the shared data, not the guest's writable disk. Network restrictions remain unchanged.
+The exception exposes only `/syncthing/World of Warcraft` at the same path in the guest, read-only through 9p with share tag `wow-install`, `security_model=mapped-xattr`, and `readonly=on`. Its persistent guest mount uses `ro,nodev,nosuid,trans=virtio,version=9p2000.L,cache=none`; `noexec` is not required. The restriction applies to the shared data, not the guest's writable disk. Network restrictions remain unchanged.
 
-This share is not yet deployed or verified. The running QEMU has no monitor, so initial activation requires one VM restart. Permission and a checkpoint are pending; neither approval nor restart is implied.
+Activated on 2026-10-30 through `deploy.sh` and a clean, approved VM power-off/start. Guest `findmnt` reports `wow-install`, type `9p`, `ro,nosuid,nodev`. The unprivileged agent read the full retail and Mists executables; both SHA-256 hashes matched the host. Guest root's write-open returned `EROFS`, including after a writable client remount; the host export stayed read-only and the client was returned to `ro`. Persistent fstab and module configuration survived boot. Details: `/tmp/wowdecomp-wow-share-access.log`.
+
+Post-restart network checks still refused all eight direct public/LAN/host/metadata targets, gave no DNS response, disabled IPv6, accepted only the two fixed endpoints, and rejected proxy escape attempts. Details: `/tmp/wowdecomp-network-after-wow-share.log`.
+
+Agent notification and the 30-minute loop are pending session recovery: old Pi 0.80.3 replays a malformed PE tool result containing C1 controls that stop the strict terminal receiver. A display-only fix is committed in Pi; the current source builds version 1.0.0, so the VM remains at 0.80.3 until the user chooses a backport or this VM's upgrade. Stored history has not been edited.
 
 ## Migration order
 
