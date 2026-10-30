@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import sys
 import urllib.request
 from pathlib import Path
@@ -15,7 +16,8 @@ UNIT = Path.home() / ".config/systemd/user/wowdecomp-vm.service"
 IMAGE = "Arch-Linux-x86_64-cloudimg-20261015.611680.qcow2"
 URL = "https://geo.mirror.pkgbuild.com/images/latest/" + IMAGE
 SHA256 = "08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08"
-SCRIPTS = ("vm.py", "relay.py", "repo_proxy.py")
+SCRIPTS = ("vm.py", "relay.py", "repo_proxy.py", "session.py", "guest_session.py")
+KEYRING = Path("/usr/share/pacman/keyrings/archlinux.gpg")
 
 
 def run(*args):
@@ -97,13 +99,10 @@ def verify_image(image, signature):
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     if digest != SHA256:
         raise ValueError("cloud image SHA256 mismatch")
-    run(
-        "gpgv",
-        "--keyring",
-        "/usr/share/pacman/keyrings/archlinux.gpg",
-        str(signature),
-        str(image),
-    )
+    with tempfile.TemporaryDirectory(prefix="openrouter-image-keyring-") as temporary:
+        keyring = str(Path(temporary) / "archlinux.gpg")
+        run("gpg", "--batch", "--dearmor", "--output", keyring, str(KEYRING))
+        run("gpgv", "--keyring", keyring, str(signature), str(image))
 
 
 def install(stage, root=ROOT, unit=UNIT):
@@ -116,6 +115,7 @@ def install(stage, root=ROOT, unit=UNIT):
         "xorriso",
         "ssh-keygen",
         "gpgv",
+        "gpg",
         "systemctl",
     ):
         if not shutil.which(name):

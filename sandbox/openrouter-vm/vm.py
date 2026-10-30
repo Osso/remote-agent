@@ -31,7 +31,6 @@ def command(root=ROOT):
         "none",
         "-serial",
         f"file:{root}/serial.log",
-        "-no-reboot",
         "-drive",
         f"file={root}/disk.qcow2,if=virtio,format=qcow2",
         "-drive",

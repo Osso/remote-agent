@@ -10,7 +10,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SSH = ["-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10"]
-FILES = ("host_deploy.py", "vm.py", "relay.py", "repo_proxy.py")
+FILES = (
+    "host_deploy.py",
+    "vm.py",
+    "relay.py",
+    "repo_proxy.py",
+    "session.py",
+    "guest_session.py",
+)
 
 
 def remote(host, args, **kwargs):
