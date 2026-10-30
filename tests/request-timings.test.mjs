@@ -57,6 +57,10 @@ test("records only selected session, bounded stages and safe counts", async () =
 		fire("message_start", {
 			message: { role: "assistant", content: "SENTINEL_MESSAGE" },
 		});
+		fire("message_update", {
+			message: { role: "assistant" },
+			assistantMessageEvent: { type: "text_delta", delta: "" },
+		});
 		for (const [type, delta] of [
 			["thinking_delta", "SENTINEL_THINK"],
 			["text_delta", "SENTINEL_TEXT"],
@@ -97,6 +101,7 @@ test("records only selected session, bounded stages and safe counts", async () =
 				"end",
 			],
 		);
+		assert.ok(records.every((record) => Number.isInteger(record.timestampMs)));
 		assert.equal(records[2].contextMessageCount, 1);
 		assert.equal(records[3].status, 200);
 		assert.deepEqual(

@@ -74,7 +74,7 @@ export function createTimingRecorder({ writeRecord, now }) {
 		update(event) {
 			if (!request || event.message.role !== "assistant") return;
 			const delta = event.assistantMessageEvent;
-			if (typeof delta.delta !== "string") return;
+			if (typeof delta.delta !== "string" || delta.delta.length === 0) return;
 			if (delta.type === "thinking_delta") {
 				request.thinkingChars += delta.delta.length;
 				if (!request.thinkingSeen) {
@@ -164,7 +164,10 @@ export default function (pi) {
 		try {
 			mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
 			chmodSync(dirname(logPath), 0o700);
-			appendFileSync(logPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+			const stampedRecord = { timestampMs: Date.now(), ...record };
+			appendFileSync(logPath, `${JSON.stringify(stampedRecord)}\n`, {
+				mode: 0o600,
+			});
 			chmodSync(logPath, 0o600);
 		} catch {
 			warn();
