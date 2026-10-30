@@ -1,7 +1,9 @@
 import importlib.util
 import io
 import json
+import os
 import shlex
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -31,7 +33,10 @@ class RuntimeTest(unittest.TestCase):
             stage, guest = base / "stage", base / "guest"
             stage.mkdir()
             (guest / "opt").mkdir(parents=True)
-            (stage / "tools-packages.txt").write_text("python-capstone\nwine\n")
+            shutil.copyfile(
+                DIRECTORY.parent / "openrouter-runtime/tools-packages.txt",
+                stage / "tools-packages.txt",
+            )
             (stage / "guest_session.py").write_bytes(b"session bytes")
             arch = base / "arch"
             arch.write_bytes(b"arch bytes")
@@ -81,9 +86,118 @@ class RuntimeTest(unittest.TestCase):
                 0o755,
             )
             self.assertEqual(
-                packages, ["python-capstone", "wine", *runtime.PI_DEPENDENCIES]
+                packages,
+                [
+                    *(stage / "tools-packages.txt").read_text().split(),
+                    *runtime.PI_DEPENDENCIES,
+                ],
             )
             self.assertTrue(removed)
+
+    def test_package_retries_use_cached_downloads_and_preserve_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ssh = root / "ssh"
+            ssh.write_text("""#!/usr/bin/env python3
+import os, pathlib, sys
+root = pathlib.Path(os.environ["FAKE_ROOT"])
+count = root / "count"
+n = int(count.read_text()) + 1 if count.exists() else 1
+count.write_text(str(n))
+(root / "cache").write_text("downloaded")
+print("download output", flush=True)
+errors = (root / "errors").read_text().split("\\n---\\n")
+error = errors[min(n - 1, len(errors) - 1)]
+if error:
+    print(error, file=sys.stderr)
+    sys.exit(1)
+(root / "installed").write_text("installed from cache")
+""")
+            ssh.chmod(0o755)
+            config = {
+                "known_hosts": "known",
+                "private_key": "key",
+                "ssh_port": 22,
+                "admin_user": "root",
+                "host": "localhost",
+            }
+            timeout = "error: failed retrieving file 'lcms2.pkg.tar.zst' from 10.0.2.100:3129 : Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds\nerror: failed to commit transaction (download library error)"
+            cases = [
+                (timeout + "\n---\n", 2, True),
+                (
+                    "error: failed retrieving file 'x' from mirror : HTTP 503\n---\n",
+                    2,
+                    True,
+                ),
+                (
+                    "error: failed retrieving file 'x' from mirror : HTTP 429\n---\n",
+                    2,
+                    True,
+                ),
+                (timeout, 3, False),
+                (
+                    timeout + "\nerror: invalid or corrupted package (signature)",
+                    1,
+                    False,
+                ),
+                (timeout + "\nerror: could not satisfy dependencies", 1, False),
+                (timeout + "\nerror: authentication failed", 1, False),
+                (timeout + "\nerror: disk full", 1, False),
+                ("error: failed retrieving file 'x' from mirror : HTTP 404", 1, False),
+            ]
+            for error, attempts, succeeds in cases:
+                with (
+                    self.subTest(error=error),
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                            "FAKE_ROOT": str(root),
+                        },
+                    ),
+                    mock.patch.object(runtime.time, "sleep"),
+                ):
+                    for name in ("count", "cache", "installed"):
+                        (root / name).unlink(missing_ok=True)
+                    (root / "errors").write_text(error)
+                    out, err = io.StringIO(), io.StringIO()
+                    with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+                        if succeeds:
+                            runtime.install_packages(config, ["git"])
+                        else:
+                            with self.assertRaises(
+                                subprocess.CalledProcessError
+                            ) as raised:
+                                runtime.install_packages(config, ["git"])
+                            self.assertIn("error:", raised.exception.stderr)
+                    self.assertEqual(int((root / "count").read_text()), attempts)
+                    self.assertEqual((root / "cache").read_text(), "downloaded")
+                    self.assertEqual((root / "installed").exists(), succeeds)
+                    self.assertIn("download output", out.getvalue())
+                    self.assertIn("attempt 1/3 failed", err.getvalue())
+                    self.assertIn("error:", err.getvalue())
+
+    def test_wait_ready_reports_last_real_ssh_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh = Path(tmp) / "ssh"
+            ssh.write_text(
+                "#!/usr/bin/env python3\nimport sys\nprint('cloud-init failed: broken datasource', file=sys.stderr)\nsys.exit(1)\n"
+            )
+            ssh.chmod(0o755)
+            config = {
+                "known_hosts": "known",
+                "private_key": "key",
+                "ssh_port": 22,
+                "admin_user": "root",
+                "host": "localhost",
+            }
+            with mock.patch.dict(
+                os.environ, {"PATH": tmp + os.pathsep + os.environ["PATH"]}
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "cloud-init failed: broken datasource"
+                ):
+                    runtime.wait_ready(config, timeout=0.2)
 
     def test_rejects_mutable_image_before_running_commands(self):
         with mock.patch.object(runtime.subprocess, "run") as run:

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Install a pinned host image's Pi runtime into the provisioned guest."""
 
+import random
 import re
 import shlex
+import sys
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import subprocess
 import tarfile
 import tempfile
@@ -47,21 +51,32 @@ def ssh_command(config, command):
 
 def wait_ready(config, timeout=180):
     deadline = time.monotonic() + timeout
+    last_error = "no readiness attempt completed"
     while time.monotonic() < deadline:
         try:
             result = subprocess.run(
                 ssh_command(config, ["cloud-init", "status", "--wait"]),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
                 timeout=min(15, max(0.1, deadline - time.monotonic())),
             )
             if result.returncode == 0:
                 return
-        except subprocess.TimeoutExpired:
-            pass
+            last_error = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"exit {result.returncode}"
+            )
+        except subprocess.TimeoutExpired as error:
+            detail = error.stderr or error.stdout
+            if isinstance(detail, bytes):
+                detail = detail.decode(errors="replace")
+            last_error = (
+                f"SSH/cloud-init timed out: {detail.strip()}" if detail else str(error)
+            )
         time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise RuntimeError(
-        "guest root SSH or cloud-init did not become ready within the deadline"
+        f"guest root SSH or cloud-init did not become ready within the deadline: {last_error}"
     )
 
 
@@ -72,6 +87,74 @@ def transfer(config, archive, destination):
             stdin=source,
             check=True,
         )
+
+
+def install_packages(config, packages):
+    command = ssh_command(config, ["/usr/local/bin/arch", "install", *packages])
+    for attempt in range(1, 4):
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stdout, flush=True)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr, flush=True)
+        if result.returncode == 0:
+            return
+        print(
+            f"Package install attempt {attempt}/3 failed (exit {result.returncode})",
+            file=sys.stderr,
+            flush=True,
+        )
+        output = result.stdout + "\n" + result.stderr
+        permanent = re.search(
+            r"signature|dependency|dependencies|unauthori[sz]ed|forbidden|authentication|invalid or corrupted|permission denied",
+            output,
+            re.I,
+        )
+        failures = [
+            line
+            for line in output.splitlines()
+            if re.search(r"failed retrieving file", line, re.I)
+        ]
+        other_errors = [
+            line
+            for line in output.splitlines()
+            if re.search(r"\berror:", line, re.I)
+            and not re.search(
+                r"failed retrieving file|failed to commit transaction \(download library error\)",
+                line,
+                re.I,
+            )
+        ]
+        transient = re.compile(
+            r"operation too slow|timed? out|timeout|(?:error|status|response|http)[^\n]*\b(?:429|503)\b|\b(?:429|503)\b",
+            re.I,
+        )
+        if (
+            attempt == 3
+            or permanent
+            or other_errors
+            or not failures
+            or not all(transient.search(line) for line in failures)
+        ):
+            raise subprocess.CalledProcessError(
+                result.returncode, command, result.stdout, result.stderr
+            )
+        delay = 2 ** (attempt - 1) + random.uniform(0, 1)
+        retry_after = re.search(r"(?im)^\s*retry-after\s*:\s*(.+?)\s*$", output)
+        if retry_after:
+            value = retry_after.group(1)
+            try:
+                seconds = float(value)
+            except ValueError:
+                try:
+                    seconds = (
+                        parsedate_to_datetime(value) - datetime.now(timezone.utc)
+                    ).total_seconds()
+                except (ValueError, TypeError, OverflowError):
+                    seconds = 0
+            delay = max(delay, seconds)
+        print(f"Retrying package download in {delay:.1f}s", file=sys.stderr, flush=True)
+        time.sleep(delay)
 
 
 def install_runtime(stage, config, image):
@@ -119,9 +202,4 @@ def install_runtime(stage, config, image):
                 with path.open("rb") as source:
                     output.addfile(info, source)
         transfer(config, archive, "/")
-        subprocess.run(
-            ssh_command(
-                config, ["/usr/local/bin/arch", "install", *packages, *PI_DEPENDENCIES]
-            ),
-            check=True,
-        )
+        install_packages(config, [*packages, *PI_DEPENDENCIES])
