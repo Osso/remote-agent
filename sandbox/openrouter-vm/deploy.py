@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 SSH = ["-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10"]
 FILES = (
     "host_deploy.py",
+    "install_runtime.py",
     "vm.py",
     "relay.py",
     "repo_proxy.py",
@@ -29,11 +30,26 @@ def stage(path):
     with tarfile.open(path, "w:gz") as archive:
         for name in FILES:
             archive.add(HERE / name, arcname=name)
+        archive.add(
+            HERE.parent / "openrouter-runtime/tools-packages.txt",
+            arcname="tools-packages.txt",
+        )
+
+
+def validate_image(value):
+    import re
+
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError(
+            "Pi image must be an immutable sha256 image ID"
+        )
+    return value
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="agent-server")
+    parser.add_argument("--pi-image", type=validate_image)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="openrouter-vm-") as temporary:
         archive = Path(temporary) / "inputs.tar.gz"
@@ -62,7 +78,10 @@ def main():
                     target,
                 ],
             )
-            remote(args.host, ["python3", target + "/host_deploy.py", target])
+            command = ["python3", target + "/host_deploy.py", target]
+            if args.pi_image:
+                command.extend(["--pi-image", args.pi_image])
+            remote(args.host, command)
         finally:
             remote(
                 args.host,

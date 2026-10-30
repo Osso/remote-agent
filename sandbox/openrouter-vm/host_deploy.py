@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Provision or update the fixed VM from a staged directory, as the host user."""
 
+import argparse
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
-import sys
 import urllib.request
 from pathlib import Path
 
@@ -43,7 +43,7 @@ def cloud_config(public_key, host_private, host_public):
         "disable_root": False,
         "ssh_pwauth": False,
         "ssh_deletekeys": False,
-        "ssh_genkeytypes": [],
+        "ssh_genkeytypes": ["ed25519"],
         "bootcmd": [
             [
                 "systemctl",
@@ -114,6 +114,47 @@ def verify_image(image, signature):
         run("gpgv", "--keyring", keyring, str(signature), str(image))
 
 
+def refresh_seed(root):
+    public = (root / "id_ed25519.pub").read_text().strip()
+    host_private = (root / "ssh_host_ed25519_key").read_text()
+    host_public = (root / "ssh_host_ed25519_key.pub").read_text().strip()
+    data = (
+        "#cloud-config\n"
+        + json.dumps(cloud_config(public, host_private, host_public))
+        + "\n"
+    )
+    user_data = root / "user-data"
+    if (
+        user_data.is_file()
+        and user_data.read_text() == data
+        and (root / "seed.iso").is_file()
+    ):
+        return
+    with tempfile.TemporaryDirectory(prefix="seed-", dir=root) as temporary:
+        directory = Path(temporary)
+        staged_data = directory / "user-data"
+        staged_data.write_text(data)
+        meta = directory / "meta-data"
+        meta.write_text("instance-id: wowdecomp-vm\nlocal-hostname: wowdecomp-vm\n")
+        seed = directory / "seed.iso"
+        run(
+            "xorriso",
+            "-as",
+            "mkisofs",
+            "-output",
+            str(seed),
+            "-volid",
+            "CIDATA",
+            "-joliet",
+            "-rock",
+            str(staged_data),
+            str(meta),
+        )
+        os.replace(seed, root / "seed.iso")
+        os.replace(meta, root / "meta-data")
+        os.replace(staged_data, user_data)
+
+
 def install(stage, root=ROOT, unit=UNIT):
     for name in (*SCRIPTS,):
         if not (stage / name).is_file():
@@ -165,35 +206,14 @@ def install(stage, root=ROOT, unit=UNIT):
         )
         for key in ("id_ed25519", "ssh_host_ed25519_key"):
             run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / key))
-        public = (root / "id_ed25519.pub").read_text().strip()
-        host_private = (root / "ssh_host_ed25519_key").read_text()
         host_public = (root / "ssh_host_ed25519_key.pub").read_text().strip()
         (root / "known_hosts").write_text("[127.0.0.1]:22230 " + host_public + "\n")
-        (root / "user-data").write_text(
-            "#cloud-config\n"
-            + json.dumps(cloud_config(public, host_private, host_public))
-            + "\n"
-        )
-        (root / "meta-data").write_text(
-            "instance-id: wowdecomp-vm\nlocal-hostname: wowdecomp-vm\n"
-        )
-        run(
-            "xorriso",
-            "-as",
-            "mkisofs",
-            "-output",
-            str(root / "seed.iso"),
-            "-volid",
-            "CIDATA",
-            "-joliet",
-            "-rock",
-            str(root / "user-data"),
-            str(root / "meta-data"),
-        )
+        refresh_seed(root)
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_text(unit_text(root))
         metadata.write_text(json.dumps(expected, indent=2) + "\n")
         metadata.chmod(0o600)
+    refresh_seed(root)
     for name in SCRIPTS:
         shutil.copyfile(stage / name, root / name)
         (root / name).chmod(0o700)
@@ -202,6 +222,16 @@ def install(stage, root=ROOT, unit=UNIT):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: host_deploy.py STAGE")
-    install(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", type=Path)
+    parser.add_argument("--pi-image")
+    args = parser.parse_args()
+    if args.pi_image:
+        from install_runtime import validate_image
+
+        validate_image(args.pi_image)
+    install(args.stage)
+    if args.pi_image:
+        from install_runtime import install_runtime
+
+        install_runtime(args.stage, config(ROOT), args.pi_image)

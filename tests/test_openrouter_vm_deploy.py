@@ -38,7 +38,7 @@ class ProvisionTest(TestCase):
                 elif args[0] == "qemu-img":
                     (root / "disk.qcow2").write_bytes(b"new disk")
                 elif args[0] == "xorriso":
-                    (root / "seed.iso").write_bytes(b"seed")
+                    Path(args[args.index("-output") + 1]).write_bytes(b"seed")
 
             def fake_download(url, path):
                 path.write_bytes(url.encode())
