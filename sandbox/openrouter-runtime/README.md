@@ -26,7 +26,17 @@ To deploy model configuration without restarting a session, run `sandbox/openrou
 
 ## Reverse-engineering tools update
 
-The `--tools-only` mode adds `python-capstone` and `python-unicorn` for disassembly and emulation, `jdk-openjdk` for Java, `ghidra` for reverse engineering, and `wine` for Windows program compatibility. This prepares the existing sandbox for the wowdecomp work.
+The `--tools-only` mode installs the shared `tools-packages.txt` manifest, also used by the VM installer. It includes Capstone, Unicorn, Java, Ghidra and Wine. For headless Wine graphics, it includes Xvfb, Mesa, Mesa utilities, X authority tools, Liberation fonts and the Mesa software Vulkan driver. The Vulkan driver supports software Vulkan paths such as vkd3d; no DXVK configuration is installed.
+
+Start a private X server and explicitly select software rendering for commands that need it:
+
+```sh
+Xvfb :99 -screen 0 1280x720x24 &
+export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1
+# Run the Wine or glxinfo command here, then stop the Xvfb process.
+```
+
+Use an available display number. This does not configure a global X server or modify user profiles.
 
 ```text
 sandbox/openrouter-runtime/deploy.sh --host agent-server --tools-only

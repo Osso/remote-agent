@@ -8,6 +8,7 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - [ ] Provide key-only SSH administration and an unprivileged `agent` account with UID 1000. Do not share host directories, credentials, sockets, or an SSH agent with the guest.
 - [ ] Allow only the fixed OpenRouter proxy and the fixed Arch package mirror. Keep arbitrary public, LAN, host-service, metadata, DNS, and IPv6 access blocked, including for guest root. Keep package signature checks enabled.
 - [ ] Permit persistent package installation without rebuilding the VM image. Provide Capstone, Unicorn, Java, Ghidra, and Wine without launching WoW.
+- [ ] Install the shared container tools manifest, including the headless Wine software graphics packages, in the guest.
 - [ ] Transfer logs before session cutover; preserve the original workspace, executable provenance, Pi home, conversation UUID, model settings, and history. Keep old data until migration acceptance and do not cancel the old session as a shortcut.
 - [ ] Attach through the installed Rust remote-agent using SSH control and QUIC; preserve terminal input, size changes, exit status, and clean detach without stopping Pi. Prevent two guest Pi processes from opening the same conversation concurrently.
 

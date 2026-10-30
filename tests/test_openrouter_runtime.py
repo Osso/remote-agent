@@ -135,6 +135,12 @@ def test_tools_only_stages_only_host_and_shared_manifest(tmp_path):
             "jdk-openjdk",
             "ghidra",
             "wine",
+            "xorg-server-xvfb",
+            "mesa",
+            "mesa-utils",
+            "xorg-xauth",
+            "ttf-liberation",
+            "vulkan-swrast",
         ]
 
 

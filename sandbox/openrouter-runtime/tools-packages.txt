@@ -3,3 +3,9 @@ python-unicorn
 jdk-openjdk
 ghidra
 wine
+xorg-server-xvfb
+mesa
+mesa-utils
+xorg-xauth
+ttf-liberation
+vulkan-swrast
