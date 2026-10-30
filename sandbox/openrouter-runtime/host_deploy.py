@@ -2,6 +2,7 @@
 """Install the independent OpenRouter runtime on the target host."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,8 @@ def save_mapping(path, projects):
 
 
 def install(stage, local):
+    if os.getuid() != 1000:
+        raise ValueError("target user must have UID 1000 for the private key mount")
     mapping_path = Path.home() / ".config/remote-agent/remote-projects.json"
     projects = mapping(mapping_path, local)
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)

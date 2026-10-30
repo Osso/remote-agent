@@ -3,6 +3,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -27,9 +28,24 @@ def environment(inherited, key):
     return result
 
 
+def install_configuration(source, destination):
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("settings.json", "models.json"):
+        data = (source / name).read_bytes()
+        with tempfile.NamedTemporaryFile(dir=destination, delete=False) as file:
+            temporary = Path(file.name)
+            try:
+                file.write(data)
+                file.close()
+                temporary.replace(destination / name)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+
 def main():
     env = environment(os.environ, Path("/run/secrets/openrouter.key").read_text())
     os.umask(0o077)
+    install_configuration(Path("/opt/sandbox/config"), Path(env["PI_CODING_AGENT_DIR"]))
     Path(env["PI_KB_DIR"]).mkdir(exist_ok=True)
     os.execve(
         "/opt/pi/pi",

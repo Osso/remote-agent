@@ -53,6 +53,22 @@ def test_staging_uses_proxy_and_only_installed_pi_files(tmp_path):
         assert "pi/secret" not in staged.getnames()
 
 
+def test_launch_replaces_stale_volume_configuration(tmp_path):
+    launch = load("launch")
+    source = tmp_path / "source"
+    destination = tmp_path / "home"
+    source.mkdir()
+    destination.mkdir()
+    for name in ("settings.json", "models.json"):
+        (source / name).write_text("new " + name)
+        (destination / name).write_text("stale")
+    (destination / "history").write_text("preserved")
+    launch.install_configuration(source, destination)
+    assert (destination / "settings.json").read_text() == "new settings.json"
+    assert (destination / "models.json").read_text() == "new models.json"
+    assert (destination / "history").read_text() == "preserved"
+
+
 def test_key_file_permissions_and_contents(tmp_path):
     deploy = load("deploy")
     key = tmp_path / "key"
