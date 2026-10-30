@@ -8,6 +8,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -28,7 +29,12 @@ def key_bytes(path):
     return key
 
 
-def stage(archive_path, pi, config_only=False):
+def stage(archive_path, pi, config_only=False, timings_session=None):
+    if timings_session is not None:
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for name in ("host_deploy.py", "request-timings.js"):
+                archive.add(HERE / name, arcname=name)
+        return
     with tempfile.TemporaryDirectory() as tmp:
         context = Path(tmp)
         settings = json.loads((SANDBOX / "openrouter/settings.json").read_text())
@@ -70,20 +76,31 @@ def main():
     parser.add_argument("--key-file", type=Path)
     parser.add_argument("--config-only", action="store_true")
     parser.add_argument("--update-live-models", action="store_true")
+    parser.add_argument("--timings-only", action="store_true")
+    parser.add_argument("--session-id", type=lambda value: str(uuid.UUID(value)))
     args = parser.parse_args()
+    if args.timings_only:
+        if not args.session_id or args.config_only or args.update_live_models:
+            parser.error(
+                "--timings-only requires --session-id and excludes model updates"
+            )
+        if args.key_file or args.local_project:
+            parser.error("--timings-only cannot change credentials or project mapping")
+    elif args.session_id:
+        parser.error("--session-id requires --timings-only")
     if args.update_live_models and not args.config_only:
         parser.error("--update-live-models requires --config-only")
     if args.config_only and (args.key_file or args.local_project):
         parser.error(
             "--config-only cannot be combined with --key-file or --local-project"
         )
-    if not args.config_only and not args.local_project:
+    if not args.config_only and not args.timings_only and not args.local_project:
         parser.error("--local-project is required for a full deployment")
     local = str(args.local_project.resolve(strict=True)) if args.local_project else None
     key = key_bytes(args.key_file) if args.key_file else None
     with tempfile.TemporaryDirectory(prefix="openrouter-stage-") as tmp:
         archive = Path(tmp) / "inputs.tar.gz"
-        stage(archive, args.pi_install, args.config_only)
+        stage(archive, args.pi_install, args.config_only, args.session_id)
         target = remote(
             args.host,
             [
@@ -108,11 +125,14 @@ def main():
             ],
         )
         host_args = ["python3", target + "/host_deploy.py", target]
-        host_args.extend(["--config-only"] if args.config_only else [local])
+        if args.timings_only:
+            host_args.extend(["--timings-only", "--session-id", args.session_id])
+        else:
+            host_args.extend(["--config-only"] if args.config_only else [local])
         if args.update_live_models:
             host_args.append("--update-live-models")
         remote(args.host, host_args)
-        if args.config_only:
+        if args.config_only or args.timings_only:
             remote(
                 args.host,
                 [

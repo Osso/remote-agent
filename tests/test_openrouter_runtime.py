@@ -121,6 +121,82 @@ def test_config_only_staging_does_not_require_pi(tmp_path):
         assert not any(name.startswith("pi/") for name in staged.getnames())
 
 
+def test_timings_only_stages_diagnostics_without_models_or_pi(tmp_path):
+    deploy = load("deploy")
+    archive = tmp_path / "stage.tar.gz"
+    deploy.stage(archive, tmp_path / "missing-pi", timings_session="test-session")
+    with tarfile.open(archive) as staged:
+        assert set(staged.getnames()) == {"host_deploy.py", "request-timings.js"}
+        assert staged.extractfile("request-timings.js").read()
+
+
+def test_timing_install_preserves_configuration_and_private_files(
+    tmp_path, monkeypatch
+):
+    host = load("host_deploy")
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(host, "ROOT", state)
+    runtime = {"image": "sha256:existing", "home_volume": "existing-home"}
+    runtime_text = json.dumps(runtime)
+    (state / "runtime.json").write_text(runtime_text)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    source = "export default function(pi) {}\n"
+    (stage / "request-timings.js").write_text(source)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "settings.json").write_text("preserved settings")
+    (home / "models.json").write_text("preserved models")
+    (home / "history").write_text("preserved history")
+    subprocess_run = subprocess.run
+
+    def execute_installer(arguments, **kwargs):
+        return subprocess_run(
+            [sys.executable, "-c", arguments[-2], str(home)], **kwargs
+        )
+
+    monkeypatch.setattr(host.subprocess, "run", execute_installer)
+    session = "e9f22590-027a-452a-bc36-a1312c9b5537"
+    host.install_request_timings(stage, session)
+    extension = home / "extensions/request-timings.js"
+    target = home / "extensions/request-timings-target.json"
+    assert extension.read_text() == source
+    assert json.loads(target.read_text()) == {"sessionId": session}
+    assert extension.stat().st_mode & 0o777 == 0o600
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert extension.parent.stat().st_mode & 0o777 == 0o700
+    assert (state / "runtime.json").read_text() == runtime_text
+    assert (home / "settings.json").read_text() == "preserved settings"
+    assert (home / "models.json").read_text() == "preserved models"
+    assert (home / "history").read_text() == "preserved history"
+    assert sorted(path.name for path in extension.parent.iterdir()) == [
+        "request-timings-target.json",
+        "request-timings.js",
+    ]
+
+
+def test_timing_deploy_rejects_unscoped_or_mutating_arguments():
+    for arguments in (
+        ["--timings-only"],
+        ["--session-id", "invalid-uuid", "--timings-only"],
+        ["--session-id", "e9f22590-027a-452a-bc36-a1312c9b5537"],
+        [
+            "--timings-only",
+            "--session-id",
+            "e9f22590-027a-452a-bc36-a1312c9b5537",
+            "--config-only",
+        ],
+    ):
+        outcome = subprocess.run(
+            [sys.executable, str(RUNTIME / "deploy.py"), *arguments],
+            capture_output=True,
+            text=True,
+        )
+        assert outcome.returncode == 2
+        assert "error:" in outcome.stderr
+
+
 def test_launch_replaces_stale_volume_configuration(tmp_path):
     launch = load("launch")
     source = tmp_path / "source"

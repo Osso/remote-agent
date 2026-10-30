@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 ROOT = Path.home() / ".local/share/openrouter-sandbox"
@@ -119,6 +120,63 @@ def install_configuration(stage, update_live_models=False):
             temporary.unlink(missing_ok=True)
 
 
+TIMING_INSTALL_PROGRAM = """import hashlib,json,os,pathlib,sys,tempfile
+request=json.load(sys.stdin)
+os.umask(0o077)
+extensions=pathlib.Path(sys.argv[1])/'extensions'
+extensions.mkdir(parents=True,exist_ok=True,mode=0o700)
+files={'request-timings.js': request['source'],
+       'request-timings-target.json': json.dumps({'sessionId': request['sessionId']})+'\\n'}
+for name,content in files.items():
+ with tempfile.NamedTemporaryFile(mode='w',dir=extensions,delete=False) as output:
+  temporary=pathlib.Path(output.name)
+  try:
+   output.write(content)
+   output.close()
+   temporary.replace(extensions/name)
+  finally:
+   temporary.unlink(missing_ok=True)
+print(json.dumps({'sessionId':request['sessionId'],
+                  'sha256':hashlib.sha256(request['source'].encode()).hexdigest()}))
+"""
+
+
+def install_request_timings(stage, session_id):
+    config = json.loads((ROOT / "runtime.json").read_text())
+    request = {
+        "source": (stage / "request-timings.js").read_text(),
+        "sessionId": session_id,
+    }
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--interactive",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "1000:1000",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--mount",
+            f"type=volume,src={config['home_volume']},dst=/home/agent",
+            "--entrypoint",
+            "/usr/bin/python3",
+            config["image"],
+            "-c",
+            TIMING_INSTALL_PROGRAM,
+            "/home/agent/.config/pi/agent",
+        ],
+        input=json.dumps(request),
+        text=True,
+        check=True,
+    )
+
+
 def install(stage, local):
     if os.getuid() != 1000:
         raise ValueError("target user must have UID 1000 for the private key mount")
@@ -222,8 +280,23 @@ if __name__ == "__main__":
     parser.add_argument("local", nargs="?")
     parser.add_argument("--config-only", action="store_true")
     parser.add_argument("--update-live-models", action="store_true")
+    parser.add_argument("--timings-only", action="store_true")
+    parser.add_argument("--session-id", type=lambda value: str(uuid.UUID(value)))
     args = parser.parse_args()
-    if args.config_only:
+    if args.timings_only:
+        if (
+            not args.session_id
+            or args.local
+            or args.config_only
+            or args.update_live_models
+        ):
+            parser.error(
+                "timing deployment requires only --timings-only and --session-id"
+            )
+        install_request_timings(args.stage.resolve(strict=True), args.session_id)
+    elif args.session_id:
+        parser.error("--session-id requires --timings-only")
+    elif args.config_only:
         if args.local:
             parser.error("configuration-only deployment does not accept a project")
         install_configuration(args.stage.resolve(strict=True), args.update_live_models)
