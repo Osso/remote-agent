@@ -26,7 +26,7 @@ To deploy model configuration without restarting a session, run `sandbox/openrou
 
 ## Reverse-engineering tools update
 
-The planned `--tools-only` mode adds `python-capstone` and `python-unicorn` for disassembly and emulation, `jdk-openjdk` for Java, `ghidra` for reverse engineering, and `wine` for Windows program compatibility. This prepares the existing sandbox for the wowdecomp work; it does not replace the later VM redesign or migration.
+The `--tools-only` mode adds `python-capstone` and `python-unicorn` for disassembly and emulation, `jdk-openjdk` for Java, `ghidra` for reverse engineering, and `wine` for Windows program compatibility. This prepares the existing sandbox for the wowdecomp work.
 
 ```text
 sandbox/openrouter-runtime/deploy.sh --host agent-server --tools-only
@@ -34,7 +34,13 @@ sandbox/openrouter-runtime/deploy.sh --host agent-server --tools-only
 
 The mode builds an image externally from the current image in `runtime.json` and updates only that image reference. It does not restart containers or services, or change networking, settings, models, or the key. Existing containers do not gain the tools until an approved restart of the target conversation; preserve its conversation ID, home, and workspace. The sandbox isolation boundary remains unchanged.
 
-This mode and its deployment have not yet been verified.
+### Tools-only deployment proof — 2026-10-30
+
+Commits `d359934` and `537ba87` were deployed with `sandbox/openrouter-runtime/deploy.sh --host agent-server --tools-only` (exit 0). The runtime image reference became `sha256:54cc46c214c749bbb8eb5ae43996608b8342798edf63f7acc61bce7e32193b98`. An approved target-only `remote-agent --host agent-server restart wowdecomp` retained conversation `e9f22590-027a-452a-bc36-a1312c9b5537` and its home and workspace mounts. The pre-restart anonymous `/tmp` volume `210970791ca2b3bd910e3a03e95b7d5d0c64a2d5cd85a484b030811cf9ed0a45` remains attached to stopped keeper `wowdecomp-pre-tools-tmp-20261030` for logs migration; no process runs in the keeper.
+
+Independent verification found `python-capstone` 5.0.9-1, `python-unicorn` 2.1.4-2, `jdk-openjdk` 27.0.1.0.3.u1-1, `ghidra` 12.1.2-2 and `wine` 11.20-1. Capstone decoded mov/add instructions and Unicorn executed them with EAX = 8. Java and Wine version checks exited 0. Ghidra headless import, analysis and save of `/usr/bin/true` exited 0, but reported deprecation, ELF relocation, unresolved symbol and decompiler warnings; this was not a clean analysis. No game was launched and no Wine prefix was initialized.
+
+Verification also confirmed UID 1000, all capabilities dropped, no-new-privileges, a read-only root, an internal network, loopback DNS and the upstream configuration. Settings, models and artifact hashes were unchanged. The targeted tests reported 19 passed and 7 deselected. The full proof is the local, untracked artifact `/tmp/wowdecomp-tools-verification.log`.
 
 ## Request timing diagnostics
 

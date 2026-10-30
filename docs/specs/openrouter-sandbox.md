@@ -44,7 +44,7 @@ On 2026-10-30, the three targeted test files passed (10 tests and 10 subtests). 
 
 ## Known gaps (current cycle)
 
-- [ ] Implement and verify the tools-only update and its approved target-only restart; it has not yet been deployed or tested.
+Tools-only deployment and target restart evidence is recorded in the [runtime documentation](../../sandbox/openrouter-runtime/README.md#tools-only-deployment-proof--2026-10-30).
 
 - [ ] Verify complete session lifecycle, including history restoration and scoped cancellation, on the intended host.
 - [ ] Verify service ordering and isolation after an actual host reboot.
