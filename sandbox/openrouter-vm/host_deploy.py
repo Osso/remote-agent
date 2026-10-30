@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Provision or update the fixed VM from a staged directory, as the host user."""
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+ROOT = Path.home() / ".local/share/openrouter-vm"
+UNIT = Path.home() / ".config/systemd/user/wowdecomp-vm.service"
+IMAGE = "Arch-Linux-x86_64-cloudimg-20261015.611680.qcow2"
+URL = "https://geo.mirror.pkgbuild.com/images/latest/" + IMAGE
+SHA256 = "08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08"
+SCRIPTS = ("vm.py", "relay.py", "repo_proxy.py")
+
+
+def run(*args):
+    subprocess.run(args, check=True)
+
+
+def config(root):
+    return {
+        "image": str(root / "disk.qcow2"),
+        "base_image": IMAGE,
+        "base_sha256": SHA256,
+        "private_key": str(root / "id_ed25519"),
+        "known_hosts": str(root / "known_hosts"),
+        "ssh_port": 22230,
+        "user": "agent",
+        "admin_user": "root",
+        "host": "127.0.0.1",
+    }
+
+
+def cloud_config(public_key, host_private, host_public):
+    return {
+        "disable_root": False,
+        "ssh_pwauth": False,
+        "ssh_deletekeys": False,
+        "ssh_genkeytypes": [],
+        "ssh_keys": {"ed25519_private": host_private, "ed25519_public": host_public},
+        "users": [
+            {"name": "root", "ssh_authorized_keys": [public_key]},
+            {
+                "name": "agent",
+                "uid": 1000,
+                "home": "/home/agent",
+                "shell": "/bin/bash",
+                "lock_passwd": True,
+                "ssh_authorized_keys": [public_key],
+            },
+        ],
+        "write_files": [
+            {
+                "path": "/etc/pacman.d/mirrorlist",
+                "content": "Server = http://10.0.2.100:3129/$repo/os/$arch\n",
+            },
+            {
+                "path": "/etc/sysctl.d/90-openrouter-ipv6.conf",
+                "content": "net.ipv6.conf.all.disable_ipv6 = 1\nnet.ipv6.conf.default.disable_ipv6 = 1\n",
+            },
+            {
+                "path": "/etc/ssh/sshd_config.d/10-openrouter.conf",
+                "content": "PermitRootLogin prohibit-password\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n",
+            },
+        ],
+        "runcmd": [
+            ["mkdir", "-p", "/workspace"],
+            ["chown", "1000:1000", "/workspace"],
+            ["sysctl", "--system"],
+            ["systemctl", "enable", "--now", "sshd"],
+        ],
+    }
+
+
+def unit_text(root):
+    # JSON double-quoted strings are accepted by systemd's command parser.
+    executable = json.dumps(str(root / "vm.py"))
+    return (
+        "[Unit]\nDescription=OpenRouter writable VM\n\n[Service]\n"
+        f"ExecStart=/usr/bin/python3 {executable}\nRestart=on-failure\n"
+        "UMask=0077\n\n[Install]\nWantedBy=default.target\n"
+    )
+
+
+def download(url, path):
+    with urllib.request.urlopen(url, timeout=60) as response, path.open("wb") as output:
+        shutil.copyfileobj(response, output)
+
+
+def verify_image(image, signature):
+    digest = hashlib.file_digest(image.open("rb"), "sha256").hexdigest()
+    if digest != SHA256:
+        raise ValueError("cloud image SHA256 mismatch")
+    run(
+        "gpgv",
+        "--keyring",
+        "/usr/share/pacman/keyrings/archlinux.gpg",
+        str(signature),
+        str(image),
+    )
+
+
+def install(stage, root=ROOT, unit=UNIT):
+    for name in (*SCRIPTS,):
+        if not (stage / name).is_file():
+            raise ValueError(f"missing staged file: {name}")
+    for name in (
+        "qemu-system-x86_64",
+        "qemu-img",
+        "xorriso",
+        "ssh-keygen",
+        "gpgv",
+        "systemctl",
+    ):
+        if not shutil.which(name):
+            raise ValueError(f"missing host dependency: {name}")
+    expected = config(root)
+    metadata = root / "vm.json"
+    if root.exists():
+        if not metadata.is_file() or json.loads(metadata.read_text()) != expected:
+            raise ValueError(
+                "existing VM state differs or is incomplete; refusing to provision"
+            )
+        for name in ("disk.qcow2", "seed.iso", "id_ed25519", "known_hosts"):
+            if not (root / name).is_file():
+                raise ValueError(f"existing VM state missing {name}")
+        if not unit.is_file() or unit.read_text() != unit_text(root):
+            raise ValueError("existing VM service differs or is missing")
+    else:
+        if unit.exists():
+            raise ValueError("existing VM service without matching state")
+        root.mkdir(parents=True, mode=0o700)
+        os.chmod(root, 0o700)
+        image = root / IMAGE
+        signature = root / (IMAGE + ".sig")
+        download(URL, image)
+        download(URL + ".sig", signature)
+        verify_image(image, signature)
+        run(
+            "qemu-img",
+            "create",
+            "-f",
+            "qcow2",
+            "-F",
+            "qcow2",
+            "-b",
+            str(image),
+            str(root / "disk.qcow2"),
+            "64G",
+        )
+        for key in ("id_ed25519", "ssh_host_ed25519_key"):
+            run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / key))
+        public = (root / "id_ed25519.pub").read_text().strip()
+        host_private = (root / "ssh_host_ed25519_key").read_text()
+        host_public = (root / "ssh_host_ed25519_key.pub").read_text().strip()
+        (root / "known_hosts").write_text("[127.0.0.1]:22230 " + host_public + "\n")
+        (root / "user-data").write_text(
+            "#cloud-config\n"
+            + json.dumps(cloud_config(public, host_private, host_public))
+            + "\n"
+        )
+        (root / "meta-data").write_text(
+            "instance-id: wowdecomp-vm\nlocal-hostname: wowdecomp-vm\n"
+        )
+        run(
+            "xorriso",
+            "-as",
+            "mkisofs",
+            "-output",
+            str(root / "seed.iso"),
+            "-volid",
+            "cidata",
+            "-joliet",
+            "-rock",
+            str(root / "user-data"),
+            str(root / "meta-data"),
+        )
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(unit_text(root))
+        metadata.write_text(json.dumps(expected, indent=2) + "\n")
+        metadata.chmod(0o600)
+    for name in SCRIPTS:
+        shutil.copyfile(stage / name, root / name)
+        (root / name).chmod(0o700)
+    run("systemctl", "--user", "daemon-reload")
+    run("systemctl", "--user", "enable", "--now", "wowdecomp-vm.service")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: host_deploy.py STAGE")
+    install(Path(sys.argv[1]))
