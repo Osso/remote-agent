@@ -1,0 +1,49 @@
+{
+  "providers": {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "$OPENROUTER_API_KEY",
+      "models": [
+        {
+          "id": "particle-ai/particle-1",
+          "name": "Particle AI: Particle-1",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0.25,
+            "output": 1,
+            "cacheRead": 0.003,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 131072
+        },
+        {
+          "id": "minimax/minimax-m3.1-flash",
+          "name": "MiniMax: MiniMax M3.1 Flash",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null
+          },
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.015,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 524288
+        }
+      ]
+    }
+  }
+}

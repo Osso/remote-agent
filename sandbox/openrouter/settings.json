@@ -1,0 +1,53 @@
+{
+  "defaultProvider": "openrouter",
+  "defaultModel": "particle-ai/particle-1",
+  "defaultProjectTrust": "never",
+  "approvalPolicy": "auto-approve",
+  "supervisorModel": "openrouter/particle-ai/particle-1",
+  "enabledModels": [
+    "openrouter/particle-ai/particle-1",
+    "openrouter/minimax/minimax-m3.1-flash"
+  ],
+  "agents": {
+    "implement": {
+      "model": "openrouter/particle-ai/particle-1",
+      "thinkingLevel": "medium"
+    },
+    "explore": {
+      "model": "openrouter/particle-ai/particle-1",
+      "thinkingLevel": "low"
+    },
+    "verifier": {
+      "model": "openrouter/particle-ai/particle-1",
+      "thinkingLevel": "medium"
+    },
+    "documentation-update": {
+      "model": "openrouter/particle-ai/particle-1",
+      "thinkingLevel": "low"
+    },
+    "reviewer": {
+      "context": "fresh",
+      "model": "openrouter/particle-ai/particle-1",
+      "thinkingLevel": "medium"
+    }
+  },
+  "disabledExtensions": [
+    "ask-secret",
+    "bwrap",
+    "claude-memory-enrich",
+    "claude-memory-session-end",
+    "codex-daybreak",
+    "codex-fast",
+    "codex-image-generation",
+    "codex-usage",
+    "codex-web-search",
+    "debug",
+    "docs-tree-context",
+    "safe",
+    "self-restart",
+    "session-archive",
+    "session-autoname",
+    "spec-validation"
+  ],
+  "httpProxy": "http://openrouter-proxy.invalid:3128"
+}
