@@ -20,6 +20,51 @@ vm = load("vm")
 
 
 class ProvisionTest(TestCase):
+    def test_new_vm_creates_cloud_seed_and_private_connection_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root, stage, unit = base / "vm", base / "stage", base / "unit"
+            stage.mkdir()
+            for name in host.SCRIPTS:
+                (stage / name).write_text(name)
+
+            def fake_run(*args):
+                if args[0] == "ssh-keygen":
+                    key = Path(args[-1])
+                    key.write_text("private " + key.name)
+                    key.with_suffix(key.suffix + ".pub").write_text(
+                        "ssh-ed25519 " + key.name
+                    )
+                elif args[0] == "qemu-img":
+                    (root / "disk.qcow2").write_bytes(b"new disk")
+                elif args[0] == "xorriso":
+                    (root / "seed.iso").write_bytes(b"seed")
+
+            def fake_download(url, path):
+                path.write_bytes(url.encode())
+
+            with (
+                mock.patch.object(host.shutil, "which", return_value="/usr/bin/tool"),
+                mock.patch.object(host, "run", side_effect=fake_run),
+                mock.patch.object(host, "download", side_effect=fake_download),
+                mock.patch.object(host, "verify_image") as verify,
+            ):
+                host.install(stage, root, unit)
+            verify.assert_called_once_with(
+                root / host.IMAGE, root / (host.IMAGE + ".sig")
+            )
+            self.assertEqual(
+                json.loads((root / "vm.json").read_text()), host.config(root)
+            )
+            self.assertEqual(
+                (root / "known_hosts").read_text(),
+                "[127.0.0.1]:22230 ssh-ed25519 ssh_host_ed25519_key\n",
+            )
+            cloud = json.loads((root / "user-data").read_text().split("\n", 1)[1])
+            self.assertEqual(cloud["users"][1]["uid"], 1000)
+            self.assertEqual((root / "disk.qcow2").read_bytes(), b"new disk")
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+
     def test_cloud_config_limits_admin_and_uses_repository_proxy(self):
         data = host.cloud_config("ssh-ed25519 client", "private", "ssh-ed25519 host")
         self.assertFalse(data["ssh_pwauth"])
