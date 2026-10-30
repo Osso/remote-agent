@@ -71,9 +71,10 @@ def wait_ready(config, timeout=180):
             detail = error.stderr or error.stdout
             if isinstance(detail, bytes):
                 detail = detail.decode(errors="replace")
-            last_error = (
-                f"SSH/cloud-init timed out: {detail.strip()}" if detail else str(error)
-            )
+            if detail:
+                last_error = f"SSH/cloud-init timed out: {detail.strip()}"
+            elif last_error == "no readiness attempt completed":
+                last_error = str(error)
         time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise RuntimeError(
         f"guest root SSH or cloud-init did not become ready within the deadline: {last_error}"

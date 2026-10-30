@@ -134,6 +134,11 @@ if error:
                     2,
                     True,
                 ),
+                (
+                    "error: failed retrieving file 'x' from mirror : HTTP 429\nRetry-After: 7\n---\n",
+                    2,
+                    True,
+                ),
                 (timeout, 3, False),
                 (
                     timeout + "\nerror: invalid or corrupted package (signature)",
@@ -155,7 +160,7 @@ if error:
                             "FAKE_ROOT": str(root),
                         },
                     ),
-                    mock.patch.object(runtime.time, "sleep"),
+                    mock.patch.object(runtime.time, "sleep") as sleep,
                 ):
                     for name in ("count", "cache", "installed"):
                         (root / name).unlink(missing_ok=True)
@@ -176,6 +181,8 @@ if error:
                     self.assertIn("download output", out.getvalue())
                     self.assertIn("attempt 1/3 failed", err.getvalue())
                     self.assertIn("error:", err.getvalue())
+                    if "Retry-After: 7" in error:
+                        self.assertGreaterEqual(sleep.call_args.args[0], 7)
 
     def test_wait_ready_reports_last_real_ssh_error(self):
         with tempfile.TemporaryDirectory() as tmp:
