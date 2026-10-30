@@ -74,18 +74,17 @@ def main():
     environment = session_environment(os.environ, CREDENTIAL.read_text(), HOME)
     (HOME / "kb").mkdir(exist_ok=True)
     os.chdir(WORKSPACE)
-    os.execve(
-        PI,
-        [
-            PI,
+    options = (
+        []
+        if "--export-terminal" in arguments
+        else [
             "--no-skills",
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
-            *arguments,
-        ],
-        environment,
+        ]
     )
+    os.execve(PI, [PI, *options, *arguments], environment)
 
 
 if __name__ == "__main__":

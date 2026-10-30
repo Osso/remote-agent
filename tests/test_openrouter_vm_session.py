@@ -34,7 +34,7 @@ def guest_fixture(tmp_path):
         "#!" + sys.executable + "\n"
         "import json,os,sys,time\n"
         'print(json.dumps({"argv":sys.argv[1:],"cwd":os.getcwd(),"home":os.environ["HOME"],"key":os.environ["OPENROUTER_API_KEY"],"color":os.environ.get("COLORTERM")}),flush=True)\n'
-        'if "--exit" not in sys.argv: time.sleep(30)\n'
+        'if "--exit" not in sys.argv and "--export-terminal" not in sys.argv: time.sleep(30)\n'
     )
     executable.chmod(0o700)
     launcher = tmp_path / "launcher.py"
@@ -65,6 +65,21 @@ def test_guest_exec_preserves_cwd_identity_environment_and_configuration(tmp_pat
     assert output["home"] == str(home)
     assert output["key"] == "test-only-key"
     assert output["color"] == "truecolor"
+    assert (home / ".config/pi/agent/models.json").read_text() == "preserved models"
+
+
+def test_history_export_receives_only_export_supported_arguments(tmp_path):
+    launcher, home, _ = guest_fixture(tmp_path)
+    arguments = ["--export-terminal", CONVERSATION, "--export-columns", "120"]
+    result = subprocess.run(
+        [sys.executable, str(launcher), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["argv"] == arguments
+    assert not (home / ".local/state/openrouter-vm").exists()
     assert (home / ".config/pi/agent/models.json").read_text() == "preserved models"
 
 
