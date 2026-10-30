@@ -17,7 +17,7 @@ IMAGE = "Arch-Linux-x86_64-cloudimg-20261015.611680.qcow2"
 URL = "https://geo.mirror.pkgbuild.com/images/latest/" + IMAGE
 SHA256 = "08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08"
 SCRIPTS = ("vm.py", "relay.py", "repo_proxy.py", "session.py", "guest_session.py")
-KEYRING = Path("/usr/share/pacman/keyrings/archlinux.gpg")
+KEYRING = Path(__file__).with_name("arch-boxes.asc")
 
 
 def run(*args):

@@ -11,7 +11,7 @@ authsudo arch install qemu-system-x86 qemu-img xorriso
 sandbox/openrouter-vm/deploy.sh --host agent-server
 ```
 
-The provisioner verifies the pinned official cloud image's SHA-256 and Arch signature, creates a writable 64 GiB QCOW2 overlay, and starts the user service `wowdecomp-vm.service`. It assigns four virtual CPUs and 8 GiB RAM. State, SSH keys and serial output live in the owner-only `~/.local/share/openrouter-vm/` directory. Re-running deployment updates helper scripts without replacing the disk or restarting the running VM. Unknown or incomplete state fails explicitly.
+The provisioner verifies the pinned official cloud image's SHA-256 and signature against `arch-boxes.asc`, the release CI key published in the official arch-boxes README (primary fingerprint `1B9A16984A4E8CB448712D2AE0B78BF4326C6F8F`), creates a writable 64 GiB QCOW2 overlay, and starts the user service `wowdecomp-vm.service`. It assigns four virtual CPUs and 8 GiB RAM. State, SSH keys and serial output live in the owner-only `~/.local/share/openrouter-vm/` directory. Re-running deployment updates helper scripts without replacing the disk or restarting the running VM. Unknown or incomplete state fails explicitly.
 
 Normal guest work uses `agent` (UID 1000). Root administration uses a separate SSH login with the dedicated key; password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
 

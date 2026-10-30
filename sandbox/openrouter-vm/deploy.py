@@ -17,6 +17,7 @@ FILES = (
     "repo_proxy.py",
     "session.py",
     "guest_session.py",
+    "arch-boxes.asc",
 )
 
 
