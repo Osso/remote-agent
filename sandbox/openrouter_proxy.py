@@ -19,7 +19,9 @@ async def connect_upstream():
 
 async def copy_exactly(reader, writer, length):
     while length:
-        data = await reader.readexactly(min(length, 65536))
+        data = await reader.read(min(length, 65536))
+        if not data:
+            raise asyncio.IncompleteReadError(data, length)
         writer.write(data)
         await writer.drain()
         length -= len(data)
