@@ -627,6 +627,11 @@ class NativeRustAttachTests(unittest.TestCase):
             ["ready", "bulk", "revised"],
         )
 
+        # Freeze the old server so this input cannot be applied or acknowledged.
+        os.kill(started["pid"], signal.SIGSTOP)
+        os.write(self.master, b"w")
+        self.drain(0.5)
+        self.assertFalse(any(event["phase"] == "widgets" for event in self.events()))
         restarted = self.cli("restart", "bulk-proof")
         self.owned.update((restarted["pid"], restarted["child_pid"]))
         self.assertNotEqual(restarted["pid"], started["pid"])
@@ -647,6 +652,15 @@ class NativeRustAttachTests(unittest.TestCase):
             )
         self.assertEqual(self.client, client)
         self.assertIn(b"pending input was not replayed", output)
+        self.assertEqual(
+            [
+                event["phase"]
+                for event in self.events()
+                if event["pid"] == restarted["child_pid"]
+            ],
+            ["ready"],
+            "unacknowledged input from the old server must not run on the new server",
+        )
 
         os.write(self.master, b"b")
         deadline = time.monotonic() + 12
