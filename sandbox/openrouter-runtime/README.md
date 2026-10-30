@@ -24,6 +24,18 @@ At each launch, the image replaces `settings.json` and `models.json` in the home
 
 To deploy model configuration without restarting a session, run `sandbox/openrouter-runtime/deploy.sh --host agent-server --config-only --update-live-models`. This updates the image for future launches and the live model catalog, but does not change the running session's settings. Open `/scoped-models` to add a newly available model to its cycling scope.
 
+## Reverse-engineering tools update
+
+The planned `--tools-only` mode adds `python-capstone` and `python-unicorn` for disassembly and emulation, `jdk-openjdk` for Java, `ghidra` for reverse engineering, and `wine` for Windows program compatibility. This prepares the existing sandbox for the wowdecomp work; it does not replace the later VM redesign or migration.
+
+```text
+sandbox/openrouter-runtime/deploy.sh --host agent-server --tools-only
+```
+
+The mode builds an image externally from the current image in `runtime.json` and updates only that image reference. It does not restart containers or services, or change networking, settings, models, or the key. Existing containers do not gain the tools until an approved restart of the target conversation; preserve its conversation ID, home, and workspace. The sandbox isolation boundary remains unchanged.
+
+This mode and its deployment have not yet been verified.
+
 ## Request timing diagnostics
 
 Install timing diagnostics for one conversation without rebuilding the image or changing settings, models, credentials, networking, or services:
