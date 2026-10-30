@@ -2,7 +2,7 @@
 
 This runtime is separate from Clank. It uses the `openrouter-sandbox` project and network, `br-or-sandbox` bridge, its own image, volumes, service units, state directory and key. Its fixed subnet is `172.30.253.0/24`; deployment fails if Docker cannot reserve it. It does not mount the mapped host project into the container. The project mapping provides the remote-agent working directory; the sandbox workspace is a separate Docker volume.
 
-Deploy only when authorized:
+Deploy:
 
 ```text
 sandbox/openrouter-runtime/deploy.sh --host agent-server --pi-install /home/osso/.local/share/pi --local-project /absolute/local/project --key-file /private/openrouter.key
