@@ -6,7 +6,7 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 
 - [ ] Provide a separate `openrouter-sandbox` remote-agent project, image, network, state, credentials and persistent Pi-home and workspace volumes without changing the Clank sandbox.
 - [ ] Run Pi as an unprivileged user with a read-only root filesystem, dropped capabilities and no-new-privileges. Keep the mapped host project out of the container; its workspace is a separate Docker volume, not the directory used by remote-agent sync or fetch.
-- [ ] Use Particle-1 as the default for Pi, the supervisor and configured agent profiles, and allow selection of Particle-1 and MiniMax M3.1 Flash through OpenRouter. Install packaged settings and model configuration at each launch.
+- [ ] Use Particle-1 as the default for Pi, the supervisor and configured agent profiles, and allow selection of Particle-1, MiniMax M3.1 Flash and DeepSeek V4.1 Flash 1017 through OpenRouter. Install packaged settings and model configuration at each launch.
 - [ ] Route model requests through the host-side reverse proxy to the fixed `openrouter.ai` upstream over verified TLS. Do not provide a general forward proxy or CONNECT tunnel.
 - [ ] Use the dedicated internal `br-or-sandbox` bridge with IPv6 and inter-container communication disabled. Deny bridge forwarding in both directions and host input except IPv4 TCP to the bridge proxy address and port; do not provide external DNS to the container.
 - [ ] Require the isolation and proxy services before sessions start, including after host reboot.

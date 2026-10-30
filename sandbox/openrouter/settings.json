@@ -6,7 +6,8 @@
   "supervisorModel": "openrouter/particle-ai/particle-1",
   "enabledModels": [
     "openrouter/particle-ai/particle-1",
-    "openrouter/minimax/minimax-m3.1-flash"
+    "openrouter/minimax/minimax-m3.1-flash",
+    "openrouter/deepseek/deepseek-v4.1-flash-1017"
   ],
   "agents": {
     "implement": {
