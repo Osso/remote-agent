@@ -609,6 +609,65 @@ class NativeRustAttachTests(unittest.TestCase):
         finally:
             path.write_text(original)
 
+    def test_attached_client_recovers_after_server_restart(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        self.attach()
+        client = self.client
+        self.capture("ready")
+        for key, phase in ((b"b", "bulk"), (b"r", "revised")):
+            os.write(self.master, key)
+            self.capture(phase)
+        self.assertEqual(
+            [
+                event["phase"]
+                for event in self.events()
+                if event["pid"] == started["child_pid"]
+            ],
+            ["ready", "bulk", "revised"],
+        )
+
+        restarted = self.cli("restart", "bulk-proof")
+        self.owned.update((restarted["pid"], restarted["child_pid"]))
+        self.assertNotEqual(restarted["pid"], started["pid"])
+        self.assertNotEqual(restarted["child_pid"], started["child_pid"])
+        output = bytearray()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            output.extend(self.drain(0.1))
+            if b"server restarted" in output and any(
+                event["phase"] == "ready" and event["pid"] == restarted["child_pid"]
+                for event in self.events()
+            ):
+                break
+        else:
+            self.fail(
+                f"restart did not reconnect: {output.decode(errors='replace')}\n{self.server_log()}"
+            )
+        self.assertEqual(self.client, client)
+        self.assertIn(b"pending input was not replayed", output)
+
+        os.write(self.master, b"b")
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            output.extend(self.drain(0.1))
+            if any(
+                event["phase"] == "bulk" and event["pid"] == restarted["child_pid"]
+                for event in self.events()
+            ):
+                output.extend(self.drain(1))
+                break
+        else:
+            self.fail(
+                f"post-restart input did not reach fixture: {output.decode(errors='replace')}\n{self.server_log()}"
+            )
+        stage = {"name": "bulk", "output": output.decode(errors="replace")}
+        self.assert_bulk(self.analyze([stage], "restart")[0], "bulk")
+        self.assertNotIn("input sequence has a gap", self.server_log())
+        self.assertNotIn(b"input sequence has a gap", output)
+        self.assertEqual(self.client, client)
+        self.detach()
+
     def test_restart_resumes_named_conversation(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
