@@ -66,9 +66,11 @@ def install_configuration(stage, update_live_models=False):
     runtime = ROOT / "runtime.json"
     config = json.loads(runtime.read_text())
     image = run("docker", "image", "inspect", "--format", "{{.Id}}", config["image"])
+    base = "openrouter-sandbox-config-base:latest"
+    run("docker", "image", "tag", image, base)
     dockerfile = stage / "Dockerfile.config"
     dockerfile.write_text(
-        f"FROM {image}\nCOPY settings.json models.json /opt/sandbox/config/\n"
+        f"FROM {base}\nCOPY settings.json models.json /opt/sandbox/config/\n"
     )
     image_id = stage / "image.id"
     run(
