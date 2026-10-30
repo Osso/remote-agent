@@ -28,7 +28,7 @@ def key_bytes(path):
     return key
 
 
-def stage(archive_path, pi):
+def stage(archive_path, pi, config_only=False):
     with tempfile.TemporaryDirectory() as tmp:
         context = Path(tmp)
         settings = json.loads((SANDBOX / "openrouter/settings.json").read_text())
@@ -43,6 +43,8 @@ def stage(archive_path, pi):
             archive.add(SANDBOX / "openrouter_proxy.py", arcname="openrouter_proxy.py")
             archive.add(context / "models.json", arcname="models.json")
             archive.add(context / "settings.json", arcname="settings.json")
+            if config_only:
+                return
             for name in (
                 "pi",
                 "package.json",
@@ -64,14 +66,24 @@ def main():
     parser.add_argument(
         "--pi-install", type=Path, default=Path.home() / ".local/share/pi"
     )
-    parser.add_argument("--local-project", type=Path, required=True)
+    parser.add_argument("--local-project", type=Path)
     parser.add_argument("--key-file", type=Path)
+    parser.add_argument("--config-only", action="store_true")
+    parser.add_argument("--update-live-models", action="store_true")
     args = parser.parse_args()
-    local = str(args.local_project.resolve(strict=True))
+    if args.update_live_models and not args.config_only:
+        parser.error("--update-live-models requires --config-only")
+    if args.config_only and (args.key_file or args.local_project):
+        parser.error(
+            "--config-only cannot be combined with --key-file or --local-project"
+        )
+    if not args.config_only and not args.local_project:
+        parser.error("--local-project is required for a full deployment")
+    local = str(args.local_project.resolve(strict=True)) if args.local_project else None
     key = key_bytes(args.key_file) if args.key_file else None
     with tempfile.TemporaryDirectory(prefix="openrouter-stage-") as tmp:
         archive = Path(tmp) / "inputs.tar.gz"
-        stage(archive, args.pi_install)
+        stage(archive, args.pi_install, args.config_only)
         target = remote(
             args.host,
             [
@@ -95,7 +107,22 @@ def main():
                 target,
             ],
         )
-        remote(args.host, ["python3", target + "/host_deploy.py", target, local])
+        host_args = ["python3", target + "/host_deploy.py", target]
+        host_args.extend(["--config-only"] if args.config_only else [local])
+        if args.update_live_models:
+            host_args.append("--update-live-models")
+        remote(args.host, host_args)
+        if args.config_only:
+            remote(
+                args.host,
+                [
+                    "python3",
+                    "-c",
+                    "import shutil,sys; shutil.rmtree(sys.argv[1])",
+                    target,
+                ],
+            )
+            return
         if key is not None:
             script = "import os,pathlib,sys; p=pathlib.Path.home()/'.local/share/openrouter-sandbox/openrouter.key'; f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600); os.fchmod(f,0o600); os.write(f,sys.stdin.buffer.read()); os.close(f)"
             remote(args.host, ["python3", "-c", script], input=key)

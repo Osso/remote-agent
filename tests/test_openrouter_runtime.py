@@ -46,11 +46,89 @@ def test_staging_uses_proxy_and_only_installed_pi_files(tmp_path):
             models["providers"]["openrouter"]["baseUrl"]
             == "http://172.30.253.1:3128/api/v1"
         )
-        assert {m["id"] for m in models["providers"]["openrouter"]["models"]} == {
-            "particle-ai/particle-1",
-            "minimax/minimax-m3.1-flash",
-        }
+        original = json.loads((ROOT / "sandbox/openrouter/models.json").read_text())
+        assert (
+            models["providers"]["openrouter"]["models"]
+            == original["providers"]["openrouter"]["models"]
+        )
         assert "pi/secret" not in staged.getnames()
+
+
+@pytest.mark.parametrize("update_live", [False, True])
+def test_config_only_builds_from_current_image_without_disturbing_runtime(
+    tmp_path, monkeypatch, update_live
+):
+    host = load("host_deploy")
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(host, "ROOT", state)
+    runtime = {
+        "image": "sha256:old",
+        "home_volume": "home",
+        "secret_file": "/secret",
+        "network": "unchanged",
+    }
+    (state / "runtime.json").write_text(json.dumps(runtime))
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "models.json").write_text('{"new": true}')
+    (stage / "settings.json").write_text('{"default": "new"}')
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "models.json").write_text('{"old": true}')
+    (home / "settings.json").write_text('{"default": "minimax"}')
+    calls = []
+
+    def docker(*args):
+        calls.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return "sha256:old"
+        if args[:2] == ("docker", "build"):
+            assert (
+                (stage / "Dockerfile.config").read_text()
+                == "FROM sha256:old\nCOPY settings.json models.json /opt/sandbox/config/\n"
+            )
+            Path(args[args.index("--iidfile") + 1]).write_text("sha256:new")
+            return ""
+        assert args[:2] == ("docker", "run")
+        script = (
+            args[-1]
+            .replace("/home/agent/.config/pi/agent", str(home))
+            .replace("/opt/sandbox/config/models.json", str(stage / "models.json"))
+        )
+        subprocess.run([sys.executable, "-c", script], check=True)
+        return ""
+
+    monkeypatch.setattr(host, "run", docker)
+    host.install_configuration(stage, update_live)
+    assert json.loads((state / "runtime.json").read_text()) == {
+        **runtime,
+        "image": "sha256:new",
+    }
+    assert (state / "runtime.json").stat().st_mode & 0o777 == 0o600
+    assert (home / "settings.json").read_text() == '{"default": "minimax"}'
+    assert json.loads((home / "models.json").read_text()) == (
+        {"new": True} if update_live else {"old": True}
+    )
+    assert [call[1] for call in calls] == (
+        ["image", "build", "run"] if update_live else ["image", "build"]
+    )
+    if update_live:
+        assert "--network" in calls[-1] and "none" in calls[-1]
+        assert "--entrypoint" in calls[-1]
+
+
+def test_config_only_staging_does_not_require_pi(tmp_path):
+    deploy = load("deploy")
+    archive = tmp_path / "stage.tar.gz"
+    deploy.stage(archive, tmp_path / "missing-pi", config_only=True)
+    with tarfile.open(archive) as staged:
+        models = json.load(staged.extractfile("models.json"))
+        assert (
+            models["providers"]["openrouter"]["baseUrl"]
+            == "http://172.30.253.1:3128/api/v1"
+        )
+        assert not any(name.startswith("pi/") for name in staged.getnames())
 
 
 def test_launch_replaces_stale_volume_configuration(tmp_path):

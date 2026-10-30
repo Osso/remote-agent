@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Install the independent OpenRouter runtime on the target host."""
 
+import argparse
 import json
 import os
 import shutil
 import subprocess
-import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path.home() / ".local/share/openrouter-sandbox"
@@ -59,6 +60,61 @@ def save_mapping(path, projects):
     temp.write_text(json.dumps(projects, indent=2) + "\n")
     temp.chmod(0o600)
     temp.replace(path)
+
+
+def install_configuration(stage, update_live_models=False):
+    runtime = ROOT / "runtime.json"
+    config = json.loads(runtime.read_text())
+    image = run("docker", "image", "inspect", "--format", "{{.Id}}", config["image"])
+    dockerfile = stage / "Dockerfile.config"
+    dockerfile.write_text(
+        f"FROM {image}\nCOPY settings.json models.json /opt/sandbox/config/\n"
+    )
+    image_id = stage / "image.id"
+    run(
+        "docker",
+        "build",
+        "--file",
+        str(dockerfile),
+        "--iidfile",
+        str(image_id),
+        str(stage),
+    )
+    config["image"] = image_id.read_text().strip()
+    if update_live_models:
+        script = (
+            "import os,pathlib,tempfile; "
+            "d=pathlib.Path('/home/agent/.config/pi/agent'); "
+            "data=pathlib.Path('/opt/sandbox/config/models.json').read_bytes(); "
+            "f=tempfile.NamedTemporaryFile(dir=d,delete=False); "
+            "f.write(data); f.close(); os.replace(f.name,d/'models.json')"
+        )
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "1000:1000",
+            "--mount",
+            f"type=volume,src={config['home_volume']},dst=/home/agent",
+            "--entrypoint",
+            "/usr/bin/python3",
+            config["image"],
+            "-c",
+            script,
+        )
+    with tempfile.NamedTemporaryFile(mode="w", dir=ROOT, delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            json.dump(config, file, indent=2)
+            file.write("\n")
+            file.close()
+            temporary.replace(runtime)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def install(stage, local):
@@ -159,4 +215,19 @@ def install(stage, local):
 
 
 if __name__ == "__main__":
-    install(Path(sys.argv[1]).resolve(strict=True), sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", type=Path)
+    parser.add_argument("local", nargs="?")
+    parser.add_argument("--config-only", action="store_true")
+    parser.add_argument("--update-live-models", action="store_true")
+    args = parser.parse_args()
+    if args.config_only:
+        if args.local:
+            parser.error("configuration-only deployment does not accept a project")
+        install_configuration(args.stage.resolve(strict=True), args.update_live_models)
+    else:
+        if not args.local or args.update_live_models:
+            parser.error(
+                "full deployment requires a project and cannot update live models"
+            )
+        install(args.stage.resolve(strict=True), args.local)

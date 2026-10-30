@@ -12,6 +12,7 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 - [ ] Require the isolation and proxy services before sessions start, including after host reboot.
 - [ ] Provision a dedicated OpenRouter key outside the image and command line, mount it read-only, and retain it across deployments when no replacement is provided. Use a spending-limited key.
 - [ ] Preserve remote-agent session start, resume, history, attachment and selected-conversation cancellation without stopping other conversations.
+- [ ] Support configuration-only image updates without restarting services or existing containers or changing credentials; optionally update only live home models, leaving live settings unchanged.
 
 ## How it works
 
