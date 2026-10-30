@@ -157,7 +157,10 @@ impl vt100::Callbacks for Capture {
         }
     }
     fn unhandled_char(&mut self, _: &mut vt100::Screen, c: char) {
-        self.failure = Some(format!("unsupported or invalid terminal character: {c:?}"));
+        // xterm.js ignores the UTF-8 encoded partial line down control.
+        if c != '\u{8b}' {
+            self.failure = Some(format!("unsupported or invalid terminal character: {c:?}"));
+        }
     }
     fn unhandled_control(&mut self, _: &mut vt100::Screen, b: u8) {
         // NUL and DEL are padding, not terminal state.
@@ -1410,6 +1413,13 @@ mod tests {
         let snapshot = state.snapshot(None);
         assert_eq!(snapshot.screen, before.screen);
         assert_eq!(snapshot.sequence, before.sequence);
+        assert!(state.feed(b"more").is_err());
+    }
+
+    #[test]
+    fn malformed_utf8_still_fails() {
+        let mut state = TerminalState::new(size(5, 20), 1000).unwrap();
+        assert!(state.feed(b"before\xffafter").is_err());
         assert!(state.feed(b"more").is_err());
     }
 

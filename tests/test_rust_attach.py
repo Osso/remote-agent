@@ -454,6 +454,36 @@ class NativeRustAttachTests(unittest.TestCase):
             self.assertIn("TOOL_WIDGET complete", visible)
             self.assertNotIn("TOOL_WIDGET pending", transcript)
 
+    def test_utf8_partial_line_down_does_not_stop_server_output(self):
+        wrapper = self.root / ".local/bin/pi-fixture"
+        wrapper.write_text(
+            f"#!{sys.executable}\n"
+            "import os, tty\n"
+            "tty.setraw(0)\n"
+            "os.write(1, b'READY')\n"
+            "os.read(0, 1)\n"
+            "os.write(1, b'BEFORE\\xc2\\x8bAFTER')\n"
+            "os.read(0, 1)\n"
+            "os.write(1, b' LATER')\n"
+            "os.read(0, 1)\n"
+        )
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        self.attach()
+        self.capture("ready", wait_phase=False)
+        os.write(self.master, b"a")
+        self.capture("markers", wait_phase=False)
+        os.write(self.master, b"b")
+        self.capture("later", wait_phase=False)
+        report = self.analyze(self.stages, "partial-line-down")[-1]
+        text = "\n".join(report["history"] + report["visible"])
+        self.assertIn("BEFOREAFTER LATER", text)
+        status = self.cli("status", "bulk-proof")
+        self.assertTrue(status["running"], self.server_log())
+        self.assertEqual(status["pid"], started["pid"])
+        self.assertEqual(status["child_pid"], started["child_pid"])
+        self.detach()
+
     def test_bulk_output_and_reconnect_preserve_real_pi_history(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.assertTrue(started["running"], self.server_log())
