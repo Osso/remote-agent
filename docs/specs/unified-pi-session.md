@@ -27,7 +27,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Make steady-state display cost proportional to changed rows: live updates carry a diff from the previous display and the client repaints only rows that differ from its viewport. Fresh attachment, replay and virtual resize carry the complete display; reset, resize and repaint clear the viewport.
 - [x] Limit login frames to 8192 bytes before authentication; retain this limit by user decision.
 - [x] Preserve typed input, PTY dimensions, clean detach and local terminal restoration within the tested native attachment boundaries.
-- [ ] When a reconnect ticket has a changed token after server restart, reset attachment input and display replay state, preserve PTY dimensions and retry failures, reconnect to the same conversation, and accept new input. Do not replay pending pre-restart input whose delivery is ambiguous. With the same token, preserve pending input replay across transient outages. Automated proof and live restart acceptance are pending; this does not establish live upgrade acceptance.
+- [x] When a reconnect ticket has a changed token after server restart, reset attachment input and display replay state, preserve PTY dimensions and retry failures, reconnect to the same conversation, and accept new input. Do not replay pending pre-restart input whose delivery is ambiguous. With the same token, preserve pending input replay across transient outages. Restart and pending-frame fixtures plus live input recovery are proven below; this does not upgrade an already-running client.
 - [ ] Establish complete Pi VT capability coverage and per-display geometry. Alternate-screen applications and unknown VT callbacks remain unsupported.
 - [ ] Prove simultaneous real Pi clients with shared PTY dimensions set to the smallest attached dimensions; fixtures alone are not full acceptance.
 - [x] Grey (256-color 240 background, distinct from dark terminal backgrounds such as `#1f2430`) the physical cells outside a smaller shared PTY, and keep them grey after native history scrolls the viewport.
@@ -66,6 +66,13 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
 - `tests/test_rust_resize.py::test_physical_growth_with_second_client_pinning_pty_minimum`: a detached smaller client stops pinning the PTY within 2 seconds (RED before `0c6df6d`); the real agent-server paste run also asserts 40×120 with both clients and 46×165 after the smaller one detaches.
 - Real agent-server paste acceptance at installed `c06678a` (`/var/tmp/pi-resize-fix/rust-production/accept-paste.py`, Linux Wayland client): two simultaneous clients each pressed Ctrl+V with a different private-clipboard PNG; the server saved both byte-identical and Pi's editor showed both paths on both clients; bracketed text containing Ctrl+V stayed text; an empty clipboard showed a notice and changed neither images nor editor.
 - Real agent-server acceptance at `fdaa0d6`: both accounts' enabled/active units, launch identity/environment, real SSH/QUIC/Pi input and detach, whole-unit kill/start conversation restore, cancellation and legacy preservation. See the wiki for exact boundaries.
+
+### Restart recovery — October 30, 2026
+
+- Fix `443536a`, regression `eb3b4b6`: the isolated real CLI/QUIC/PTY restart test passed with the old server frozen and input queued. The new server did not execute that input; fresh input and display worked. `cargo check` and nine client tests passed.
+- `./deploy.sh --rust` installed binary `4a3ff9449184957a60f480981adc12185f824bd2ff6ad813aac6ad29a41281bd` locally and for remote `osso`/`allison`. Maps and seven existing server PIDs remained unchanged. Fresh normal-TTY attach/detach restored terminal settings.
+- The old user client was detached; its replacement, PID `413377`, then survived a separately authorized graphics restart of `wowdecomp` to server PID `3507504`. Conversation `e9f22590-027a-452a-bc36-a1312c9b5537` remained unchanged. Reversible arrow input moved the live selection down and back; no option was submitted. Evidence: `/tmp/remote-agent-restart-live-recovery.json`.
+- The same-server outage test observed queued input execute once and preserved process lifetimes, but failed its display assertion. The existing history test duplicates `BULK_LINE_028`–`033` on both fixed and pre-fix binaries before reconnect. Ordered display replay is not established by this run. Logs: `/tmp/remote-agent-same-server-network.log` and `/tmp/remote-agent-history-baseline.log`.
 
 ## Known gaps (current cycle)
 
