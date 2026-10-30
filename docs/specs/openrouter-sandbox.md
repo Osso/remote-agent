@@ -33,11 +33,11 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 - `tests/test_openrouter_proxy.py` — reverse-proxy request and upstream behavior.
 - `tests/test_openrouter_runtime.py` — runtime configuration, staging and session behavior.
 
-These tests exist; their current results and end-to-end deployment are not established by this document. Contract items remain unchecked pending verification.
+On 2026-10-30, the three targeted test files passed (10 tests and 10 subtests). Live proof is recorded in the [runtime documentation](../../sandbox/openrouter-runtime/README.md#deployment-verification). Contract items remain unchecked where full lifecycle coverage is missing.
 
 ## Known gaps (current cycle)
 
-- [ ] Verify the reverse proxy and its runtime integration, live bridge isolation, model requests and session lifecycle on the intended host.
+- [ ] Verify complete session lifecycle, including history restoration and scoped cancellation, on the intended host.
 - [ ] Verify service ordering and isolation after an actual host reboot.
 
 ## Out of scope
