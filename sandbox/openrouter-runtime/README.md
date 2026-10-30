@@ -24,6 +24,22 @@ At each launch, the image replaces `settings.json` and `models.json` in the home
 
 To deploy model configuration without restarting a session, run `sandbox/openrouter-runtime/deploy.sh --host agent-server --config-only --update-live-models`. This updates the image for future launches and the live model catalog, but does not change the running session's settings. Open `/scoped-models` to add a newly available model to its cycling scope.
 
+## Request timing diagnostics
+
+Install timing diagnostics for one conversation without rebuilding the image or changing settings, models, credentials, networking, or services:
+
+```text
+sandbox/openrouter-runtime/deploy.sh --host agent-server --timings-only --session-id e9f22590-027a-452a-bc36-a1312c9b5537
+```
+
+This installs `request-timings.js` and its target file in the shared Pi home. Restart the target conversation once with remote-agent to load the extension; preserve its conversation ID. Only the matching session records timings. No paid probe is required.
+
+The extension writes numeric stage markers during each request to `/home/agent/.config/pi/agent/logs/request-timings.jsonl`. The directory is mode `0700` and the log is mode `0600`. Markers cover request start, preparation through `before_provider_request`, response headers, first assistant stream, first thinking delta, first text or tool-call output, and end duration. Records include context message count, reported usage, and character counts, but no prompt or response text, headers, or credentials. Pending requests can therefore have markers before they finish.
+
+Preparation is not upload time or time to first token. First visible output excludes thinking. A single sample cannot establish the cause of a delay or demonstrate growth. The request index resets on startup.
+
+Remove the extension and target file to stop capture on the next restart. This does not automatically delete existing logs.
+
 ## Deployment verification
 
 Verified 2026-10-30 on `agent-server`: session `wowdecomp` runs in the independent sandbox. `/workspace/wowdecomp15890` matches the transfer archive, and `/workspace/Wow.exe` matches the source SHA-256. Particle-1, MiniMax M3.1 Flash and DeepSeek V4.1 Flash 1017 completed Pi `read` tool calls. OpenRouter generation metadata reported SambaNova for MiniMax and DeepInfra for DeepSeek; it did not identify the DeepInfra endpoint tier. The proxy returned OpenRouter's model catalog and rejected alternative hosts and CONNECT; sampled direct public, LAN, host, IPv6 and DNS connections failed. Both services were enabled and active. These are sampled network checks, not exhaustive proof or a host-reboot test.

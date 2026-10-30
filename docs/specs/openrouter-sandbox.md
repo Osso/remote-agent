@@ -13,6 +13,7 @@ The independent OpenRouter Pi runtime lives in `sandbox/openrouter-runtime/`. It
 - [ ] Provision a dedicated OpenRouter key outside the image and command line, mount it read-only, and retain it across deployments when no replacement is provided. Use a spending-limited key.
 - [ ] Preserve remote-agent session start, resume, history, attachment and selected-conversation cancellation without stopping other conversations.
 - [ ] Support configuration-only image updates without restarting services or existing containers or changing credentials; optionally update only live home models, leaving live settings unchanged.
+- [ ] Support timing-only installation for one conversation without rebuilding the image or changing settings, models, credentials, networking, or services. After restart, record numeric request-stage markers, context message count, reported usage, and character counts without prompt or response text, headers, or credentials. Write markers during requests to an owner-only log and directory. Removing the extension and target file stops capture on the next restart without deleting logs.
 
 ## How it works
 
