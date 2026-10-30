@@ -272,7 +272,10 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                         tokio::time::sleep(reconnect_delay(state.consecutive_failures, entropy))
                             .await;
                         match fetch_ticket(config, host, user, &request).await {
-                            Ok(ticket) => current = ticket,
+                            Ok(ticket) => {
+                                state.accept_ticket(&current, &ticket)?;
+                                current = ticket;
+                            }
                             Err(error) => state.show_status(&format!(
                                 "remote-agent-rs: reconnect control: {error:#}"
                             ))?,
@@ -317,6 +320,18 @@ impl Attachment {
             consecutive_failures: 0,
             endpoint: None,
         }
+    }
+
+    fn accept_ticket(&mut self, previous: &Ticket, current: &Ticket) -> Result<()> {
+        if previous.token == current.token {
+            return Ok(());
+        }
+        // A new server has neither input acknowledgements nor display history.
+        // Replaying unacknowledged commands could execute them a second time.
+        let failures = self.consecutive_failures;
+        *self = Self::new(self.size);
+        self.consecutive_failures = failures;
+        self.show_status("remote-agent-rs: server restarted; pending input was not replayed")
     }
 
     /// Show a notice on the bottom physical row without a line feed, so no
