@@ -22,8 +22,10 @@ The firewall drops sandbox forwarding in both directions and all bridge input ex
 
 At each launch, the image replaces `settings.json` and `models.json` in the home volume with its packaged configuration. Other home data persists. Do not run different image versions concurrently against that shared home.
 
+To deploy model configuration without restarting a session, run `sandbox/openrouter-runtime/deploy.sh --host agent-server --config-only --update-live-models`. This updates the image for future launches and the live model catalog, but does not change the running session's settings. Open `/scoped-models` to add a newly available model to its cycling scope.
+
 ## Deployment verification
 
 Verified 2026-10-30 on `agent-server`: session `wowdecomp` runs in the independent sandbox. `/workspace/wowdecomp15890` matches the transfer archive, and `/workspace/Wow.exe` matches the source SHA-256. Particle-1 and MiniMax M3.1 Flash both completed a Pi `read` tool call. The proxy returned OpenRouter's model catalog and rejected alternative hosts and CONNECT; sampled direct public, LAN, host, IPv6 and DNS connections failed. Both services were enabled and active. These are sampled network checks, not exhaustive proof or a host-reboot test.
 
-Attach with `remote-agent attach wowdecomp --host agent-server`; detach with Ctrl+backslash. Attachment and detach were tested in a terminal. The default model is Particle-1; select MiniMax through Pi's model selector. The copied workspace is separate from the host project used by remote-agent sync/fetch.
+Attach with `remote-agent attach wowdecomp --host agent-server`; detach with Ctrl+backslash. Attachment and detach were tested in a terminal. The packaged default model is Particle-1; select MiniMax or DeepSeek through Pi's model selector. The copied workspace is separate from the host project used by remote-agent sync/fetch.
