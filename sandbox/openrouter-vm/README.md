@@ -31,6 +31,8 @@ After the sudo policy is deployed, install software as `agent` through the contr
 sudo -n /usr/local/bin/arch install <package>
 ```
 
+Verified 2026-10-30: `deploy.sh --launcher-only` installed and validated the root-owned `0440` policy without restarting Pi. As `agent`, `sudo -n id` returned UID 0 and an actual `arch install strace` succeeded. The agent consumed the direct capability notice and independently installed ImageMagick with sudo. See `/tmp/wowdecomp-agent-admin-install-proof.log` and `/tmp/wowdecomp-admin-notice-screen.txt`. The WoW mount remains read-only; network restrictions are unchanged.
+
 The guest does not have `authsudo`. For key-only root SSH administration, use `root@wowdecomp-vm` instead. Password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
 
 For the standing restart authorization and recurring checks, see [operations](OPERATIONS.md).
