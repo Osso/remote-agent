@@ -51,7 +51,7 @@ if command == ["tar", "-xf", "-", "-C", "/"]:
     with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as archive:
         for member in archive:
             (root / "metadata").write_text(json.dumps([member.name, member.uid, member.gid, member.mode]))
-            archive.extract(member, root, filter="data")
+            archive.extract(member, root, filter="fully_trusted")
     sys.exit(0)
 if command == ["visudo", "-c"]:
     data = (root / "etc/sudoers.d/90-openrouter-agent").read_bytes()
