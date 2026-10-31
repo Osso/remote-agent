@@ -47,7 +47,13 @@ Activated on 2026-10-30 through `deploy.sh` and a clean, approved VM power-off/s
 
 Post-restart network checks still refused all eight direct public/LAN/host/metadata targets, gave no DNS response, disabled IPv6, accepted only the two fixed endpoints, and rejected proxy escape attempts. Details: `/tmp/wowdecomp-network-after-wow-share.log`.
 
-Agent notification and the 30-minute loop are pending session recovery: old Pi 0.80.3 replays a malformed PE tool result containing C1 controls that stop the strict terminal receiver. A display-only fix is committed in Pi; the current source builds version 1.0.0, so the VM remains at 0.80.3 until the user chooses a backport or this VM's upgrade. Stored history has not been edited.
+The user approved upgrading only this VM to Pi 1.0.0 to recover from a malformed PE tool result containing C1 controls. Deployment with `--pi-image sha256:286842e2fa9a644a52a5194dfa6e42d98ad68c1a8bbb7f949fdf4370020ed273` succeeded; the guest runtime SHA-256 `076b0a6373e20035db208b1eed10dd39cc5d448198d2d1f26fc241f0b1c0bec6` matches the staged build. Both host canonical Pi installations remain at 0.80.3. See `/tmp/wowdecomp-pi1-deploy-fixed.log`.
+
+The installed `remote-agent --host agent-server --user osso attach wowdecomp` command worked twice in real WezTerm TTY pane 173. Historical scrollback contained 1,987 nonblank lines, and live streaming and tool output appeared. Ctrl+backslash detached while preserving guest Pi PID 1529 and conversation UUID `e9f22590-027a-452a-bc36-a1312c9b5537`. See `/tmp/wowdecomp-pi1-reattach-history.txt`. Before resume, normalized-SGR exported text was identical and configuration and credentials were unchanged; see `/tmp/pi-tool-b906d1d385ad6458.log`.
+
+The mount notification was queued and PID 1529 signaled, but consumption is not yet proven (`/tmp/wowdecomp-mount-notification.log`). The 1,800-second Pi loop is active; its first scheduled interval has not elapsed. The mount remains read-only and the networking configuration is unchanged.
+
+A deployment rerun initially failed when `share.py` attempted to chmod the read-only mount. Commit `b11138a` sets permissions only when creating the directory and preserves existing modes. Three focused tests passed, and the actual redeployment succeeded.
 
 ## Migration order
 
