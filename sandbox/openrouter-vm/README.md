@@ -19,13 +19,19 @@ The provisioner verifies the pinned official cloud image's SHA-256 and signature
 
 The guest clock uses QEMU's host-backed RTC and KVM clock. External NTP is not allowed. Cloud-init masks the guest's network time synchronization and its blocking wait service during the early boot stage; otherwise the stock cloud image never reaches its final stage on the restricted network, so SSH startup would not run.
 
-Normal guest work uses `agent` (UID 1000). Connect through the host:
+Normal guest work uses `agent` (UID 1000). Normal deployment must persist guest-only passwordless sudo with `agent ALL=(ALL:ALL) NOPASSWD: ALL`; live application of this policy is not yet verified. Connect through the host:
 
 ```text
 ssh -t agent-server 'ssh -F ~/.local/share/openrouter-vm/ssh_config wowdecomp-vm'
 ```
 
-Use `root@wowdecomp-vm` instead for administration, including `arch install PACKAGE`. Root administration uses key-only SSH; password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
+After the sudo policy is deployed, install software as `agent` through the controlled Arch mirror:
+
+```text
+sudo -n /usr/local/bin/arch install <package>
+```
+
+The guest does not have `authsudo`. For key-only root SSH administration, use `root@wowdecomp-vm` instead. Password authentication is disabled. The guest's SSH host key is generated before boot and pinned in the private known-hosts file.
 
 For the standing restart authorization and recurring checks, see [operations](OPERATIONS.md).
 
@@ -71,7 +77,7 @@ A resumed conversation is not a preserved process. An in-progress model turn, ol
 
 On `agent-server`, the VM booted with `/dev/kvm`, guest kernel 7.2.9 and a 64 GB root filesystem. The host user service is `wowdecomp-vm.service`. The pinned official cloud image was `20261015.611680`, SHA-256 `08754e28d91b1680086c6211ef4df13559e766fff7cdb4006489b14b5d281f08`; its CI signature verified under primary key `1B9A16984A4E8CB448712D2AE0B78BF4326C6F8F`, signing key `656E4C5AC1CC3B86E539D97E343635A6859A9174`. Both cloud-init schemas validated.
 
-The guest installed the shared tools and headless graphics packages through the registered root `arch` command using `--pi-image` with the original immutable image `sha256:54cc46c214c749bbb8eb5ae43996608b8342798edf63f7acc61bce7e32193b98`. The source install log is `/tmp/wowdecomp-vm-runtime-install-headless.log`; it records the completed 101-package transaction. Root administration uses the SSH command above; do not assume the agent has passwordless root access.
+The guest installed the shared tools and headless graphics packages through the registered root `arch` command using `--pi-image` with the original immutable image `sha256:54cc46c214c749bbb8eb5ae43996608b8342798edf63f7acc61bce7e32193b98`. The source install log is `/tmp/wowdecomp-vm-runtime-install-headless.log`; it records the completed 101-package transaction. This installation used root SSH and does not verify the new agent sudo policy.
 
 With an added guest default route, root could fetch Arch `core.db` and the OpenRouter model catalog (HTTP 200; 456 entries). Sampled connections to `1.1.1.1:443`, `192.168.2.1:80`, host `192.168.2.149:22`, gateway `10.0.2.2:22` and `:80`, and metadata `169.254.169.254:80` were refused. UDP DNS to `10.0.2.3` and `1.1.1.1` timed out. These checks do not prove exhaustive isolation. Guest NTP services were masked at early boot; host time was not changed.
 
