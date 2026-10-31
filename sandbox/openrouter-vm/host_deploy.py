@@ -277,3 +277,6 @@ if __name__ == "__main__":
         from install_runtime import install_runtime
 
         install_runtime(args.stage, config(ROOT), args.pi_image)
+    from install_runtime import install_admin
+
+    install_admin(config(ROOT))

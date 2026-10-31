@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install a pinned host image's Pi runtime into the provisioned guest."""
 
+import io
 import random
 import re
 import shlex
@@ -13,7 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-PI_DEPENDENCIES = ("ca-certificates", "git", "python", "ripgrep", "icu", "curl")
+PI_DEPENDENCIES = ("ca-certificates", "git", "python", "ripgrep", "icu", "curl", "sudo")
+ADMIN_POLICY = b"agent ALL=(ALL:ALL) NOPASSWD: ALL\n"
 ARCH = Path("/usr/local/bin/arch")
 
 
@@ -88,6 +90,24 @@ def transfer(config, archive, destination):
             stdin=source,
             check=True,
         )
+
+
+def install_admin(config):
+    wait_ready(config)
+    subprocess.run(
+        ssh_command(config, ["visudo", "-cf", "-"]),
+        input=ADMIN_POLICY,
+        check=True,
+    )
+    with tempfile.TemporaryDirectory(prefix="openrouter-admin-") as temporary:
+        archive = Path(temporary) / "admin.tar"
+        with tarfile.open(archive, "w") as output:
+            info = tarfile.TarInfo("etc/sudoers.d/90-openrouter-agent")
+            info.mode = 0o440
+            info.size = len(ADMIN_POLICY)
+            output.addfile(info, io.BytesIO(ADMIN_POLICY))
+        transfer(config, archive, "/")
+    subprocess.run(ssh_command(config, ["visudo", "-c"]), check=True)
 
 
 def install_packages(config, packages):
