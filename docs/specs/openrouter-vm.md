@@ -47,7 +47,7 @@ The writable VM in `sandbox/openrouter-vm/` replaces the `wowdecomp` container w
 - [x] Activated the read-only WoW share after an approved clean VM restart. The agent read both client executables with matching host hashes; root write-open returned `EROFS` even after a writable client remount. The configured Syncthing path is Windows → `aso` → `agent-server`; no folder modes were changed. See [the data share record](../../sandbox/openrouter-vm/README.md#wow-installation-data-share).
 - [x] Upgraded only the VM to Pi 1.0.0 and recovered the same conversation. Two normal installed attachments in a real TTY showed restored scrollback and live output; clean detach preserved the guest Pi. Both host canonical Pi installations remain at 0.80.3.
 - [x] Delivered the mount notice directly in the attachment; the agent acknowledged it and read the mounted directory and `.build.info`. The 1,800-second check loop is active. See [the recovery record](../../sandbox/openrouter-vm/README.md#wow-installation-data-share).
-- [ ] Observe the first scheduled check interval; registration is confirmed, but the interval has not yet elapsed.
+- [x] The first scheduled check observed history and live output in the existing normal-command real-TTY attachment, preserving the user's client without input. The session was progressing; guest Pi and the service remained active, and the share remained read-only.
 - [ ] Verify restart lifetime without duplicate guest Pi, cancellation lifecycle, host reboot and guest updates. Sampled root network checks are not exhaustive isolation proof.
 
 The exact evidence and limits are in the [migration record](../../sandbox/openrouter-vm/README.md#live-migration-evidence--2026-10-30).
