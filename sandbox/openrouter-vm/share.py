@@ -46,8 +46,9 @@ def configure(root=Path("/")):
         raise ValueError("duplicate wow-install fstab entries")
 
     target = root / TARGET.lstrip("/")
-    target.mkdir(parents=True, exist_ok=True, mode=0o755)
-    os.chmod(target, 0o755)
+    if not target.is_dir():
+        target.mkdir(parents=True, exist_ok=True, mode=0o755)
+        os.chmod(target, 0o755)
     modules = root / "etc/modules-load.d"
     modules.mkdir(parents=True, exist_ok=True, mode=0o755)
     atomic_write(modules / "wow-install.conf", "9p\n9pnet_virtio\n", 0o644)

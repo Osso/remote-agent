@@ -57,6 +57,14 @@ class GuestShareTests(unittest.TestCase):
         share.configure(self.root)
         self.assertEqual(self.fstab.read_text(), expected)
 
+    def test_configure_preserves_existing_share_permissions(self):
+        target = self.root / "syncthing/World of Warcraft"
+        target.mkdir(parents=True)
+        target.chmod(0o555)
+        share.configure(self.root)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o555)
+        self.assertIn(share.ENTRY, self.fstab.read_text())
+
     def test_conflicting_source_or_target_is_rejected_without_changes(self):
         for entry in (
             "wow-install /other 9p ro 0 0",
