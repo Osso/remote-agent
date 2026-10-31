@@ -27,6 +27,83 @@ host = load("host_deploy")
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_admin_policy_validation_and_transfer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            guest = base / "guest"
+            policy = guest / "etc/sudoers.d/90-openrouter-agent"
+            policy.parent.mkdir(parents=True)
+            policy.write_bytes(b"existing policy\n")
+            ssh = base / "ssh"
+            ssh.write_text("""#!/usr/bin/env python3
+import json, os, pathlib, shlex, sys, tarfile
+root = pathlib.Path(os.environ["FAKE_GUEST"])
+command = shlex.split(sys.argv[-1])
+with (root / "commands").open("a") as log:
+    log.write(json.dumps(command) + "\\n")
+if command == ["cloud-init", "status", "--wait"]:
+    sys.exit(0)
+if command == ["visudo", "-cf", "-"]:
+    data = sys.stdin.buffer.read()
+    (root / "validated").write_bytes(data)
+    sys.exit(0 if data == b"agent ALL=(ALL:ALL) NOPASSWD: ALL\\n" else 1)
+if command == ["tar", "-xf", "-", "-C", "/"]:
+    with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as archive:
+        for member in archive:
+            (root / "metadata").write_text(json.dumps([member.name, member.uid, member.gid, member.mode]))
+            archive.extract(member, root, filter="data")
+    sys.exit(0)
+if command == ["visudo", "-c"]:
+    data = (root / "etc/sudoers.d/90-openrouter-agent").read_bytes()
+    sys.exit(0 if data == b"agent ALL=(ALL:ALL) NOPASSWD: ALL\\n" else 1)
+sys.exit("unexpected guest command")
+""")
+            ssh.chmod(0o755)
+            config = {
+                "known_hosts": "known",
+                "private_key": "key",
+                "ssh_port": 22,
+                "admin_user": "root",
+                "host": "localhost",
+            }
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PATH": str(base) + os.pathsep + os.environ["PATH"],
+                    "FAKE_GUEST": str(guest),
+                },
+            ):
+                with mock.patch.object(runtime, "ADMIN_POLICY", b"invalid policy\n"):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        runtime.install_admin(config)
+                self.assertEqual(
+                    (guest / "validated").read_bytes(), b"invalid policy\n"
+                )
+                self.assertEqual(policy.read_bytes(), b"existing policy\n")
+                self.assertFalse((guest / "metadata").exists())
+                (guest / "commands").unlink()
+                runtime.install_admin(config)
+            expected = b"agent ALL=(ALL:ALL) NOPASSWD: ALL\n"
+            self.assertEqual((guest / "validated").read_bytes(), expected)
+            self.assertEqual(policy.read_bytes(), expected)
+            self.assertEqual(
+                json.loads((guest / "metadata").read_text()),
+                ["etc/sudoers.d/90-openrouter-agent", 0, 0, 0o440],
+            )
+            self.assertEqual(policy.stat().st_mode & 0o777, 0o440)
+            self.assertEqual(
+                [
+                    json.loads(line)
+                    for line in (guest / "commands").read_text().splitlines()
+                ],
+                [
+                    ["cloud-init", "status", "--wait"],
+                    ["visudo", "-cf", "-"],
+                    ["tar", "-xf", "-", "-C", "/"],
+                    ["visudo", "-c"],
+                ],
+            )
+
     def test_launcher_only_preserves_guest_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
