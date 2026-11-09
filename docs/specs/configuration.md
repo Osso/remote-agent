@@ -37,6 +37,10 @@ separate proof boundaries. Linger state and service mechanics are recorded in th
 
 ## Shared Claude credential ownership
 
+These requirements describe the Python controller and worker. The Rust client does
+not expose `claude-account`; its separate native Claude login contract is in
+[unified login](unified-pi-session.md#login-and-image-paste).
+
 - [x] Named accounts use only `~/.config/pi-claude-bridge/profiles/NAME/.credentials.json`; listing reads canonical directories. Native Claude launches use the selected canonical `CLAUDE_CONFIG_DIR` and remove inherited API/OAuth token overrides. Pi keeps caller credential environment. New launches require a selected owned account with a nonempty OAuth access token; no global fallback. Existing sessions remain untouched.
 - [x] Account selection changes only `~/.claude/.active-profile`. Switching never copies or writes back grants. No worker action clears a selection, so a retained legacy global grant cannot become the native launch credential. Deleted/empty canonical credentials remain cleared regardless of legacy global/named credentials.
 - [x] Bridge prepares legacy profiles before activation and owns migration. Workers require `.credential-owner` containing `shared-v1\n`; initialization takes an exclusive `.credential-migration` directory lock and never removes a preexisting lock. Explicit named login creates or claims its canonical directory with mode `0700` and marker, including preexisting unmarked directories with missing/empty/invalid credentials; it preserves canonical bytes until native login and never imports legacy grants. Invalid existing ownership markers and symlink profile directories fail explicitly; existing owned directories permit reauthentication.

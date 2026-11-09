@@ -159,7 +159,7 @@ For a separately provisioned experimental endpoint:
 ./target/debug/remote-agent-rs --host agent-server list
 ./target/debug/remote-agent-rs --host agent-server attach rust-demo
 ./target/debug/remote-agent-rs --host agent-server logs rust-demo
-./target/debug/remote-agent-rs --host agent-server pi-login PROVIDER
+./target/debug/remote-agent-rs --host agent-server login PROVIDER
 ```
 
 `restart NAME` targets the selected `--host` and `--user` account's systemd
@@ -494,12 +494,24 @@ host. System-scope authorization, SSH configuration, Mosh networking, harness
 installation, authentication, and project provisioning remain user responsibilities.
 
 Authenticate providers independently on each host; do not copy stored credentials
-between hosts. `remote-agent pi-login PROVIDER --host HOST` starts Pi provider
-login over SSH. `remote-agent claude-account --login PROFILE --host HOST` starts
-Claude login directly in that named account's canonical directory. Selection
-changes only after successful login; failed login preserves the old selection.
+between hosts. In the Rust client, `remote-agent login claude --host HOST --user USER`
+starts the selected user's `~/.local/bin/claude auth login --claudeai` over SSH.
+It retains an explicit `CLAUDE_CONFIG_DIR`; otherwise Claude uses the target
+home's `.claude` directory. The executable may be an SDK symlink; a missing
+executable fails explicitly. Other providers use
+`remote-agent login PROVIDER --host HOST --user USER`, which runs Pi login.
+Both selectors are optional. Claude bridge authentication uses native Claude
+credentials, not Pi's Anthropic login store; this command does not import Pi
+grants or create or select bridge profiles. Existing sessions are unchanged.
+Login routing is a contract pending current-revision proof; no OAuth success is
+claimed here.
 
 ### Shared Claude accounts
+
+The following describes the Python controller and worker, not the Rust client.
+The Python `remote-agent.py claude-account --login PROFILE --host HOST` workflow
+logs into a named canonical account and selects it after successful login; the
+Rust client does not expose `claude-account`.
 
 Each account owns one grant at
 `~/.config/pi-claude-bridge/profiles/PROFILE/.credentials.json`. Bridge, AskClaude,

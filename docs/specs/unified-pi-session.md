@@ -34,7 +34,9 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 
 ### Login and image paste
 
-- [ ] Retain full Pi provider login; invalid-provider CLI proof does not establish OAuth or credentials.
+- [ ] Expose only `login PROVIDER` for Rust provider login, with `--host` and `--user` supported. For `claude`, execute the selected target user's `~/.local/bin/claude auth login --claudeai`; accept an executable SDK symlink and fail explicitly if it is missing. Retain an explicit `CLAUDE_CONFIG_DIR`, otherwise use the target home's native `.claude` default. Do not import Pi Anthropic grants, create or copy profiles, or change existing session credentials.
+- [ ] Route other providers to `pi login PROVIDER`. Native Claude bridge credentials are distinct from Pi's Anthropic login store. Do not expose `pi-login` or `claude-account` as Rust aliases.
+- [ ] Prove login routing, target host/user and environment, missing executable failure and unchanged credentials with controlled executables; these tests do not establish OAuth network success.
 - [x] Prove current-revision real Pi image paste from the initiating client's local clipboard without a manual upload command, including simultaneous clients.
 - [x] Preserve text paste framing, transfer images only on demand, and reject empty or failed clipboard reads without stale image insertion.
 
@@ -55,7 +57,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 
 ## Tests asserting this spec
 
-Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests.
+Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests. Current-revision login routing tests and OAuth network success remain unverified.
 
 - `tests/test_rust_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
 - `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
