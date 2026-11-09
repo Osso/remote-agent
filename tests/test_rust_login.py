@@ -7,7 +7,6 @@ No network request, actual login or real credential file is used.
 
 import json
 import os
-from pathlib import Path
 import pty
 import select
 import signal
@@ -16,7 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -127,6 +126,7 @@ class RustLoginTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=15,
+            check=False,
         )
 
     def read_store(self, home, native):
@@ -194,6 +194,7 @@ class RustLoginTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.read_store(self.operator, True), {"existing": "native"})

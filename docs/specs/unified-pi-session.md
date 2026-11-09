@@ -85,6 +85,6 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests. Lo
 ## Out of scope
 
 - UUID-conflict handling; explicit `--resume UUID` semantics remain unchanged.
-- Claude, Mosh wire compatibility and predictive local echo; Pi and replacement endpoints were selected.
+- Native Claude sessions, Mosh wire compatibility and predictive local echo; Pi and replacement endpoints were selected. Claude bridge login remains in scope.
 - File `sync` and `fetch`; not selected for this scope.
 - Migration or cancellation of existing legacy sessions, live PTY handoff, or disruptive replacement of the legacy stack.
