@@ -560,7 +560,9 @@ mod tests {
         }
 
         let mut command = build_login_command(&config, "claude").unwrap();
-        command.stdin(std::process::Stdio::piped());
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
         let mut child = command.spawn().unwrap();
         use std::io::Write;
         child
@@ -587,7 +589,9 @@ mod tests {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
         let mut command = build_login_command(&config, "claude").unwrap();
-        command.stdin(std::process::Stdio::piped());
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
         let mut child = command.spawn().unwrap();
         child
             .stdin
@@ -605,7 +609,9 @@ mod tests {
         );
 
         let mut command = build_login_command(&config, "anthropic").unwrap();
-        command.stdin(std::process::Stdio::piped());
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
         let mut child = command.spawn().unwrap();
         child.stdin.take().unwrap().write_all(b"pi input").unwrap();
         let status = child.wait_with_output().unwrap();
