@@ -503,8 +503,8 @@ executable fails explicitly. Other providers use
 Both selectors are optional. Claude bridge authentication uses native Claude
 credentials, not Pi's Anthropic login store; this command does not import Pi
 grants or create or select bridge profiles. Existing sessions are unchanged.
-Login routing is a contract pending current-revision proof; no OAuth success is
-claimed here.
+Controlled executable tests cover login routing, credential-store selection,
+real-TTY input/output and cancellation; they do not establish OAuth network success.
 
 ### Shared Claude accounts
 
