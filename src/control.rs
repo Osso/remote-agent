@@ -270,7 +270,6 @@ pub fn build_login_command(config: &Config, provider: &str) -> Result<Command> {
     if provider == "claude" {
         let mut command = Command::new(config.find_claude()?);
         command.args(["auth", "login", "--claudeai"]);
-        command.env("HOME", &config.home);
         for name in [
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
@@ -572,6 +571,7 @@ mod tests {
             .unwrap();
         let status = child.wait_with_output().unwrap();
         assert_eq!(status.status.code(), Some(7));
+        assert!(!String::from_utf8_lossy(&status.stdout).contains("fixture-api-secret"));
         assert_eq!(
             String::from_utf8(status.stdout).unwrap(),
             "native grant saved; overrides cleared; stdin=fixture input\n"
@@ -582,7 +582,6 @@ mod tests {
             r#"{"grant": "native"}"#
         );
         assert_eq!(fs::read_to_string(&pi_store).unwrap(), "pi sentinel");
-        assert!(!String::from_utf8_lossy(&status.stdout).contains("fixture-api-secret"));
 
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
