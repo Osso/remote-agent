@@ -52,7 +52,8 @@ enum Action {
         name: String,
     },
     Projects,
-    PiLogin {
+    /// Sign in to Claude bridge or another Pi provider on the remote account.
+    Login {
         provider: String,
     },
     #[command(name = "__as-user", hide = true)]
@@ -69,7 +70,7 @@ enum Action {
         state: PathBuf,
     },
     #[command(name = "__login", hide = true)]
-    Login {
+    RunLogin {
         provider: String,
     },
 }
@@ -106,7 +107,7 @@ async fn run(cli: Cli) -> Result<()> {
         );
     }
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
-    if matches!(cli.command, Action::Rpc | Action::Login { .. }) {
+    if matches!(cli.command, Action::Rpc | Action::RunLogin { .. }) {
         std::env::set_current_dir(&home).context("enter target account home")?;
     }
     let config = Config::load(&home)?;
@@ -125,9 +126,9 @@ async fn run(cli: Cli) -> Result<()> {
             };
             println!("{}", serde_json::to_string(&reply)?);
         }
-        Action::Login { provider } => {
-            let status = control::build_pi_login_command(&config.find_pi()?, &provider).status()?;
-            ensure!(status.success(), "Pi login exited {status}");
+        Action::RunLogin { provider } => {
+            let status = control::build_login_command(&config, &provider)?.status()?;
+            ensure!(status.success(), "{provider} login exited {status}");
         }
         action => {
             let host = match cli.host {
@@ -152,13 +153,13 @@ async fn run_client_command(
             ensure!(code == 0, "Pi exited with status {code}");
             return Ok(());
         }
-        Action::PiLogin { provider } => {
+        Action::Login { provider } => {
             let remote = config.build_ssh_command(host, user, &["__login".into(), provider])?;
             let status = Command::new("ssh")
                 .arg("-t")
                 .args(remote.get_args())
                 .status()?;
-            ensure!(status.success(), "remote Pi login exited {status}");
+            ensure!(status.success(), "remote provider login exited {status}");
             return Ok(());
         }
         Action::Start {
@@ -247,7 +248,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         }
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
         ControlRequest::Restart { name } => restart_session(home, &name).await,
-        ControlRequest::PiLogin { .. } => bail!("Pi login needs a TTY; use pi-login PROVIDER"),
+        ControlRequest::PiLogin { .. } => bail!("provider login needs a TTY; use login PROVIDER"),
     }
 }
 
