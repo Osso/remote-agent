@@ -127,6 +127,16 @@ impl Config {
         Ok(environment)
     }
 
+    pub fn find_claude(&self) -> Result<PathBuf> {
+        let claude = self.home.join(".local/bin/claude");
+        ensure!(
+            executable(&claude),
+            "Claude executable not found or not an executable regular file: {}",
+            claude.display()
+        );
+        Ok(claude)
+    }
+
     pub fn find_pi(&self) -> Result<PathBuf> {
         let mut directories = vec![self.home.join(".local/bin"), self.home.join(".cargo/bin")];
         if let Some(path) = std::env::var_os("PATH") {

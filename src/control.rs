@@ -1,4 +1,4 @@
-use crate::protocol::Launch;
+use crate::{config::Config, protocol::Launch};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -266,10 +266,24 @@ pub fn restart_session_unit(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn build_pi_login_command(pi: &Path, provider: &str) -> Command {
-    let mut command = Command::new(pi);
-    command.arg("login").arg(provider);
-    command
+pub fn build_login_command(config: &Config, provider: &str) -> Result<Command> {
+    if provider == "claude" {
+        let mut command = Command::new(config.find_claude()?);
+        command.args(["auth", "login", "--claudeai"]);
+        command.env("HOME", &config.home);
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ] {
+            command.env_remove(name);
+        }
+        Ok(command)
+    } else {
+        let mut command = Command::new(config.find_pi()?);
+        command.args(["login", provider]);
+        Ok(command)
+    }
 }
 
 #[cfg(test)]
@@ -475,17 +489,151 @@ mod tests {
     }
 
     #[test]
-    fn provider_login_invokes_pi_without_changing_credentials() {
+    fn provider_login_uses_native_claude_or_pi_store_and_forwards_io() {
+        use std::{ffi::OsString, sync::Mutex};
+
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _lock = ENV_LOCK.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
-        let pi = home.path().join("pi");
-        fs::write(&pi, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        let config_dir = home.path().join("explicit-claude-config");
+        let pi_store = home.path().join(".config/pi/agent/auth.json");
+        fs::create_dir_all(pi_store.parent().unwrap()).unwrap();
+        fs::write(&pi_store, "pi sentinel").unwrap();
+        fs::create_dir_all(home.path().join(".config/remote-agent")).unwrap();
+        fs::write(
+            home.path().join(".config/remote-agent/remote-hosts.json"),
+            "{}",
+        )
+        .unwrap();
+        fs::write(
+            home.path()
+                .join(".config/remote-agent/remote-projects.json"),
+            "{}",
+        )
+        .unwrap();
+        let bin = home.path().join(".local/bin");
+        fs::create_dir_all(&bin).unwrap();
+        let claude = bin.join("claude");
+        fs::write(
+            &claude,
+            "#!/usr/bin/python3\n\
+             import json,os,pathlib,sys\n\
+             assert sys.argv[1:] == ['auth','login','--claudeai']\n\
+             assert all(name not in os.environ for name in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN'))\n\
+             directory=pathlib.Path(os.environ.get('CLAUDE_CONFIG_DIR',pathlib.Path.home()/'.claude'))\n\
+             directory.mkdir(parents=True,exist_ok=True)\n\
+             (directory/'.credentials.json').write_text(json.dumps({'grant':'native'}))\n\
+             print('native grant saved; overrides cleared; stdin='+sys.stdin.read())\n\
+             sys.exit(7)\n",
+        )
+        .unwrap();
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o700)).unwrap();
+        let pi = bin.join("pi");
+        fs::write(
+            &pi,
+            "#!/usr/bin/python3\n\
+             import json,pathlib,sys\n\
+             assert sys.argv[1:] == ['login','anthropic']\n\
+             path=pathlib.Path.home()/'.config/pi/agent/auth.json'\n\
+             path.write_text(json.dumps({'grant':'pi'}))\n\
+             print('pi grant saved; stdin='+sys.stdin.read())\n\
+             sys.exit(9)\n",
+        )
+        .unwrap();
         fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
-        let output = build_pi_login_command(&pi, "anthropic").output().unwrap();
-        assert!(output.status.success());
+        let config = Config::load(home.path()).unwrap();
+
+        let names = [
+            "HOME",
+            "CLAUDE_CONFIG_DIR",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ];
+        let previous: Vec<Option<OsString>> =
+            names.iter().map(|name| std::env::var_os(name)).collect();
+        unsafe {
+            std::env::set_var("HOME", home.path());
+            std::env::set_var("CLAUDE_CONFIG_DIR", &config_dir);
+            std::env::set_var("ANTHROPIC_API_KEY", "fixture-api-secret");
+            std::env::set_var("ANTHROPIC_AUTH_TOKEN", "fixture-auth-secret");
+            std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-secret");
+        }
+
+        let mut command = build_login_command(&config, "claude").unwrap();
+        command.stdin(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"fixture input")
+            .unwrap();
+        let status = child.wait_with_output().unwrap();
+        assert_eq!(status.status.code(), Some(7));
         assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            "login\nanthropic\n"
+            String::from_utf8(status.stdout).unwrap(),
+            "native grant saved; overrides cleared; stdin=fixture input\n"
         );
-        assert!(output.stderr.is_empty());
+        assert!(status.stderr.is_empty());
+        assert_eq!(
+            fs::read_to_string(config_dir.join(".credentials.json")).unwrap(),
+            r#"{"grant": "native"}"#
+        );
+        assert_eq!(fs::read_to_string(&pi_store).unwrap(), "pi sentinel");
+        assert!(!String::from_utf8_lossy(&status.stdout).contains("fixture-api-secret"));
+
+        unsafe {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+        }
+        let mut command = build_login_command(&config, "claude").unwrap();
+        command.stdin(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"default config")
+            .unwrap();
+        let status = child.wait_with_output().unwrap();
+        assert_eq!(status.status.code(), Some(7));
+        assert!(home.path().join(".claude/.credentials.json").is_file());
+        assert!(
+            String::from_utf8(status.stdout)
+                .unwrap()
+                .contains("stdin=default config")
+        );
+
+        let mut command = build_login_command(&config, "anthropic").unwrap();
+        command.stdin(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(b"pi input").unwrap();
+        let status = child.wait_with_output().unwrap();
+        assert_eq!(status.status.code(), Some(9));
+        assert_eq!(
+            String::from_utf8(status.stdout).unwrap(),
+            "pi grant saved; stdin=pi input\n"
+        );
+        assert_eq!(fs::read_to_string(&pi_store).unwrap(), r#"{"grant": "pi"}"#);
+        assert_eq!(
+            fs::read_to_string(config_dir.join(".credentials.json")).unwrap(),
+            r#"{"grant": "native"}"#
+        );
+
+        fs::remove_file(&claude).unwrap();
+        let error = build_login_command(&config, "claude").unwrap_err();
+        assert!(error.to_string().contains("Claude executable not found"));
+        assert_eq!(fs::read_to_string(&pi_store).unwrap(), r#"{"grant": "pi"}"#);
+
+        unsafe {
+            for (name, value) in names.into_iter().zip(previous) {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
     }
 }
