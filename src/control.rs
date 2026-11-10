@@ -266,10 +266,18 @@ pub fn restart_session_unit(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn build_login_command(config: &Config, provider: &str) -> Result<Command> {
+pub fn build_login_command(
+    config: &Config,
+    home: &Path,
+    provider: &str,
+    account: Option<&str>,
+) -> Result<Command> {
     if provider == "claude" {
         let mut command = Command::new(config.find_claude()?);
         command.args(["auth", "login", "--claudeai"]);
+        if let Some(account) = account {
+            command.env("CLAUDE_CONFIG_DIR", find_claude_profile(home, account)?);
+        }
         for name in [
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
@@ -279,10 +287,36 @@ pub fn build_login_command(config: &Config, provider: &str) -> Result<Command> {
         }
         Ok(command)
     } else {
+        ensure!(
+            account.is_none(),
+            "login accounts apply only to the claude provider"
+        );
         let mut command = Command::new(config.find_pi()?);
         command.args(["login", provider]);
         Ok(command)
     }
+}
+
+/// Returns the existing Claude bridge profile directory; login never creates profiles.
+fn find_claude_profile(home: &Path, account: &str) -> Result<PathBuf> {
+    let valid = account
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphanumeric())
+        && account
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    ensure!(
+        valid,
+        "invalid Claude account {account:?}: use letters, digits, underscores or hyphens"
+    );
+    let profile = home.join(".config/pi-claude-bridge/profiles").join(account);
+    ensure!(
+        profile.is_dir(),
+        "Claude account {account} has no profile at {}",
+        profile.display()
+    );
+    Ok(profile)
 }
 
 #[cfg(test)]
@@ -559,7 +593,7 @@ mod tests {
             std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "fixture-oauth-secret");
         }
 
-        let mut command = build_login_command(&config, "claude").unwrap();
+        let mut command = build_login_command(&config, home.path(), "claude", None).unwrap();
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped());
@@ -588,7 +622,7 @@ mod tests {
         unsafe {
             std::env::remove_var("CLAUDE_CONFIG_DIR");
         }
-        let mut command = build_login_command(&config, "claude").unwrap();
+        let mut command = build_login_command(&config, home.path(), "claude", None).unwrap();
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped());
@@ -608,7 +642,7 @@ mod tests {
                 .contains("stdin=default config")
         );
 
-        let mut command = build_login_command(&config, "anthropic").unwrap();
+        let mut command = build_login_command(&config, home.path(), "anthropic", None).unwrap();
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped());
@@ -627,7 +661,7 @@ mod tests {
         );
 
         fs::remove_file(&claude).unwrap();
-        let error = build_login_command(&config, "claude").unwrap_err();
+        let error = build_login_command(&config, home.path(), "claude", None).unwrap_err();
         assert!(error.to_string().contains("Claude executable not found"));
         assert_eq!(fs::read_to_string(&pi_store).unwrap(), r#"{"grant": "pi"}"#);
 

@@ -70,7 +70,7 @@ class RustLoginTests(unittest.TestCase):
             "if argv[:1]==['__as-user']:\n"
             " assert argv[1]=='allison'\n"
             " home=Path(os.environ['FIXTURE_TARGET_HOME']); argv=argv[2:]\n"
-            "assert argv[:1]==['__login'] and len(argv)==2, argv\n"
+            "assert argv[:1]==['__login'] and len(argv) in (2,3), argv\n"
             "os.environ['HOME']=str(home)\n"
             "os.chdir(home)\n"
             f"os.execv({str(self.binary)!r},[{str(self.binary)!r},*argv])\n"
@@ -115,8 +115,12 @@ class RustLoginTests(unittest.TestCase):
             )
             path.chmod(0o700)
 
-    def run_login(self, provider="claude", *, user=True, confirmation="confirm\n"):
+    def run_login(
+        self, provider="claude", account=None, *, user=True, confirmation="confirm\n"
+    ):
         arguments = [str(self.binary), "login", provider]
+        if account:
+            arguments.append(account)
         if user:
             arguments.extend(["--user", "allison"])
         return subprocess.run(
@@ -171,6 +175,47 @@ class RustLoginTests(unittest.TestCase):
             "native",
         )
         self.assertEqual(self.read_store(self.target, True), {"existing": "native"})
+
+    def profile(self, account):
+        return self.target / ".config/pi-claude-bridge/profiles" / account
+
+    def test_claude_account_login_writes_only_that_bridge_profile(self):
+        self.profile("claude-agent").mkdir(parents=True)
+        self.profile("gc").mkdir()
+        result = self.run_login(account="claude-agent")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        grant = json.loads(
+            (self.profile("claude-agent") / ".credentials.json").read_text()
+        )
+        self.assertEqual(grant["authenticated"], "native")
+        self.assertEqual(grant["home"], str(self.target))
+        self.assertFalse((self.profile("gc") / ".credentials.json").exists())
+        self.assertEqual(self.read_store(self.target, True), {"existing": "native"})
+        self.assertEqual(self.read_store(self.operator, True), {"existing": "native"})
+
+    def test_missing_claude_account_profile_is_not_created(self):
+        result = self.run_login(account="claude-agent")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("has no profile", result.stderr)
+        self.assertNotIn("LOGIN_READY", result.stdout)
+        self.assertFalse(self.profile("claude-agent").exists())
+        self.assertEqual(self.read_store(self.target, True), {"existing": "native"})
+
+    def test_invalid_claude_account_name_is_rejected(self):
+        (self.target / ".config/pi-claude-bridge").mkdir(parents=True)
+        result = self.run_login(account="../pi-claude-bridge")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid Claude account", result.stderr)
+        self.assertNotIn("LOGIN_READY", result.stdout)
+        self.assertEqual(self.read_store(self.target, True), {"existing": "native"})
+
+    def test_account_is_rejected_for_pi_providers(self):
+        self.profile("claude-agent").mkdir(parents=True)
+        result = self.run_login("openai-codex", account="claude-agent")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("only to the claude provider", result.stderr)
+        self.assertNotIn("LOGIN_READY", result.stdout)
+        self.assertEqual(self.read_store(self.target, False), {"existing": "pi"})
 
     def test_failed_native_login_preserves_both_stores(self):
         result = self.run_login(confirmation="cancel\n")

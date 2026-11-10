@@ -497,8 +497,11 @@ Authenticate providers independently on each host; do not copy stored credential
 between hosts. In the Rust client, `remote-agent login claude --host HOST --user USER`
 starts the selected user's `~/.local/bin/claude auth login --claudeai` over SSH.
 It retains an explicit `CLAUDE_CONFIG_DIR`; otherwise Claude uses the target
-home's `.claude` directory. The executable may be an SDK symlink; a missing
-executable fails explicitly. Other providers use
+home's `.claude` directory. `remote-agent login claude ACCOUNT` instead logs in
+the existing bridge profile `~/.config/pi-claude-bridge/profiles/ACCOUNT` by
+setting it as `CLAUDE_CONFIG_DIR`; a missing profile or invalid name fails
+without creating anything, and other providers reject ACCOUNT. The executable may
+be an SDK symlink; a missing executable fails explicitly. Other providers use
 `remote-agent login PROVIDER --host HOST --user USER`, which runs Pi login.
 Both selectors are optional. Claude bridge authentication uses native Claude
 credentials, not Pi's Anthropic login store; this command does not import Pi

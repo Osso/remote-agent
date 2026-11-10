@@ -55,6 +55,8 @@ enum Action {
     /// Sign in to Claude bridge or another Pi provider on the remote account.
     Login {
         provider: String,
+        /// Existing Claude bridge account profile (claude provider only).
+        account: Option<String>,
     },
     #[command(name = "__as-user", hide = true)]
     AsUser {
@@ -72,6 +74,7 @@ enum Action {
     #[command(name = "__login", hide = true)]
     RunLogin {
         provider: String,
+        account: Option<String>,
     },
 }
 
@@ -126,8 +129,10 @@ async fn run(cli: Cli) -> Result<()> {
             };
             println!("{}", serde_json::to_string(&reply)?);
         }
-        Action::RunLogin { provider } => {
-            let status = control::build_login_command(&config, &provider)?.status()?;
+        Action::RunLogin { provider, account } => {
+            let status =
+                control::build_login_command(&config, &home, &provider, account.as_deref())?
+                    .status()?;
             ensure!(status.success(), "{provider} login exited {status}");
         }
         action => {
@@ -153,8 +158,12 @@ async fn run_client_command(
             ensure!(code == 0, "Pi exited with status {code}");
             return Ok(());
         }
-        Action::Login { provider } => {
-            let remote = config.build_ssh_command(host, user, &["__login".into(), provider])?;
+        Action::Login { provider, account } => {
+            let arguments: Vec<String> = ["__login".into(), provider]
+                .into_iter()
+                .chain(account)
+                .collect();
+            let remote = config.build_ssh_command(host, user, &arguments)?;
             let status = Command::new("ssh")
                 .arg("-t")
                 .args(remote.get_args())
