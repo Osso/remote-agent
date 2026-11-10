@@ -130,9 +130,13 @@ async fn run(cli: Cli) -> Result<()> {
             println!("{}", serde_json::to_string(&reply)?);
         }
         Action::RunLogin { provider, account } => {
-            let status =
-                control::build_login_command(&config, &home, &provider, account.as_deref())?
-                    .status()?;
+            let mut command =
+                control::build_login_command(&config, &home, &provider, account.as_deref())?;
+            let status = if provider == "claude" {
+                control::run_claude_login(command)?
+            } else {
+                command.status()?
+            };
             ensure!(status.success(), "{provider} login exited {status}");
         }
         action => {

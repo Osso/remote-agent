@@ -110,7 +110,7 @@ class RustLoginTests(unittest.TestCase):
                 "if line!='confirm': sys.exit(23)\n"
                 "path.parent.mkdir(parents=True,exist_ok=True)\n"
                 "path.write_text(json.dumps({'authenticated':store,'home':str(home),"
-                "'tty':sys.stdin.isatty() and sys.stdout.isatty()}))\n"
+                "'stdin_tty':sys.stdin.isatty(),'stdout_tty':sys.stdout.isatty()}))\n"
                 "print('LOGIN_COMPLETE',flush=True)\n"
             )
             path.chmod(0o700)
@@ -271,11 +271,35 @@ class RustLoginTests(unittest.TestCase):
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=5)
 
-    def test_public_login_preserves_real_tty_input_and_output(self):
+    def read_tty(self, master, seconds=1):
+        output = bytearray()
+        while select.select([master], [], [], seconds)[0]:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+            seconds = 0.2
+        return bytes(output)
+
+    def test_tty_login_hides_pasted_code_and_shows_only_its_length(self):
         master, process = self.spawn_tty_login()
-        os.write(master, b"confirm\n")
+        os.write(master, b"confirmX")
+        pasted = self.read_tty(master)
+        self.assertIn(b"[8 chars]", pasted)
+        self.assertNotIn(b"confirm", pasted)
+        self.assertIsNone(process.poll())
+        os.write(master, b"\x7f\r")
         self.assertEqual(process.wait(timeout=10), 0)
-        self.assertTrue(self.read_store(self.target, True)["tty"])
+        output = self.read_tty(master)
+        self.assertIn(b"[7 chars]", output)
+        self.assertNotIn(b"confirm", output)
+        self.assertIn(b"LOGIN_COMPLETE", output)
+        grant = self.read_store(self.target, True)
+        self.assertTrue(grant["stdout_tty"])
+        self.assertFalse(grant["stdin_tty"])
 
     def test_tty_cancellation_preserves_existing_credentials(self):
         _, process = self.spawn_tty_login()

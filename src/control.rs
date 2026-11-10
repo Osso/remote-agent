@@ -297,6 +297,102 @@ pub fn build_login_command(
     }
 }
 
+/// Runs Claude login, forwarding hidden input lines while showing only their live length.
+/// Claude's own code prompt echoes nothing, so a pasted code is otherwise invisible.
+pub fn run_claude_login(mut command: Command) -> Result<std::process::ExitStatus> {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("start Claude login")?;
+    let mut input = child.stdin.take().context("open Claude login input")?;
+    let _hidden = HiddenInput::enter()?;
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut line = Vec::new();
+        let mut chunk = [0; 4096];
+        while let Ok(count) = std::io::Read::read(&mut stdin, &mut chunk) {
+            if count == 0 {
+                break;
+            }
+            for &byte in &chunk[..count] {
+                match byte {
+                    b'\r' | b'\n' => {
+                        show_input_length(&line);
+                        eprintln!();
+                        line.push(b'\n');
+                        if input.write_all(&line).is_err() {
+                            return;
+                        }
+                        line.clear();
+                    }
+                    0x7f | 0x08 => {
+                        line.pop();
+                    }
+                    _ => {
+                        // Save the cursor where this line starts so the count redraws in place.
+                        if line.is_empty() {
+                            eprint!("\x1b7");
+                        }
+                        line.push(byte);
+                    }
+                }
+            }
+            if !line.is_empty() {
+                show_input_length(&line);
+            }
+        }
+    });
+    child.wait().context("wait for Claude login")
+}
+
+fn show_input_length(line: &[u8]) {
+    let length = String::from_utf8_lossy(line).chars().count();
+    eprint!("\x1b8[{length} chars]\x1b[K");
+}
+
+/// Disables terminal echo and line buffering on stdin until dropped; signals stay enabled.
+/// Does nothing when stdin is not a terminal.
+struct HiddenInput(Option<libc::termios>);
+
+impl HiddenInput {
+    fn enter() -> Result<Self> {
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+            return Ok(Self(None));
+        }
+        let mut original = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: tcgetattr initializes the supplied termios on success.
+        ensure!(
+            unsafe { libc::tcgetattr(libc::STDIN_FILENO, original.as_mut_ptr()) } == 0,
+            "read login terminal mode: {}",
+            std::io::Error::last_os_error()
+        );
+        let original = unsafe { original.assume_init() };
+        let mut hidden = original;
+        hidden.c_lflag &= !(libc::ECHO | libc::ICANON);
+        hidden.c_cc[libc::VMIN] = 1;
+        hidden.c_cc[libc::VTIME] = 0;
+        ensure!(
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &hidden) } == 0,
+            "hide login terminal input: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(Self(Some(original)))
+    }
+}
+
+impl Drop for HiddenInput {
+    fn drop(&mut self) {
+        if let Some(original) = &self.0
+            && unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, original) } != 0
+        {
+            eprintln!(
+                "restore login terminal echo: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
 /// Returns the existing Claude bridge profile directory; login never creates profiles.
 fn find_claude_profile(home: &Path, account: &str) -> Result<PathBuf> {
     let valid = account
