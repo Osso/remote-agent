@@ -122,6 +122,10 @@ impl vt100::Callbacks for Capture {
             (Some(b'?'), None, 'n', 996) if params.len() == 1 => None,
             // Synchronized painting does not change the display model.
             (Some(b'?'), None, 'h' | 'l', 2026) if params.len() == 1 => None,
+            // vt100 reports SGR attributes it does not model (blink, conceal,
+            // strikethrough, ...). They change cell style only, never layout;
+            // Pi's wrapped table cells emit `22;23;24;25;27;28;29;39m`.
+            (None, None, 'm', _) => None,
             _ => {
                 self.failure = Some(format!("unsupported CSI: {i1:?} {i2:?} {params:?} {c}"));
                 None
@@ -691,6 +695,7 @@ fn format_cell(cell: &vt100::Cell) -> Vec<u8> {
         (cell.italic(), "3"),
         (cell.underline(), "4"),
         (cell.inverse(), "7"),
+        (cell.strikethrough(), "9"),
     ] {
         if enabled {
             codes.push(code.to_string());
@@ -1385,6 +1390,35 @@ mod tests {
         }
         // Unknown OSC 9 commands are still unsupported, not blanket-ignored.
         assert!(state.feed(b"\x1b]9;unknown\x07").is_err());
+    }
+
+    #[test]
+    fn pi_table_resets_and_strikethrough_reach_clients_without_poisoning_output() {
+        let mut state = TerminalState::new(size(3, 40), 10_000).unwrap();
+        // Pi's wrapped markdown table cells end with this attribute reset.
+        state
+            .feed(
+                b"\x1b[1mcell\x1b[22;23;24;25;27;28;29;39m \x1b[9mold\x1b[29m \x1b[5mblink\x1b[25m",
+            )
+            .unwrap();
+        let (mut renderer, mut outer) = attach_client(&state, size(3, 40), 100);
+        let struck =
+            |outer: &vt100::Parser, col| outer.screen().cell(0, col).unwrap().strikethrough();
+        assert!(outer.screen().contents().starts_with("cell old blink"));
+        assert_eq!(
+            (struck(&outer, 3), struck(&outer, 5), struck(&outer, 9)),
+            (false, true, false)
+        );
+
+        // The row keeps strikethrough after it scrolls into native history.
+        let update = state.feed(b"\r\n2\r\n3\r\n4").unwrap();
+        outer.process(&renderer.render(&update).unwrap());
+        outer.screen_mut().set_scrollback(1);
+        assert!(outer.screen().contents().starts_with("cell old blink"));
+        assert_eq!(
+            (struck(&outer, 3), struck(&outer, 5), struck(&outer, 9)),
+            (false, true, false)
+        );
     }
 
     #[test]

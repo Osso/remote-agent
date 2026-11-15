@@ -239,7 +239,7 @@ print(json.dumps(result))
 def bundle_rust_source():
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as bundle:
-        for name in ("Cargo.toml", "Cargo.lock", "src"):
+        for name in ("Cargo.toml", "Cargo.lock", "src", "vendor"):
             bundle.add(ROOT / name, arcname=name)
     return base64.b64encode(archive.getvalue()).decode()
 

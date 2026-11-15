@@ -1,0 +1,19 @@
+# vt100 0.18.1 from crates.io, patched to model SGR 9/29 strikethrough.
+# Retire when an upstream vt100 release supports strikethrough.
+[package]
+name = "vt100"
+version = "0.18.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Library for parsing terminal data"
+
+[features]
+default = ["std"]
+std = ["vte/std"]
+
+[dependencies]
+embedded-io = { version = "0.7.1", optional = true }
+itoa = "1.0.18"
+unicode-width = "0.2.2"
+vte = { version = "0.15.0", default-features = false }
