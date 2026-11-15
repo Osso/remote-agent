@@ -156,6 +156,8 @@ impl vt100::Callbacks for Capture {
             // must not receive markers at an unrelated physical cursor position.
             [b"133", b"A" | b"B" | b"C"] => {}
             [b"9", b"4", b"3"] => self.osc(b"9", b"4;3"),
+            // Pi emits the clear with and without a trailing separator.
+            [b"9", b"4", b"0"] => self.osc(b"9", b"4;0"),
             [b"9", b"4", b"0", b""] => self.osc(b"9", b"4;0;"),
             _ => self.failure = Some(format!("unsupported terminal OSC: {params:?}")),
         }
@@ -1380,6 +1382,7 @@ mod tests {
                 b"\x1b]9;4;0;\x07".as_slice(),
                 b"\x1b]9;4;0;\x1b\\".as_slice(),
             ),
+            (b"\x1b]9;4;0\x07".as_slice(), b"\x1b]9;4;0\x1b\\".as_slice()),
         ] {
             let mut control = Vec::new();
             for byte in sequence {
