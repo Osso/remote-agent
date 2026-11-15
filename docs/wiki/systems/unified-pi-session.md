@@ -29,7 +29,7 @@ Tokei counted 9,560 production C++/header code lines across 63 files, excluding 
 
 ## Implemented prototype
 
-`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. Python controller/workers, detach and Mosh remain operational. Opt-in Rust deployment and real attachment were verified on agent-server for `osso` and `allison` at `fdaa0d6`; legacy sessions were preserved. See the [build and CLI guide](../../../README.md#rust-prototype).
+`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. The Python controller, worker, detach and Mosh stack was removed on 2026-11-14. Deployment and real attachment were verified on agent-server for `osso` and `allison` at `fdaa0d6`. See the [build and CLI guide](../../../README.md#usage).
 
 SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. Byte fields require base64 strings. The server limits the unauthenticated frame to 8192 bytes from its length header before payload allocation; authenticated frames allow at most 80 MiB. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
 
@@ -92,7 +92,7 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 ### Session service lifecycle
 
 The repository-root `remote-agent-rs@.service` template is installed by
-`deploy.sh --rust` into every server account's `~/.config/systemd/user/`, followed
+`deploy.sh` into every server account's `~/.config/systemd/user/`, followed
 by `systemctl --user daemon-reload`. Each session uses the enabled user unit
 `remote-agent-rs@NAME.service` with `Slice=agents.slice` (the user slice).
 Its launch directive is:
@@ -128,10 +128,10 @@ Each session server binds its own random UDP port for QUIC. A client-side
 firewall must allow UDP to the server host on any port; on aso, appfw has one
 rule for this in `~/.config/appfw/rules.d/remote-agent-rs.toml`.
 
-`deploy.sh --rust` preserves each account's maps and installs private immutable
-hash-addressed binaries through a stable link. Python remains the default.
-Installation does not transfer a legacy PTY. Legacy detach has no SCM_RIGHTS
-handoff; existing sessions must not be migrated or cancelled without approval.
+`deploy.sh` copies the operator's maps to the default SSH account, preserves
+other accounts' maps and installs private immutable hash-addressed binaries
+through a stable link. Running servers keep their binary until restarted;
+existing sessions must not be cancelled without approval.
 
 ## Evidence and remaining acceptance
 
@@ -150,7 +150,7 @@ acceptance.
 | Legacy preservation | Legacy sessions, maps, credentials and legacy code remained byte/PID-identical | Not authorization to migrate them |
 | Legacy migration: `pi-rust-repin` (2026-10-25, user-requested) | SIGTERM to the legacy Pi only (exit 0 in 0.6 s); the legacy dtach scope kept its detached jobs (cargo test, bwrap sandboxes); record archived to `~/.local/state/remote-agent-migrated/`, no `cancel`; `remote-agent-rs start pi-rust pi-rust-repin --resume f8484104…` gave an enabled, active unit with the same argv and cwd and a single transcript file, and Pi resumed its goal and child agents | The in-progress turn was interrupted with user approval |
 | Legacy migration: all remaining sessions (2026-10-25, user-requested, interrupts approved) | Same procedure for osso `world-of-osso`, `wow-ui-sim`, `clank` and allison `hhh`, `HH_bbtautau`, `mattermost-cli` (tmux era, launched with `--session-id`). Every legacy Pi exited 0; clank via `docker stop` of its conversation container, then relaunched through `session.py --session`. All seven units enabled and active, with `--session UUID`, the project cwd and the unit cgroup; `logs` shows each resumed title and goal; no legacy records remain for either account. Real-TTY `remote-agent [--user allison] attach NAME` at 165×46 displayed all seven, Ctrl+\ detached each with exit 0 in 0.15–0.5 s with terminal attributes restored, and every server/Pi PID was unchanged afterwards | Interrupted turns lost their foreground tool processes (world-of-osso scope 80→29, wow-ui-sim 13→0); clank's in-container jobs ended with its container; allison's dead tmux pane `remote-agent-mattermost-cli` remains |
-| macOS | GitHub run `40226091616` passed the Ubuntu and macOS jobs (native clipboard fixture, PTY and unit tests) at `fdaa0d6`; run `40230014481` passed both at `c06678a`. Installed on allison's arm64 macOS 26.6.2 laptop (rustc 1.92) at `7831e16`: `./deploy.sh --rust` built the macOS client as `remote-agent` and the Linux server on agent-server from the bundled source; `list` over SSH worked; a real-PTY `attach mattermost-cli` at 120×40 over Wi-Fi LAN QUIC drew the Pi UI, Ctrl+\ detached with exit 0 and the terminal modes were reset; run twice. Reported by the Mac's own Pi session, not re-run here | After detach, macOS `stty -g` differs only by PENDIN (`lflag` 5cb → 200005cb); macOS image paste not exercised |
+| macOS | GitHub run `40226091616` passed the Ubuntu and macOS jobs (native clipboard fixture, PTY and unit tests) at `fdaa0d6`; run `40230014481` passed both at `c06678a`. Installed on allison's arm64 macOS 26.6.2 laptop (rustc 1.92) at `7831e16`: `./deploy.sh --rust` (now `./deploy.sh`) built the macOS client as `remote-agent` and the Linux server on agent-server from the bundled source; `list` over SSH worked; a real-PTY `attach mattermost-cli` at 120×40 over Wi-Fi LAN QUIC drew the Pi UI, Ctrl+\ detached with exit 0 and the terminal modes were reset; run twice. Reported by the Mac's own Pi session, not re-run here | After detach, macOS `stty -g` differs only by PENDIN (`lflag` 5cb → 200005cb); macOS image paste not exercised |
 | Display diffs (`c06678a`) | Native attach/resize/network suites pass; client output bytes across the same stages fell from 4,787,949 to 2,138,492 (45%); first screen after attach 230 KB → 39 KB. Real agent-server attach: typing after attach wrote about 9 KB instead of about 90 KB per update; client viewport matched the server `logs` snapshot; unit acceptance passed again for both accounts | Fresh attach and reconnect replay still send the complete retained backlog and display, by design |
 | Detach and smallest size (`0c6df6d`) | Before: Ctrl+\ exited before QUIC CONNECTION_CLOSE left, so the server logged `connection lost: timed out` and a detached smaller client kept the shared PTY small until the idle timeout. Now the client closes its endpoint and waits for drain (500 ms bound) after restoring the terminal. Native RED/GREEN in `test_physical_growth_with_second_client_pinning_pty_minimum`; real agent-server: Pi PTY 40×120 with both clients, 46×165 after the smaller one detached, server logs `closed by peer: client detached`. All native suites and `cargo test` pass at `0c6df6d` | Offline exit waits at most 500 ms more |
 | Image paste (`c06678a`, rerun at `0c6df6d`) | Real agent-server Pi, two simultaneous Linux clients (165×46 and 120×40); a private headless cage clipboard supplied a different PNG to each Ctrl+V; server images byte-identical (SHA-256); both paths in Pi's editor on both clients; bracketed text containing Ctrl+V stayed text; empty clipboard gave a notice with no image or editor change | macOS clipboard only in CI fixture; model call with the image not exercised |

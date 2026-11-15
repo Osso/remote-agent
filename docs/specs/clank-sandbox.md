@@ -25,14 +25,14 @@ An agent-server container runs OpenRouter Pi and the reviewed `td` client. Host 
 - `sandbox/deploy.sh`, `sandbox/deploy.py` — supported deployment entry point and source/artifact staging.
 - `sandbox/host_deploy.py` — host firewall/service, image, volume and wrapper installation.
 - `sandbox/runtime_update.py` — launcher-only image update preserving audited td/Pi bytes.
-- `remote-agent-worker.py` — project-specific launch and cancellation executables.
+- `src/config.rs` — project-specific `pi_executable` and `pi_cancel_executable` selection.
 
 ## Tests asserting this spec
 
 - `tests/test_sandbox_firewall.py` — serialized firewall policy and validation.
 - `tests/test_sandbox_launch.py` — credential environment and fixed provider/model arguments.
 - `tests/test_sandbox_session.py` — per-conversation container routing and selected cancellation.
-- `tests/test_remote_agent.py`, `tests/test_history.py` — worker lifecycle routing and history integration.
+- `config::tests::cancel_hook_*` and `resolves_project_without_changing_map_bytes` — project executable routing. The Python worker tests that covered this until 2026-11-14 were removed with the worker.
 - `tests/test_sandbox_deploy.py` — observed connected-host-route normalization before firewall installation.
 - Independent bounded gate at `ddc17f7`: 62 distinct targeted tests across retained/current scopes and clean new sandbox Python lint/formatting; 25 unrelated baseline Ruff diagnostics remain outside this scope.
 - [Verified 2026-10-22 coverage and installed inventory](../../sandbox/README.md#verification) records concrete network/model/resume/repaint/cancellation evidence and proof limits. Full command/revision ledger: `/tmp/clank-final-verification.md`.

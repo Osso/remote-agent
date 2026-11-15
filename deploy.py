@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the local controller and the worker to a selected host."""
+"""Install the Rust client locally and the Rust session server on a selected host."""
 
 import argparse
 import base64
@@ -17,84 +17,21 @@ CONFIG = Path.home() / ".config/remote-agent"
 CONFIG_FILES = ("remote-hosts.json", "remote-projects.json")
 HOSTS = json.loads((CONFIG / "remote-hosts.json").read_text())
 DEFAULT_HOST = "agent-server"
-FILES = (
-    "remote-agent.py",
-    "remote-agent-worker.py",
-    "remote-agent-user.py",
-    "agents.slice",
-    "tests/test_remote_agent.py",
-    "tests/test_dtach.py",
-    "tests/test_dtach_scope.py",
-    "tests/test_terminal_colors.py",
-    "tests/test_history.py",
-    "tests/test_history_attach.py",
-    "tests/test_resize_attach.py",
-    "tests/test_mosh_resize.py",
-    "tests/fixtures/mosh-resize.ts",
-    "tests/history_scrollback_fixture.cjs",
-    "run-tests.sh",
-    "tests/test_cross_user.py",
-    "tests/test_periodic_runtime.py",
-    "tests/fixtures/periodic-runtime-provider.ts",
-    "README.md",
-)
-REMOTE_PROGRAM = r"""import base64,io,json,os,pathlib,subprocess,sys,tarfile
-request=json.load(sys.stdin)
-home=pathlib.Path.home()
-if home!=pathlib.Path(request['home']):
- raise RuntimeError('Expected remote home '+request['home']+', got '+str(home))
-config=home/'.config/remote-agent'
-if request.get('preserve_config'):
- for name in ('remote-hosts.json','remote-projects.json'):
-  (config/name).read_bytes()
-else:
- config.mkdir(parents=True,exist_ok=True,mode=0o700)
- config.chmod(0o700)
- for name in ('remote-hosts.json','remote-projects.json'):
-  path=config/name
-  content=base64.b64decode(request['config'][name])
-  path.touch(mode=0o600,exist_ok=True)
-  path.chmod(0o600)
-  path.write_bytes(content)
-destination=home/'Projects/cli/remote-agent'
-destination.mkdir(parents=True,exist_ok=True)
-with tarfile.open(fileobj=io.BytesIO(base64.b64decode(request['archive'])),mode='r:') as archive:
- archive.extractall(destination,filter='data')
-def link(path,source):
- if path.exists() and not path.is_symlink():
-  raise RuntimeError('Not replacing unmanaged '+str(path))
- if path.is_symlink() and path.readlink()!=source:
-  raise RuntimeError('Not replacing foreign symlink '+str(path))
- if not path.is_symlink():
-  path.symlink_to(source)
-(home/'.local/bin').mkdir(parents=True,exist_ok=True)
-link(home/'.local/bin/wl-paste',destination/'remote-agent-worker.py')
-def slice_fragment(user):
- command=['systemctl']+(['--user'] if user else [])+['show','agents.slice','-p','FragmentPath','--value']
- return subprocess.run(command,text=True,capture_output=True,check=True).stdout.strip()
-system_slice=slice_fragment(False)
-user_slice=slice_fragment(True)
-slice_unit=home/'.config/systemd/user/agents.slice'
-if system_slice or user_slice or slice_unit.exists() or slice_unit.is_symlink():
- print('Preserving host agents.slice: '+(system_slice or user_slice or str(slice_unit)))
-else:
- slice_unit.parent.mkdir(parents=True,exist_ok=True)
- slice_unit.write_bytes((destination/'agents.slice').read_bytes())
- subprocess.run(['systemctl','--user','daemon-reload'],check=True)
-revision_file=home/'data/remote-agents/controller-revision.txt'
-revision_file.parent.mkdir(parents=True,exist_ok=True)
-revision_file.write_text(request['revision']+'\n')
-print('remote-agent deployed: '+request['revision'])
-"""
 
-USER_DEPLOY_PROGRAM = r"""import json,os,pathlib,pwd,runpy,subprocess,sys
+USER_DEPLOY_PROGRAM = r"""import json,os,pwd,subprocess,sys
 request=json.load(sys.stdin)
 user=request.pop('user')
 try:
  account=pwd.getpwnam(user)
- helper=pathlib.Path(request['home'])/'Projects/cli/remote-agent/remote-agent-user.py'
- environment=runpy.run_path(str(helper))['build_user_environment'](account,os.environ)
- request['home']=account.pw_dir
+ home=account.pw_dir
+ environment={'HOME':home,'USER':account.pw_name,'LOGNAME':account.pw_name,
+              'SHELL':account.pw_shell,'PATH':home+'/.local/bin:/usr/local/bin:/usr/bin:/bin',
+              'XDG_RUNTIME_DIR':'/run/user/'+str(account.pw_uid),
+              'PI_CODING_AGENT_DIR':home+'/.config/pi/agent'}
+ for name,value in os.environ.items():
+  if name in ('TERM','LANG','LANGUAGE') or name.startswith('LC_'):
+   environment[name]=value
+ request['home']=home
  program=request.pop('program')
  command=['authsudo','-u',account.pw_name,'/usr/bin/env','-i',
           *(name+'='+value for name,value in environment.items()),
@@ -209,10 +146,34 @@ def install_session_unit(home, content):
     path.write_text(content)
     subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
 
+def install_maps(home, maps):
+    # Only the default SSH account receives the operator's maps.
+    config = home/'.config/remote-agent'
+    config.mkdir(parents=True, exist_ok=True, mode=0o700)
+    config.chmod(0o700)
+    for name, content in maps.items():
+        path = config/name
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
+        path.write_bytes(base64.b64decode(content))
+
+def install_slice(home, content):
+    # Session units run in agents.slice; never replace a host-provided one.
+    def fragment(user):
+        command = ['systemctl']+(['--user'] if user else [])+['show', 'agents.slice', '-p', 'FragmentPath', '--value']
+        return subprocess.run(command, text=True, capture_output=True, check=True).stdout.strip()
+    path = home/'.config/systemd/user/agents.slice'
+    if fragment(False) or fragment(True) or path.exists() or path.is_symlink():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
 request = json.load(sys.stdin)
 home = pathlib.Path.home()
 if home != pathlib.Path(request['home']):
     raise RuntimeError('Unexpected remote home '+str(home))
+if 'maps' in request:
+    install_maps(home, request['maps'])
 require_maps(home)
 native = native_platform()
 if native['os'] != 'Linux':
@@ -228,6 +189,7 @@ elif request['action'] == 'build':
 elif request['action'] == 'install':
     # The session unit template runs %h/.local/bin/remote-agent-rs.
     result = install_binary(home, request['payload'], 'remote-agent-rs')
+    install_slice(home, request['slice'])
     install_session_unit(home, request['unit'])
 else:
     raise RuntimeError('Unknown Rust deployment action '+request['action'])
@@ -272,7 +234,11 @@ def deploy_rust(host):
         output = deploy_remote(profile, target, program, request, capture_output=True)
         return json.loads(output)
 
-    server = remote("probe")
+    maps = {
+        name: base64.b64encode((CONFIG / name).read_bytes()).decode()
+        for name in CONFIG_FILES
+    }
+    server = remote("probe", maps=maps)
     for user in users:
         if remote("probe", user) != server:
             raise RuntimeError("Configured accounts have different server platforms")
@@ -282,66 +248,14 @@ def deploy_rust(host):
         payload if client == server else remote("build", source=bundle_rust_source())
     )
     native["install_binary"](home, payload, "remote-agent")
-    unit = (ROOT / "remote-agent-rs@.service").read_text()
-    remote("install", payload=server_payload, unit=unit)
-    for user in users:
-        remote("install", user, payload=server_payload, unit=unit)
-    print("remote-agent installed locally; remote-agent-rs server installed on " + host)
-
-
-def bundle_files():
-    archive = io.BytesIO()
-    with tarfile.open(fileobj=archive, mode="w") as bundle:
-        for name in FILES:
-            bundle.add(ROOT / name, arcname=name, recursive=False)
-    return base64.b64encode(archive.getvalue()).decode()
-
-
-def deploy_worker(host=DEFAULT_HOST):
-    profile = HOSTS[host]
-    users = profile.get("deploy_users", [])
-    if not isinstance(users, list) or any(
-        not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]*\$?", user)
-        for user in users
-    ):
-        raise ValueError("deploy_users must be a list of Unix usernames")
-    if users and (profile["wrap"] or profile["windows_shell"]):
-        raise ValueError("deploy_users requires a native Linux host without wrapping")
-    key = "REMOTE_AGENT_" + host.upper().replace("-", "_") + "_SSH"
-    target = os.environ.get(key, profile["ssh"])
-    revision = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
-    ).strip()
-    request = {
-        "archive": bundle_files(),
-        "revision": revision,
-        "home": profile["home"],
-        "host": host,
+    files = {
+        "unit": (ROOT / "remote-agent-rs@.service").read_text(),
+        "slice": (ROOT / "agents.slice").read_text(),
     }
-    deploy_remote(
-        profile,
-        target,
-        REMOTE_PROGRAM,
-        {
-            **request,
-            "config": {
-                name: base64.b64encode((CONFIG / name).read_bytes()).decode()
-                for name in CONFIG_FILES
-            },
-        },
-    )
+    remote("install", payload=server_payload, **files)
     for user in users:
-        deploy_remote(
-            profile,
-            target,
-            USER_DEPLOY_PROGRAM,
-            {
-                **request,
-                "user": user,
-                "preserve_config": True,
-                "program": REMOTE_PROGRAM,
-            },
-        )
+        remote("install", user, payload=server_payload, **files)
+    print("remote-agent installed locally; remote-agent-rs server installed on " + host)
 
 
 def install_switcher():
@@ -385,13 +299,7 @@ def deploy_remote(profile, target, program, request, capture_output=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--rust",
-        action="store_true",
-        help="Install the native client as remote-agent and the Linux server",
-    )
-    mode.add_argument(
+    parser.add_argument(
         "--switcher",
         action="store_true",
         help="Install only the local Pi session switcher",
@@ -399,7 +307,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.switcher:
         install_switcher()
-    elif args.rust:
-        deploy_rust(args.host)
     else:
-        deploy_worker(args.host)
+        deploy_rust(args.host)

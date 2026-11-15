@@ -25,12 +25,19 @@ class RustDeployTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        for name in ("deploy.py", "deploy.sh", "remote-agent-rs@.service"):
+        for name in (
+            "deploy.py",
+            "deploy.sh",
+            "remote-agent-rs@.service",
+            "agents.slice",
+        ):
             shutil.copy2(ROOT / name, self.repo / name)
         (self.repo / "Cargo.toml").write_text('[package]\nname="remote-agent-rs"\n')
         (self.repo / "Cargo.lock").write_text("# concrete locked source fixture\n")
         (self.repo / "src").mkdir()
         (self.repo / "src/main.rs").write_text("fn main() {}\n")
+        (self.repo / "vendor/vt100").mkdir(parents=True)
+        (self.repo / "vendor/vt100/Cargo.toml").write_text('[package]\nname="vt100"\n')
         self.client = self.root / "client"
         self.server = self.root / "server"
         self.other = self.root / "passwd-home"
@@ -55,9 +62,6 @@ class RustDeployTests(unittest.TestCase):
             (home / ".local/bin").mkdir(parents=True)
             if home != self.client:
                 (home / ".local/bin/remote-agent").write_bytes(b"legacy untouched")
-        helper = self.server / "Projects/cli/remote-agent/remote-agent-user.py"
-        helper.parent.mkdir(parents=True)
-        shutil.copy2(ROOT / "remote-agent-user.py", helper)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.manager_calls = self.root / "systemctl.jsonl"
@@ -84,6 +88,7 @@ print('rustc fixture\\nhost: '+(os.environ.get('SERVER_TARGET', {LINUX!r}) if os
 root=pathlib.Path.cwd()
 assert (root/'Cargo.lock').read_text() == '# concrete locked source fixture\\n'
 assert (root/'src/main.rs').read_text() == 'fn main() {{}}\\n'
+assert (root/'vendor/vt100/Cargo.toml').read_text() == '[package]\\nname="vt100"\\n'
 assert '--locked' in sys.argv
 assert sys.argv[sys.argv.index('--bin')+1]=='remote-agent-rs'
 target=sys.argv[sys.argv.index('--target')+1]
@@ -154,14 +159,27 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                 "-c",
                 "import platform,runpy,sys; "
                 "platform.system=lambda:'Darwin'; platform.machine=lambda:'arm64'; "
-                f"sys.argv=['deploy.py','--rust']; runpy.run_path({str(self.repo / 'deploy.py')!r},run_name='__main__')",
+                f"sys.argv=['deploy.py']; runpy.run_path({str(self.repo / 'deploy.py')!r},run_name='__main__')",
             ]
             self.env["CLIENT_TARGET"] = MAC
         else:
-            command = [str(self.repo / "deploy.sh"), "--rust"]
+            command = [str(self.repo / "deploy.sh")]
         return subprocess.run(
             command, env=self.env, text=True, capture_output=True, timeout=20
         )
+
+    def assert_maps_deployed(self):
+        # The default SSH account receives the operator's maps; others keep theirs.
+        after = self.maps()
+        config = self.server / ".config/remote-agent"
+        self.assertEqual(config.stat().st_mode & 0o777, 0o700)
+        for path, expected in self.before.items():
+            if path.parent != config:
+                self.assertEqual(after[path], expected)
+                continue
+            client = self.client / ".config/remote-agent" / path.name
+            self.assertEqual(path.read_bytes(), client.read_bytes())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def builds(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]
@@ -185,7 +203,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
             )
         return binary
 
-    def test_linux_build_once_installs_all_accounts_preserving_maps_and_old_versions(
+    def test_linux_build_once_installs_all_accounts_syncing_maps_and_keeping_old_versions(
         self,
     ):
         result = self.deploy()
@@ -201,25 +219,37 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         for path, expected in zip(old, old_stats):
             self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), expected)
             self.assertEqual(path.read_bytes(), f"native:{LINUX}:one".encode())
-        self.assertEqual(self.maps(), self.before)
+        self.assert_maps_deployed()
 
-    def test_server_accounts_get_session_unit_template_and_reload(self):
+    def test_server_accounts_get_session_unit_slice_and_reload(self):
+        provided = self.other / ".config/systemd/user/agents.slice"
+        provided.parent.mkdir(parents=True)
+        provided.write_text("[Slice]\nMemoryMax=1G\n")
         result = self.deploy()
         self.assertEqual(result.returncode, 0, result.stderr)
-        template = (ROOT / "remote-agent-rs@.service").read_bytes()
-        unit = Path(".config/systemd/user/remote-agent-rs@.service")
+        units = Path(".config/systemd/user")
         for home in (self.server, self.other):
-            self.assertEqual((home / unit).read_bytes(), template)
-        self.assertFalse((self.client / unit).exists())
+            self.assertEqual(
+                (home / units / "remote-agent-rs@.service").read_bytes(),
+                (ROOT / "remote-agent-rs@.service").read_bytes(),
+            )
+        self.assertEqual(
+            (self.server / units / "agents.slice").read_bytes(),
+            (ROOT / "agents.slice").read_bytes(),
+        )
+        self.assertEqual(provided.read_text(), "[Slice]\nMemoryMax=1G\n")
+        self.assertFalse((self.client / units).exists())
         calls = [
             json.loads(line) for line in self.manager_calls.read_text().splitlines()
         ]
+        show = ["show", "agents.slice", "-p", "FragmentPath", "--value"]
         self.assertEqual(
-            calls,
-            [
-                {"home": str(home), "args": ["--user", "daemon-reload"]}
-                for home in (self.server, self.other)
-            ],
+            [call["args"] for call in calls if call["home"] == str(self.server)],
+            [show, ["--user", *show], ["--user", "daemon-reload"]],
+        )
+        self.assertEqual(
+            [call["args"] for call in calls if call["home"] == str(self.other)],
+            [show, ["--user", *show], ["--user", "daemon-reload"]],
         )
 
     def test_macos_client_builds_linux_source_once_and_redistributes(self):
@@ -235,7 +265,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                 {"home": str(self.server), "target": LINUX},
             ],
         )
-        self.assertEqual(self.maps(), self.before)
+        self.assert_maps_deployed()
 
     def test_linux_architecture_mismatch_builds_server_from_locked_source(self):
         self.env.update(
@@ -248,8 +278,8 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
             self.assert_installed(home, "aarch64-unknown-linux-gnu")
         self.assertEqual(len(self.builds()), 2)
 
-    def test_missing_maps_fail_without_seeding_default_or_other_account(self):
-        for home in (self.client, self.server, self.other):
+    def test_missing_maps_fail_for_operator_and_other_account_without_seeding(self):
+        for home in (self.client, self.other):
             with self.subTest(home=home):
                 path = home / ".config/remote-agent/remote-projects.json"
                 content = path.read_bytes()
@@ -259,6 +289,17 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                 self.assertIn("remote-projects.json", result.stderr)
                 self.assertFalse(path.exists())
                 path.write_bytes(content)
+
+    def test_default_account_missing_map_is_seeded_from_operator(self):
+        path = self.server / ".config/remote-agent/remote-projects.json"
+        path.unlink()
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            path.read_bytes(),
+            (self.client / ".config/remote-agent/remote-projects.json").read_bytes(),
+        )
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_refuses_unmanaged_file_and_foreign_or_dangling_symlink(self):
         for home in self.homes:
@@ -286,7 +327,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                             foreign if kind == "foreign" else home / "missing",
                         )
                     path.unlink()
-        self.assertEqual(self.maps(), self.before)
+        self.assert_maps_deployed()
 
     def test_build_failures_do_not_select_another_build_route(self):
         for home, expected_count in ((self.client, 1), (self.server, 2)):

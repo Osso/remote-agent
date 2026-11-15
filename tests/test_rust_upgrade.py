@@ -31,7 +31,7 @@ payload = {
     'binary': base64.b64encode(content).decode(),
     'sha256': hashlib.sha256(content).hexdigest(),
 }
-print(json.dumps(namespace['install_binary'](pathlib.Path.home(), payload)))
+print(json.dumps(namespace['install_binary'](pathlib.Path.home(), payload, 'remote-agent-rs')))
 """
 
 

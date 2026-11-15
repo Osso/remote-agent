@@ -132,7 +132,7 @@ Commands below cover `43f4e93b1ca909850a17fefc106beaac94a1e795`;
 | `ruff check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_deploy.py` | Clean | `followup-ruff-check.log` |
 | `ruff format --check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_deploy.py deploy.py` | 11 files formatted | `followup-ruff-format.log` |
 
-Retained `tests/test_rust_deploy.py` proof is 8/8 Python deployment fixtures in
+Retained `tests/test_rust_deploy.py` proof was 8/8 Python deployment fixtures in
 `final-scoped-suite.log`, not Rust compilation. The verifier confirms those
 files and deployment paths are unchanged since the prior `39f765f` verification.
 

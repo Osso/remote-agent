@@ -45,12 +45,11 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [Lifecycle, transport, rendering and evidence](../wiki/systems/unified-pi-session.md).
 - [Cargo dependency inventory](../wiki/systems/unified-pi-session.md#cargo-dependency-inventory).
 - [Account/project configuration](configuration.md#rust-account-and-launch-policy).
-- [Legacy preservation constraints](session-backends.md).
 
 ## Implementation inventory
 
 - `src/main.rs`, `src/config.rs`, `src/account.rs`, `src/control.rs`: commands, maps, target-account dispatch, launch records and service lifecycle.
-- `remote-agent-rs@.service`, `deploy.py`, `deploy.sh`: user service template and opt-in installation.
+- `remote-agent-rs@.service`, `agents.slice`, `deploy.py`, `deploy.sh`: user service template, slice and installation.
 - `src/server.rs`, `src/pty.rs`: QUIC server, in-memory output, snapshot logs and Pi PTY ownership.
 - `src/client.rs`, `src/local.rs`: SSH control, attachment, reconnect, notices, terminal lifetime and clipboard acquisition.
 - `src/terminal.rs`, `src/protocol.rs`: ordered display/replay, terminal parsing, authenticated frames and size limits.
@@ -73,7 +72,7 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests. Lo
 ### Restart recovery — October 30, 2026
 
 - Fix `443536a`, regression `eb3b4b6`: the isolated real CLI/QUIC/PTY restart test passed with the old server frozen and input queued. The new server did not execute that input; fresh input and display worked. `cargo check` and nine client tests passed.
-- `./deploy.sh --rust` installed binary `4a3ff9449184957a60f480981adc12185f824bd2ff6ad813aac6ad29a41281bd` locally and for remote `osso`/`allison`. Maps and seven existing server PIDs remained unchanged. Fresh normal-TTY attach/detach restored terminal settings.
+- `./deploy.sh` (then `--rust`) installed binary `4a3ff9449184957a60f480981adc12185f824bd2ff6ad813aac6ad29a41281bd` locally and for remote `osso`/`allison`. Maps and seven existing server PIDs remained unchanged. Fresh normal-TTY attach/detach restored terminal settings.
 - The old user client was detached; its replacement, PID `413377`, then survived a separately authorized graphics restart of `wowdecomp` to server PID `3507504`. Conversation `e9f22590-027a-452a-bc36-a1312c9b5537` remained unchanged. Reversible arrow input moved the live selection down and back; no option was submitted. Evidence: `/tmp/remote-agent-restart-live-recovery.json`.
 - The same-server outage test observed queued input execute once and preserved process lifetimes, but failed its display assertion. The existing history test duplicates `BULK_LINE_028`–`033` on both fixed and pre-fix binaries before reconnect. Ordered display replay is not established by this run. Logs: `/tmp/remote-agent-same-server-network.log` and `/tmp/remote-agent-history-baseline.log`.
 
