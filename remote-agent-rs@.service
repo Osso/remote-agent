@@ -9,6 +9,8 @@ ExecStart=%h/.local/bin/remote-agent-rs __serve --state %h/.local/state/remote-a
 StandardOutput=append:%h/.local/state/remote-agent-rs/sessions/%i/server.log
 StandardError=inherit
 KillMode=control-group
+# An OOM-killed tool process must not stop the session: the default `stop` kills Pi.
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target

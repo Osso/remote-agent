@@ -9,6 +9,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Manage Pi sessions independently of attached clients, with Linux servers and Linux clients. Keep sessions alive across clean detach and attachment loss.
 - [x] Support installed macOS-to-Linux attachment (arm64 macOS laptop at `7831e16`).
 - [x] Start each session as an enabled systemd user service in the user's `agents.slice`; deploy its template and reload each server account's user manager.
+- [x] Keep the session running when the kernel OOM killer kills a process in its unit, such as a tool process (`OOMPolicy=continue`). The default policy stops the whole unit and kills Pi.
 - [x] Cancel by disabling and stopping the service, wait for the server PID to exit, then invoke the configured project cancellation hook with the conversation ID. Repeated stop must be a no-op so a failed hook can be retried. Preserve errors and retry state.
 - [x] Support `remote-agent restart NAME` for the systemd session service on the selected host and user account. Resume the saved conversation. Restart interrupts foreground work and jobs in the service control group; do not promise to restore them.
 - [x] Keep sessions manageable after binary upgrades by validating exact server argv and absolute state path, without requiring the current executable inode.
@@ -61,6 +62,7 @@ Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests. Lo
 - `tests/test_rust_login.py`: 9/9 public-CLI cases, covering selected/default accounts, native versus Pi credential stores, explicit native config, missing executable, failure, removed alias, TTY input/output and cancellation. `control` login tests exercise native and Pi executable side effects.
 - `tests/test_rust_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
 - `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
+- `tests/test_session_unit_oom.py`: a transient user service with the template's `KillMode` and `OOMPolicy` and a 64 MiB limit survives the OOM kill of a child; with the default policy it stops.
 - `tests/test_rust_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_rust_deploy.py`: 8/8 deployment cases.
 - `server::tests::stalled_reader_is_caught_up_instead_of_disconnected`: a reader stalled for 3 s during 20000 output lines stays attached, observes a skipped sequence and receives each line exactly once plus its input acknowledgement; the pre-fix server resets the connection.
 - Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. `terminal::tests::one_changed_pi_row_*` and `scrolled_pi_chat_*` compare live diffs and row repaint at 165×46 against full snapshot repaints for identical screen and scrollback. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
