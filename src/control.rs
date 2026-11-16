@@ -680,7 +680,7 @@ mod tests {
             "CLAUDE_CODE_OAUTH_TOKEN",
         ];
         let previous: Vec<Option<OsString>> =
-            names.iter().map(|name| std::env::var_os(name)).collect();
+            names.iter().map(std::env::var_os).collect();
         unsafe {
             std::env::set_var("HOME", home.path());
             std::env::set_var("CLAUDE_CONFIG_DIR", &config_dir);

@@ -47,7 +47,7 @@ Alternate-screen applications are unsupported. Unknown VT callbacks, clipboard-r
 
 ### Clients, input and images
 
-Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Five consecutive failed reconnect attempts end the attachment. Any authenticated display frame resets the failure count. Backoff ceilings are 500/1000/2000/4000 ms with 90–100% jitter. Native outage and NAT port migration tests cover the boundaries recorded below, not every network condition.
+Clients have separate identities, output positions and input sequences. The server serializes input and ignores already applied input sequences. Shared PTY rows and columns are independently the minima across clients. Leaving the last attachment retains the previous size. Reconnect attempts that keep failing for 2 minutes end the attachment. Any authenticated display frame resets the budget. Backoff ceilings are 500/1000/2000/4000 ms with 90–100% jitter. Native outage and NAT port migration tests cover the boundaries recorded below, not every network condition.
 
 Reconnect, control, clipboard and server notices use the bottom physical terminal row with save/restore cursor, autowrap disabled and no line feed. The next display repaints over the notice, including a duplicate reconnect snapshot. This fixed the observed duplication of two rows after reconnect.
 

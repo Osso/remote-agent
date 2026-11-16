@@ -22,7 +22,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Retain bounded, configurable output only in server memory; report expired output when requested replay is no longer retained. Do not persist output history to disk.
 - [x] Return `logs` only from a running server snapshot without joining the session or changing PTY dimensions.
 - [x] Recover ordered output through tested QUIC outages and NAT port migration without duplicating reconnect-notice rows.
-- [x] End attachment after five consecutive failed reconnect attempts; reset the count on any authenticated display frame. Use backoff ceilings of 500, 1000, 2000 and 4000 ms with 90–100% jitter.
+- [x] End attachment when reconnect attempts have failed for 2 minutes without success; reset the budget on any authenticated display frame. A stalled server under host overload must not end the attachment within seconds. Use backoff ceilings of 500, 1000, 2000 and 4000 ms with 90–100% jitter.
 - [x] Keep an attachment whose display queue fills: skip live frames for it until the queue drains, then send one snapshot with every skipped row, the latest input acknowledgement and any exit. Never disconnect it for falling behind; a reconnect replays full history and refills the queue.
 - [x] Show reconnect, control, clipboard and server notices without scrolling terminal output; repaint over them on the next display, including a duplicate reconnect snapshot.
 - [x] Make steady-state display cost proportional to changed rows: live updates carry a diff from the previous display and the client repaints only rows that differ from its viewport. Fresh attachment, replay and virtual resize carry the complete display; reset, resize and repaint clear the viewport.

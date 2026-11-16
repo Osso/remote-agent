@@ -229,6 +229,8 @@ struct Attachment {
     decoder: InputDecoder,
     deferred: Option<DisplayUpdate>,
     consecutive_failures: u32,
+    /// When the current run of failed attempts began; cleared by an authenticated display frame.
+    failing_since: Option<std::time::Instant>,
     /// The latest connection's endpoint, closed explicitly on exit.
     endpoint: Option<Endpoint>,
 }
@@ -261,12 +263,12 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                 match state.run(&current, &hostname, &terminal, &mut input).await {
                     Ok(code) => break Ok(code),
                     Err(error) => {
-                        state.consecutive_failures += 1;
+                        let retry = state.record_failure(std::time::Instant::now());
                         state.show_status(&format!(
                             "remote-agent-rs: connection interrupted: {error:#}; reconnecting"
                         ))?;
-                        if state.consecutive_failures > 5 {
-                            break Err(error.context("five reconnect attempts failed"));
+                        if !retry {
+                            break Err(error.context("reconnect attempts failed for 2 minutes"));
                         }
                         let entropy = uuid::Uuid::new_v4().as_u128();
                         tokio::time::sleep(reconnect_delay(state.consecutive_failures, entropy))
@@ -318,6 +320,7 @@ impl Attachment {
             decoder: InputDecoder::new(),
             deferred: None,
             consecutive_failures: 0,
+            failing_since: None,
             endpoint: None,
         }
     }
@@ -328,10 +331,19 @@ impl Attachment {
         }
         // A new server has neither input acknowledgements nor display history.
         // Replaying unacknowledged commands could execute them a second time.
-        let failures = self.consecutive_failures;
+        let (failures, failing_since) = (self.consecutive_failures, self.failing_since);
         *self = Self::new(self.size);
         self.consecutive_failures = failures;
+        self.failing_since = failing_since;
         self.show_status("remote-agent-rs: server restarted; pending input was not replayed")
+    }
+
+    /// Count a failed attempt; false once attempts have failed for RECONNECT_BUDGET.
+    /// A stalled server (host overload) can miss handshakes for well over a few seconds.
+    fn record_failure(&mut self, now: std::time::Instant) -> bool {
+        self.consecutive_failures += 1;
+        let since = *self.failing_since.get_or_insert(now);
+        now.duration_since(since) < RECONNECT_BUDGET
     }
 
     /// Show a notice on the bottom physical row without a line feed, so no
@@ -349,6 +361,7 @@ impl Attachment {
     fn prepare_display(&mut self, update: DisplayUpdate) -> Option<DisplayUpdate> {
         // An authorized Hello snapshot confirms recovery even at the same sequence.
         self.consecutive_failures = 0;
+        self.failing_since = None;
         let applied = self
             .after
             .is_some_and(|sequence| update.sequence <= sequence);
@@ -533,6 +546,8 @@ async fn receive_frames(mut reader: quinn::RecvStream, sender: mpsc::Sender<Resu
     }
 }
 
+const RECONNECT_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+
 fn reconnect_delay(failures: u32, entropy: u128) -> std::time::Duration {
     let ceiling_ms = 250_u64 * (1 << failures.min(4));
     let jitter_window_ms = ceiling_ms / 10;
@@ -655,6 +670,23 @@ mod resize_tests {
         assert_eq!(state.consecutive_failures, 0);
         assert_eq!(state.after, None);
         assert!(state.deferred.is_some());
+    }
+
+    #[test]
+    fn reconnect_keeps_trying_for_the_time_budget_and_resets_on_display() {
+        let mut state = Attachment::new(Size { rows: 6, cols: 40 });
+        let start = std::time::Instant::now();
+        let seconds = |s| start + std::time::Duration::from_secs(s);
+        for attempt in 0..30 {
+            assert!(
+                state.record_failure(seconds(attempt * 4)),
+                "attempt {attempt}"
+            );
+        }
+        assert!(!state.record_failure(seconds(120)));
+        state.prepare_display(update(1, 40, "recovered"));
+        assert!(state.record_failure(seconds(200)));
+        assert_eq!(state.consecutive_failures, 1);
     }
 
     #[test]
