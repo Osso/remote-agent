@@ -1,6 +1,6 @@
 # remote-agent
 
-Rust client (`remote-agent`) and Linux session server (`remote-agent-rs`) for
+Rust client (`remote-agent`) and Linux session server (`remote-agent`) for
 explicitly requested Pi sessions. Each session runs Pi in a PTY under a
 per-session systemd user service; the client attaches over QUIC after an SSH
 control request. Commands inspect, attach to, restart or cancel sessions on one
@@ -93,24 +93,24 @@ the [proof matrix](docs/wiki/systems/unified-pi-session.md#evidence-and-remainin
 Build locally with a Rust toolchain that supports edition 2024:
 
 ```text
-cargo build --locked --bin remote-agent-rs
-./target/debug/remote-agent-rs --help
-./target/debug/remote-agent-rs projects
+cargo build --locked --bin remote-agent
+./target/debug/remote-agent --help
+./target/debug/remote-agent projects
 ```
 
 Each account reads its own private host/project maps. Remote commands require
-`~/.local/bin/remote-agent-rs`, Pi and the mapped project on the selected account.
+`~/.local/bin/remote-agent`, Pi and the mapped project on the selected account.
 
 ### Installation
 
 Run `./deploy.sh [--host HOST]` to install the client locally as
-`~/.local/bin/remote-agent`. Server accounts get `~/.local/bin/remote-agent-rs`,
+`~/.local/bin/remote-agent`. Server accounts get `~/.local/bin/remote-agent`,
 which the session unit runs. Deploy copies both local maps byte-for-byte to the
 default SSH account's `~/.config/remote-agent/` (`0700`/`0600`). Optional host
 `deploy_users: ["researcher"]` also installs to listed existing Unix accounts
 through `authsudo -u USER` with an isolated environment; their maps must already
 exist and are preserved. Missing maps fail explicitly.
-On every server account it installs the repository-root `remote-agent-rs@.service`
+On every server account it installs the repository-root `remote-agent@.service`
 template into `~/.config/systemd/user/`, installs the bundled `agents.slice`
 unless a system or user slice already exists, and runs
 `systemctl --user daemon-reload`. Running sessions keep their own binary.
@@ -129,11 +129,11 @@ account routing uses the native helper described in the
 [configuration contract](docs/specs/configuration.md#rust-account-and-launch-policy).
 
 Each account receives a private, content-addressed executable at
-`~/.local/share/remote-agent-rs/<sha256>/remote-agent-rs`, selected by
-`~/.local/bin/remote-agent` locally and `~/.local/bin/remote-agent-rs` on servers. Directory/file modes are `0700` for the store and
+`~/.local/share/remote-agent/<sha256>/remote-agent`, selected by
+`~/.local/bin/remote-agent` locally and `~/.local/bin/remote-agent` on servers. Directory/file modes are `0700` for the store and
 `0500` for each version and binary. Updates retain old versions without rewriting
 them. Unmanaged executables and foreign or dangling symlinks are rejected.
-`tests/test_rust_deploy.py` covers deployment with fixtures; real two-account deployment
+`tests/test_deploy.py` covers deployment with fixtures; real two-account deployment
 and attachment at `fdaa0d6` are recorded in the proof matrix.
 
 ```text
@@ -160,7 +160,7 @@ through existing `authsudo` authorization; real attachment was verified for
 Ctrl+V sends the local clipboard image to the session. Clipboard
 providers are `wl-paste` (Wayland), `xclip` (X11), or `osascript` (macOS).
 
-`start` enables and starts `remote-agent-rs@NAME.service` in the user's
+`start` enables and starts `remote-agent@NAME.service` in the user's
 `agents.slice`. Enabled units return when the user manager starts at boot;
 this requires linger. On agent-server, `osso` has `Linger=yes`; `allison` linger
 was enabled with user approval on 2026-10-25. The server reuses `launch.json`:
@@ -294,7 +294,7 @@ Run from this checkout:
 ```sh
 cargo test --locked
 ./run-tests.sh
-./run-tests.sh test_rust_deploy.py
+./run-tests.sh test_deploy.py
 ```
 
 Native scheduler and dispatch tests belong to Pi; see the
@@ -303,11 +303,11 @@ Python discovery retains `tests/test_periodic_runtime.py` with
 `tests/fixtures/periodic-runtime-provider.ts` as installed-Pi integration
 acceptance. Set `PI_TEST_BINARY` to select the installed Pi under test.
 
-The native attach, network, resize and upgrade tests (`tests/test_rust_*.py`)
-run `target/debug/remote-agent-rs` (or `REMOTE_AGENT_RUST_BIN`) against real Pi
+The native attach, network, resize and upgrade tests (`tests/test_*.py`)
+run `target/debug/remote-agent` (or `REMOTE_AGENT_BIN`) against real Pi
 TUI code. They need Linux, Node 22.18+, `PI_TUI_SOURCE` pointing to Pi's
 `packages/tui/src` and `@xterm/headless` on `NODE_PATH`; missing dependencies are
-reported as skipped. Evidence stays under `/var/tmp/pi-resize-fix/`.
+reported as skipped. Evidence stays under `target/native-tests/`.
 
 ## License
 

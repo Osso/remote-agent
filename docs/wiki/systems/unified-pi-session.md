@@ -29,7 +29,7 @@ Tokei counted 9,560 production C++/header code lines across 63 files, excluding 
 
 ## Implemented prototype
 
-`remote-agent-rs` is one Rust binary with local client, SSH control, and detached Linux session-server commands. The Python controller, worker, detach and Mosh stack was removed on 2026-11-14. Deployment and real attachment were verified on agent-server for `osso` and `allison` at `fdaa0d6`. See the [build and CLI guide](../../../README.md#usage).
+`remote-agent` is one Rust binary with local client, SSH control, and detached Linux session-server commands. The Python controller, worker, detach and Mosh stack was removed on 2026-11-14. The binary, unit template (`remote-agent@.service`) and state/share directories were named `remote-agent-rs` until 2026-11-16; history rows below keep the commands as run. Deployment and real attachment were verified on agent-server for `osso` and `allison` at `fdaa0d6`. See the [build and CLI guide](../../../README.md#usage).
 
 SSH uses existing private host/project maps and returns a ticket containing the server address, certificate and authentication token. Quinn carries length-prefixed JSON messages over an ordered bidirectional QUIC stream. The client trusts the ticket certificate; the server checks the token. Byte fields require base64 strings. The server limits the unauthenticated frame to 8192 bytes from its length header before payload allocation; authenticated frames allow at most 80 MiB. The Linux server owns Pi's PTY independently of attachments. There is no predictive echo or Mosh wire compatibility.
 
@@ -55,7 +55,7 @@ Outside bracketed text paste, the client intercepts Ctrl+V and recognized Kitty 
 
 `remote-agent login PROVIDER` uses interactive SSH. `claude` runs native `claude auth login --claudeai` in the selected account; other providers run `pi login PROVIDER`. Native Claude credentials and Pi's provider grants remain separate; no credential import occurs. The public-CLI fixtures cover credential-store selection and TTY cancellation, not OAuth network success. Native `__as-user` resolves passwd identity/home and enters that home with a clean environment. Account isolation, launch variables, service ownership and cancellation policy have one contract in [configuration](../../specs/configuration.md#rust-account-and-launch-policy). Real cross-user attachment was verified for both accounts at `fdaa0d6`.
 
-The child environment identifies `TERM_PROGRAM=remote-agent-rs`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
+The child environment identifies `TERM_PROGRAM=remote-agent`, with xterm-compatible true color, and removes inherited Ghostty/Kitty/WezTerm/Warp/iTerm graphics indicators. Pi must detect the virtual endpoint's capabilities, not the physical terminal that launched SSH. File-based image paste remains independent of inline Kitty/iTerm graphics, which the prototype does not implement.
 
 A generated conversation uses Pi's `--session-id UUID`, which opens the existing conversation if one exists in the project. Explicit `--resume UUID` uses `--session UUID`; these resume semantics are unchanged. UUID-conflict handling is excluded. Earlier isolated-HOME Pi acceptance was offline and did not submit a model prompt.
 
@@ -91,14 +91,14 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 
 ### Session service lifecycle
 
-The repository-root `remote-agent-rs@.service` template is installed by
+The repository-root `remote-agent@.service` template is installed by
 `deploy.sh` into every server account's `~/.config/systemd/user/`, followed
 by `systemctl --user daemon-reload`. Each session uses the enabled user unit
-`remote-agent-rs@NAME.service` with `Slice=agents.slice` (the user slice).
+`remote-agent@NAME.service` with `Slice=agents.slice` (the user slice).
 Its launch directive is:
 
 ```text
-ExecStart=%h/.local/bin/remote-agent-rs __serve --state %h/.local/state/remote-agent-rs/sessions/%i
+ExecStart=%h/.local/bin/remote-agent __serve --state %h/.local/state/remote-agent/sessions/%i
 ```
 
 Server output appends to the session's `server.log`; this is diagnostic output,
@@ -126,7 +126,7 @@ prompt again.
 
 Each session server binds its own random UDP port for QUIC. A client-side
 firewall must allow UDP to the server host on any port; on aso, appfw has one
-rule for this in `~/.config/appfw/rules.d/remote-agent-rs.toml`.
+rule for this in `~/.config/appfw/rules.d/remote-agent.toml`.
 
 `deploy.sh` copies the operator's maps to the default SSH account, preserves
 other accounts' maps and installs private immutable hash-addressed binaries
@@ -142,13 +142,13 @@ acceptance.
 
 | Boundary | Evidence | Remaining gap |
 | --- | --- | --- |
-| Native lifecycle/restore | `tests/test_rust_attach.py` 5/5, including simulated-reboot restore; fixture SSH/systemd with real PTY/QUIC/Pi TUI components | Actual host reboot not performed |
-| Network/reconnect | `tests/test_rust_network.py` 3/3, including reconnect-notice regression and native outage/NAT migration coverage; `tests/test_rust_retry_budget.py` six outages on one client over 193 seconds | Not all network conditions or complete real roaming acceptance |
-| Upgrade/deployment | `tests/test_rust_upgrade.py`; `tests/test_rust_deploy.py` 8/8; Rust control/client/server unit tests | No legacy PTY handoff or migration proof |
+| Native lifecycle/restore | `tests/test_attach.py` 5/5, including simulated-reboot restore; fixture SSH/systemd with real PTY/QUIC/Pi TUI components | Actual host reboot not performed |
+| Network/reconnect | `tests/test_network.py` 3/3, including reconnect-notice regression and native outage/NAT migration coverage; `tests/test_retry_budget.py` six outages on one client over 193 seconds | Not all network conditions or complete real roaming acceptance |
+| Upgrade/deployment | `tests/test_upgrade.py`; `tests/test_deploy.py` 8/8; Rust control/client/server unit tests | No legacy PTY handoff or migration proof |
 | Real agent-server, both accounts | At `fdaa0d6`, `osso` and `allison` units enabled and active in user `agents.slice`; correct UID, cwd, PTY 165×46 and `CARGO_BUILD_JOBS`; real SSH/QUIC attach, typed input reaches Pi, clean detach | Installed macOS-to-Linux: see the macOS row; simultaneous real clients: see the paste and detach rows |
 | Real restore/cancel | Whole-unit SIGKILL then `systemctl --user start` restored the same conversation; osso's resumed transcript visible again; cancel left unit disabled/inactive | Actual reboot deliberately not performed because it would stop legacy sessions; jobs, model turn and editor text do not return |
 | Legacy preservation | Legacy sessions, maps, credentials and legacy code remained byte/PID-identical | Not authorization to migrate them |
-| Legacy migration: `pi-rust-repin` (2026-10-25, user-requested) | SIGTERM to the legacy Pi only (exit 0 in 0.6 s); the legacy dtach scope kept its detached jobs (cargo test, bwrap sandboxes); record archived to `~/.local/state/remote-agent-migrated/`, no `cancel`; `remote-agent-rs start pi-rust pi-rust-repin --resume f8484104…` gave an enabled, active unit with the same argv and cwd and a single transcript file, and Pi resumed its goal and child agents | The in-progress turn was interrupted with user approval |
+| Legacy migration: `pi-rust-repin` (2026-10-25, user-requested) | SIGTERM to the legacy Pi only (exit 0 in 0.6 s); the legacy dtach scope kept its detached jobs (cargo test, bwrap sandboxes); record archived to `~/.local/state/remote-agent-migrated/`, no `cancel`; `remote-agent start pi-rust pi-rust-repin --resume f8484104…` gave an enabled, active unit with the same argv and cwd and a single transcript file, and Pi resumed its goal and child agents | The in-progress turn was interrupted with user approval |
 | Legacy migration: all remaining sessions (2026-10-25, user-requested, interrupts approved) | Same procedure for osso `world-of-osso`, `wow-ui-sim`, `clank` and allison `hhh`, `HH_bbtautau`, `mattermost-cli` (tmux era, launched with `--session-id`). Every legacy Pi exited 0; clank via `docker stop` of its conversation container, then relaunched through `session.py --session`. All seven units enabled and active, with `--session UUID`, the project cwd and the unit cgroup; `logs` shows each resumed title and goal; no legacy records remain for either account. Real-TTY `remote-agent [--user allison] attach NAME` at 165×46 displayed all seven, Ctrl+\ detached each with exit 0 in 0.15–0.5 s with terminal attributes restored, and every server/Pi PID was unchanged afterwards | Interrupted turns lost their foreground tool processes (world-of-osso scope 80→29, wow-ui-sim 13→0); clank's in-container jobs ended with its container; allison's dead tmux pane `remote-agent-mattermost-cli` remains |
 | macOS | GitHub run `40226091616` passed the Ubuntu and macOS jobs (native clipboard fixture, PTY and unit tests) at `fdaa0d6`; run `40230014481` passed both at `c06678a`. Installed on allison's arm64 macOS 26.6.2 laptop (rustc 1.92) at `7831e16`: `./deploy.sh --rust` (now `./deploy.sh`) built the macOS client as `remote-agent` and the Linux server on agent-server from the bundled source; `list` over SSH worked; a real-PTY `attach mattermost-cli` at 120×40 over Wi-Fi LAN QUIC drew the Pi UI, Ctrl+\ detached with exit 0 and the terminal modes were reset; run twice. Reported by the Mac's own Pi session, not re-run here | After detach, macOS `stty -g` differs only by PENDIN (`lflag` 5cb → 200005cb); macOS image paste not exercised |
 | Display diffs (`c06678a`) | Native attach/resize/network suites pass; client output bytes across the same stages fell from 4,787,949 to 2,138,492 (45%); first screen after attach 230 KB → 39 KB. Real agent-server attach: typing after attach wrote about 9 KB instead of about 90 KB per update; client viewport matched the server `logs` snapshot; unit acceptance passed again for both accounts | Fresh attach and reconnect replay still send the complete retained backlog and display, by design |

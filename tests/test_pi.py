@@ -9,7 +9,7 @@ import sys
 import time
 import unittest
 
-import test_rust_attach as fixture
+import test_attach as fixture
 
 
 class InstalledPiAcceptance(unittest.TestCase):

@@ -37,7 +37,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 
 - [x] Expose only `login PROVIDER` for Rust provider login, with `--host` and `--user` supported. For `claude`, execute the selected target user's `~/.local/bin/claude auth login --claudeai`; accept an executable SDK symlink and fail explicitly if it is missing. Retain an explicit `CLAUDE_CONFIG_DIR`, otherwise use the target home's native `.claude` default. `login claude ACCOUNT` sets `CLAUDE_CONFIG_DIR` to the existing bridge profile `~/.config/pi-claude-bridge/profiles/ACCOUNT`; invalid names (bridge rule `[A-Za-z0-9][A-Za-z0-9_-]*`) and missing profiles fail before login, and non-claude providers reject ACCOUNT. Claude's code prompt echoes nothing, so Claude login reads the terminal with echo and line buffering off, shows only a live `[N chars]` count (backspace edits), and forwards each submitted line to Claude's stdin; signals stay enabled. Other providers keep plain terminal pass-through. Do not import Pi Anthropic grants, create or copy profiles, or modify sessions or unrelated accounts.
 - [x] Route other providers to `pi login PROVIDER`. Native Claude bridge credentials are distinct from Pi's Anthropic login store. Do not expose `pi-login` or `claude-account` as Rust aliases.
-- [x] Prove login routing, target host/user and environment, missing executable failure and preserved unrelated credentials with controlled executables. `tests/test_rust_login.py` covers thirteen public-CLI cases, including bridge-profile routing, missing profile, invalid name and non-claude rejection, including real-TTY input and cancellation; these tests do not establish OAuth network success.
+- [x] Prove login routing, target host/user and environment, missing executable failure and preserved unrelated credentials with controlled executables. `tests/test_login.py` covers thirteen public-CLI cases, including bridge-profile routing, missing profile, invalid name and non-claude rejection, including real-TTY input and cancellation; these tests do not establish OAuth network success.
 - [x] Prove current-revision real Pi image paste from the initiating client's local clipboard without a manual upload command, including simultaneous clients.
 - [x] Preserve text paste framing, transfer images only on demand, and reject empty or failed clipboard reads without stale image insertion.
 
@@ -50,7 +50,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 ## Implementation inventory
 
 - `src/main.rs`, `src/config.rs`, `src/account.rs`, `src/control.rs`: commands, maps, target-account dispatch, launch records and service lifecycle.
-- `remote-agent-rs@.service`, `agents.slice`, `deploy.py`, `deploy.sh`: user service template, slice and installation.
+- `remote-agent@.service`, `agents.slice`, `deploy.py`, `deploy.sh`: user service template, slice and installation.
 - `src/server.rs`, `src/pty.rs`: QUIC server, in-memory output, snapshot logs and Pi PTY ownership.
 - `src/client.rs`, `src/local.rs`: SSH control, attachment, reconnect, notices, terminal lifetime and clipboard acquisition.
 - `src/terminal.rs`, `src/protocol.rs`: ordered display/replay, terminal parsing, authenticated frames and size limits.
@@ -59,15 +59,15 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 
 Main-thread proof supplied for `fdaa0d6`; this docs-only update ran no tests. Login routing is covered by controlled executable fixtures; OAuth network success is not established by those tests.
 
-- `tests/test_rust_login.py`: 9/9 public-CLI cases, covering selected/default accounts, native versus Pi credential stores, explicit native config, missing executable, failure, removed alias, TTY input/output and cancellation. `control` login tests exercise native and Pi executable side effects.
-- `tests/test_rust_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
-- `tests/test_rust_network.py`: 3/3, including reconnect-notice regression; `tests/test_rust_retry_budget.py`: six outages on one client over 193 seconds.
+- `tests/test_login.py`: 9/9 public-CLI cases, covering selected/default accounts, native versus Pi credential stores, explicit native config, missing executable, failure, removed alias, TTY input/output and cancellation. `control` login tests exercise native and Pi executable side effects.
+- `tests/test_attach.py`: 5/5, including simulated-reboot restore with native PTY/QUIC/Pi TUI components and fixture SSH/systemd.
+- `tests/test_network.py`: 3/3, including reconnect-notice regression; `tests/test_retry_budget.py`: six outages on one client over 193 seconds.
 - `tests/test_session_unit_oom.py`: a transient user service with the template's `KillMode` and `OOMPolicy` and a 64 MiB limit survives the OOM kill of a child; with the default policy it stops.
-- `tests/test_rust_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_rust_deploy.py`: 8/8 deployment cases.
+- `tests/test_upgrade.py`: sessions remain manageable after immutable binary replacement; `tests/test_deploy.py`: 8/8 deployment cases.
 - `server::tests::stalled_reader_is_caught_up_instead_of_disconnected`: a reader stalled for 3 s during 20000 output lines stays attached, observes a skipped sequence and receives each line exactly once plus its input acknowledgement; the pre-fix server resets the connection.
 - Rust control/client/server unit tests: lifecycle, framing, reconnect and rendering behavior. `terminal::tests::one_changed_pi_row_*` and `scrolled_pi_chat_*` compare live diffs and row repaint at 165×46 against full snapshot repaints for identical screen and scrollback. Earlier terminal/local fixtures and native macOS results remain revision-scoped in the wiki.
 - `terminal::tests::space_outside_a_smaller_pty_is_grey_after_attach_and_scroll`: every cell outside a 4×10 PTY on a 6×20 terminal is grey after attach and after two rows scroll into native history; cells inside keep the default background.
-- `tests/test_rust_resize.py::test_physical_growth_with_second_client_pinning_pty_minimum`: a detached smaller client stops pinning the PTY within 2 seconds (RED before `0c6df6d`); the real agent-server paste run also asserts 40×120 with both clients and 46×165 after the smaller one detaches.
+- `tests/test_resize.py::test_physical_growth_with_second_client_pinning_pty_minimum`: a detached smaller client stops pinning the PTY within 2 seconds (RED before `0c6df6d`); the real agent-server paste run also asserts 40×120 with both clients and 46×165 after the smaller one detaches.
 - Real agent-server paste acceptance at installed `c06678a` (`/var/tmp/pi-resize-fix/rust-production/accept-paste.py`, Linux Wayland client): two simultaneous clients each pressed Ctrl+V with a different private-clipboard PNG; the server saved both byte-identical and Pi's editor showed both paths on both clients; bracketed text containing Ctrl+V stayed text; an empty clipboard showed a notice and changed neither images nor editor.
 - Real agent-server acceptance at `fdaa0d6`: both accounts' enabled/active units, launch identity/environment, real SSH/QUIC/Pi input and detach, whole-unit kill/start conversation restore, cancellation and legacy preservation. See the wiki for exact boundaries.
 

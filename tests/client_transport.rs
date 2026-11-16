@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use quinn::Endpoint;
-use remote_agent_rs::client;
-use remote_agent_rs::protocol::{
+use remote_agent::client;
+use remote_agent::protocol::{
     ClientFrame, DisplayUpdate, ServerFrame, Size, Ticket, read_frame, send_frame,
 };
 use rustls::pki_types::PrivatePkcs8KeyDer;

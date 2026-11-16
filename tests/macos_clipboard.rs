@@ -41,7 +41,6 @@ fn native_clipboard_preserves_fixture_pixels() {
         std::env::var("RUNNER_ENVIRONMENT").as_deref(),
         Ok("github-hosted")
     );
-    let actual =
-        remote_agent_rs::local::read_clipboard_png().expect("read native fixture clipboard");
+    let actual = remote_agent::local::read_clipboard_png().expect("read native fixture clipboard");
     assert_eq!(decode_rgba(&actual), decode_rgba(FIXTURE));
 }

@@ -1,22 +1,21 @@
 """Six real QUIC idle outages in one native attachment, within 300 seconds.
 
 Reuse the owned UDP proxy and real Pi component fixture. No production session
-is used. Evidence remains in /var/tmp/pi-resize-fix/rust-retry/.
+is used. Evidence remains in target/native-tests/retry/.
 """
 
 import os
 import re
 import time
 import unittest
-from pathlib import Path
 
-import test_rust_attach as native
-from test_rust_network import NativeRustNetworkTests
+import test_attach as native
+from test_network import NativeRustNetworkTests
 
 
 class NativeRustRetryBudgetTests(NativeRustNetworkTests):
     def setUp(self):
-        native.EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-retry")
+        native.EVIDENCE = native.EVIDENCE_ROOT / "retry"
         native.NativeRustAttachTests.setUp(self)
         self.proxy = None
         self.original_runtime = None

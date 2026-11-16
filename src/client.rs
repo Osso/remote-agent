@@ -202,7 +202,7 @@ async fn close_endpoint(endpoint: Endpoint, reason: &[u8]) {
     let drained =
         tokio::time::timeout(std::time::Duration::from_millis(500), endpoint.wait_idle()).await;
     if drained.is_err() {
-        eprintln!("remote-agent-rs: server did not acknowledge close within 500 ms");
+        eprintln!("remote-agent: server did not acknowledge close within 500 ms");
     }
 }
 
@@ -265,7 +265,7 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                     Err(error) => {
                         let retry = state.record_failure(std::time::Instant::now());
                         state.show_status(&format!(
-                            "remote-agent-rs: connection interrupted: {error:#}; reconnecting"
+                            "remote-agent: connection interrupted: {error:#}; reconnecting"
                         ))?;
                         if !retry {
                             break Err(error.context("reconnect attempts failed for 2 minutes"));
@@ -279,7 +279,7 @@ pub async fn attach(config: &Config, host: &str, user: Option<&str>, name: &str)
                                 current = ticket;
                             }
                             Err(error) => state.show_status(&format!(
-                                "remote-agent-rs: reconnect control: {error:#}"
+                                "remote-agent: reconnect control: {error:#}"
                             ))?,
                         }
                     }
@@ -335,7 +335,7 @@ impl Attachment {
         *self = Self::new(self.size);
         self.consecutive_failures = failures;
         self.failing_since = failing_since;
-        self.show_status("remote-agent-rs: server restarted; pending input was not replayed")
+        self.show_status("remote-agent: server restarted; pending input was not replayed")
     }
 
     /// Count a failed attempt; false once attempts have failed for RECONNECT_BUDGET.
@@ -496,7 +496,7 @@ impl Attachment {
             }
             ServerFrame::Exit { code } => return Ok(Some(code)),
             ServerFrame::Error { message } => {
-                self.show_status(&format!("remote-agent-rs: {message}"))?
+                self.show_status(&format!("remote-agent: {message}"))?
             }
         }
         Ok(None)
@@ -523,7 +523,7 @@ impl Attachment {
                         png,
                     },
                     Err(error) => {
-                        self.show_status(&format!("remote-agent-rs: clipboard paste: {error:#}"))?;
+                        self.show_status(&format!("remote-agent: clipboard paste: {error:#}"))?;
                         continue;
                     }
                 },

@@ -28,11 +28,11 @@ class RustDeployTests(unittest.TestCase):
         for name in (
             "deploy.py",
             "deploy.sh",
-            "remote-agent-rs@.service",
+            "remote-agent@.service",
             "agents.slice",
         ):
             shutil.copy2(ROOT / name, self.repo / name)
-        (self.repo / "Cargo.toml").write_text('[package]\nname="remote-agent-rs"\n')
+        (self.repo / "Cargo.toml").write_text('[package]\nname="remote-agent"\n')
         (self.repo / "Cargo.lock").write_text("# concrete locked source fixture\n")
         (self.repo / "src").mkdir()
         (self.repo / "src/main.rs").write_text("fn main() {}\n")
@@ -60,8 +60,6 @@ class RustDeployTests(unittest.TestCase):
                 '{ "project-' + str(index) + '": {} }\n'
             )
             (home / ".local/bin").mkdir(parents=True)
-            if home != self.client:
-                (home / ".local/bin/remote-agent").write_bytes(b"legacy untouched")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.manager_calls = self.root / "systemctl.jsonl"
@@ -90,12 +88,12 @@ assert (root/'Cargo.lock').read_text() == '# concrete locked source fixture\\n'
 assert (root/'src/main.rs').read_text() == 'fn main() {{}}\\n'
 assert (root/'vendor/vt100/Cargo.toml').read_text() == '[package]\\nname="vt100"\\n'
 assert '--locked' in sys.argv
-assert sys.argv[sys.argv.index('--bin')+1]=='remote-agent-rs'
+assert sys.argv[sys.argv.index('--bin')+1]=='remote-agent'
 target=sys.argv[sys.argv.index('--target')+1]
 with pathlib.Path({str(self.events)!r}).open('a') as out:
  out.write(json.dumps({{'home':os.environ['HOME'],'target':target}})+'\\n')
 if os.environ.get('FAIL_BUILD_HOME')==os.environ['HOME']: sys.exit(37)
-output=root/'target'/target/'release/remote-agent-rs'
+output=root/'target'/target/'release/remote-agent'
 output.parent.mkdir(parents=True,exist_ok=True)
 output.write_bytes(('native:'+target+':'+os.environ.get('BUILD_TAG','one')).encode())
 output.chmod(0o700)
@@ -136,9 +134,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         self.before = self.maps()
 
     def command_link(self, home):
-        # The client command is remote-agent; server units run remote-agent-rs.
-        name = "remote-agent" if home == self.client else "remote-agent-rs"
-        return home / ".local/bin" / name
+        return home / ".local/bin/remote-agent"
 
     def command(self, directory, name, code):
         path = directory / name
@@ -187,20 +183,14 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
     def assert_installed(self, home, target, tag="one"):
         content = f"native:{target}:{tag}".encode()
         digest = hashlib.sha256(content).hexdigest()
-        root = home / ".local/share/remote-agent-rs"
-        binary = root / digest / "remote-agent-rs"
+        root = home / ".local/share/remote-agent"
+        binary = root / digest / "remote-agent"
         link = self.command_link(home)
         self.assertEqual(link.readlink(), binary)
         self.assertEqual(binary.read_bytes(), content)
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(binary.parent.stat().st_mode & 0o777, 0o500)
         self.assertEqual(binary.stat().st_mode & 0o777, 0o500)
-        if home == self.client:
-            self.assertFalse((home / ".local/bin/remote-agent-rs").exists())
-        else:
-            self.assertEqual(
-                (home / ".local/bin/remote-agent").read_bytes(), b"legacy untouched"
-            )
         return binary
 
     def test_linux_build_once_installs_all_accounts_syncing_maps_and_keeping_old_versions(
@@ -230,8 +220,8 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         units = Path(".config/systemd/user")
         for home in (self.server, self.other):
             self.assertEqual(
-                (home / units / "remote-agent-rs@.service").read_bytes(),
-                (ROOT / "remote-agent-rs@.service").read_bytes(),
+                (home / units / "remote-agent@.service").read_bytes(),
+                (ROOT / "remote-agent@.service").read_bytes(),
             )
         self.assertEqual(
             (self.server / units / "agents.slice").read_bytes(),

@@ -42,9 +42,7 @@ pub fn validate_session_name(name: &str) -> Result<()> {
 
 pub fn session_dir(home: &Path, name: &str) -> Result<PathBuf> {
     validate_session_name(name)?;
-    Ok(home
-        .join(".local/state/remote-agent-rs/sessions")
-        .join(name))
+    Ok(home.join(".local/state/remote-agent/sessions").join(name))
 }
 
 pub fn read_launch(state: &Path) -> Result<Launch> {
@@ -88,7 +86,7 @@ pub fn write_private_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 pub fn list_sessions(home: &Path) -> Result<Value> {
-    let root = home.join(".local/state/remote-agent-rs/sessions");
+    let root = home.join(".local/state/remote-agent/sessions");
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -187,7 +185,7 @@ fn read_process_file(path: &Path) -> Result<Option<Vec<u8>>> {
 /// so systemd starts it again at boot and owns its process group.
 fn session_unit(name: &str) -> Result<String> {
     validate_session_name(name)?;
-    Ok(format!("remote-agent-rs@{name}.service"))
+    Ok(format!("remote-agent@{name}.service"))
 }
 
 /// Create the private session record, then enable and start its user unit.
@@ -443,7 +441,7 @@ mod tests {
         assert_eq!(
             session_dir(home.path(), "test-1").unwrap(),
             home.path()
-                .join(".local/state/remote-agent-rs/sessions/test-1")
+                .join(".local/state/remote-agent/sessions/test-1")
         );
     }
     #[test]
@@ -577,7 +575,7 @@ mod tests {
                 "--user",
                 "enable",
                 "--now",
-                "remote-agent-rs@test-1.service"
+                "remote-agent@test-1.service"
             ])]
         );
         assert_eq!(read_launch(&state).unwrap().conversation, "abc");
@@ -607,13 +605,13 @@ mod tests {
                 "--user",
                 "disable",
                 "--now",
-                "remote-agent-rs@test-1.service"
+                "remote-agent@test-1.service"
             ])]
         );
         let failing = tempfile::tempdir().unwrap();
         let systemctl = fake_systemctl(failing.path(), 5);
         let error = stop_session_unit_with(&systemctl, "test-1").unwrap_err();
-        assert!(format!("{error:#}").contains("remote-agent-rs@test-1.service"));
+        assert!(format!("{error:#}").contains("remote-agent@test-1.service"));
         assert!(stop_session_unit_with(&systemctl, "../escape").is_err());
     }
 
@@ -679,8 +677,7 @@ mod tests {
             "ANTHROPIC_AUTH_TOKEN",
             "CLAUDE_CODE_OAUTH_TOKEN",
         ];
-        let previous: Vec<Option<OsString>> =
-            names.iter().map(std::env::var_os).collect();
+        let previous: Vec<Option<OsString>> = names.iter().map(std::env::var_os).collect();
         unsafe {
             std::env::set_var("HOME", home.path());
             std::env::set_var("CLAUDE_CONFIG_DIR", &config_dir);

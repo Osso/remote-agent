@@ -1,5 +1,5 @@
 [package]
-name = "remote-agent-rs"
+name = "remote-agent"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
@@ -28,5 +28,5 @@ tempfile = "3"
 vt100 = { path = "vendor/vt100" }
 
 [[bin]]
-name = "remote-agent-rs"
+name = "remote-agent"
 path = "src/main.rs"

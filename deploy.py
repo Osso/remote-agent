@@ -75,17 +75,17 @@ def require_maps(home):
 def build_binary(source):
     target = native_target()
     subprocess.run(['cargo', 'build', '--locked', '--release', '--bin',
-                    'remote-agent-rs', '--target', target], cwd=source,
+                    'remote-agent', '--target', target], cwd=source,
                    stdout=sys.stderr, check=True,
                    env={**os.environ, 'CARGO_TARGET_DIR': str(source/'target')})
-    content = (source/'target'/target/'release/remote-agent-rs').read_bytes()
+    content = (source/'target'/target/'release/remote-agent').read_bytes()
     return {'target': target, 'binary': base64.b64encode(content).decode(),
             'sha256': hashlib.sha256(content).hexdigest()}
 
 def check_link(link, root):
     if link.is_symlink():
         old = link.readlink()
-        if (old.parent.parent != root or old.name != 'remote-agent-rs'
+        if (old.parent.parent != root or old.name != 'remote-agent'
                 or not re.fullmatch('[0-9a-f]{64}', old.parent.name)
                 or old.parent.is_symlink() or old.is_symlink() or not old.is_file()
                 or hashlib.sha256(old.read_bytes()).hexdigest() != old.parent.name):
@@ -100,7 +100,7 @@ def install_binary(home, payload, command):
     digest = hashlib.sha256(content).hexdigest()
     if digest != payload['sha256']:
         raise RuntimeError('Rust binary content hash mismatch')
-    root = home/'.local/share/remote-agent-rs'
+    root = home/'.local/share/remote-agent'
     link = home/'.local/bin'/command
     if root.is_symlink():
         raise RuntimeError('Not replacing foreign symlink '+str(root))
@@ -108,7 +108,7 @@ def install_binary(home, payload, command):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     version = root/digest
-    binary = version/'remote-agent-rs'
+    binary = version/'remote-agent'
     if version.is_symlink():
         raise RuntimeError('Not replacing foreign symlink '+str(version))
     if version.exists():
@@ -123,7 +123,7 @@ def install_binary(home, payload, command):
         binary.chmod(0o500)
         version.chmod(0o500)
     link.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix='.remote-agent-rs-', dir=link.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix='.remote-agent-', dir=link.parent)
     os.close(descriptor)
     temporary = pathlib.Path(temporary)
     temporary.unlink()
@@ -141,7 +141,7 @@ RUST_PROGRAM = (
     + r"""
 def install_session_unit(home, content):
     # Template for the per-session user units that `start` enables.
-    path = home/'.config/systemd/user/remote-agent-rs@.service'
+    path = home/'.config/systemd/user/remote-agent@.service'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
@@ -181,14 +181,14 @@ if native['os'] != 'Linux':
 if request['action'] == 'probe':
     result = native
 elif request['action'] == 'build':
-    with tempfile.TemporaryDirectory(prefix='remote-agent-rs-build-') as directory:
+    with tempfile.TemporaryDirectory(prefix='remote-agent-build-') as directory:
         source = pathlib.Path(directory)
         with tarfile.open(fileobj=io.BytesIO(base64.b64decode(request['source'])), mode='r:') as archive:
             archive.extractall(source, filter='data')
         result = build_binary(source)
 elif request['action'] == 'install':
-    # The session unit template runs %h/.local/bin/remote-agent-rs.
-    result = install_binary(home, request['payload'], 'remote-agent-rs')
+    # The session unit template runs %h/.local/bin/remote-agent.
+    result = install_binary(home, request['payload'], 'remote-agent')
     install_slice(home, request['slice'])
     install_session_unit(home, request['unit'])
 else:
@@ -249,13 +249,13 @@ def deploy_rust(host):
     )
     native["install_binary"](home, payload, "remote-agent")
     files = {
-        "unit": (ROOT / "remote-agent-rs@.service").read_text(),
+        "unit": (ROOT / "remote-agent@.service").read_text(),
         "slice": (ROOT / "agents.slice").read_text(),
     }
     remote("install", payload=server_payload, **files)
     for user in users:
         remote("install", user, payload=server_payload, **files)
-    print("remote-agent installed locally; remote-agent-rs server installed on " + host)
+    print("remote-agent installed locally; remote-agent server installed on " + host)
 
 
 def install_switcher():

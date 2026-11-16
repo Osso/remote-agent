@@ -153,7 +153,7 @@ impl Config {
         self.projects.clone()
     }
     pub fn state_root(&self) -> PathBuf {
-        self.home.join(".local/state/remote-agent-rs")
+        self.home.join(".local/state/remote-agent")
     }
 
     pub fn default_host(&self) -> Result<String> {
@@ -204,7 +204,7 @@ impl Config {
         let home = PathBuf::from(field(profile, "home")?);
         ensure!(home.is_absolute(), "remote home must be absolute");
         remote.push(
-            home.join(".local/bin/remote-agent-rs")
+            home.join(".local/bin/remote-agent")
                 .to_str()
                 .context("remote home is not UTF-8")?
                 .into(),
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(config.list_projects()["demo"]["extra"], true);
         assert_eq!(
             config.state_root(),
-            home.path().join(".local/state/remote-agent-rs")
+            home.path().join(".local/state/remote-agent")
         );
         assert_eq!(config.default_host().unwrap(), "agent-server");
         assert_eq!(fs::read(map).unwrap(), bytes);
@@ -495,12 +495,12 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8(output.stdout).unwrap(),
-            "/srv/operator/.local/bin/remote-agent-rs\n__as-user\nalice\n__rpc\na'b; $(touch nope)\n"
+            "/srv/operator/.local/bin/remote-agent\n__as-user\nalice\n__rpc\na'b; $(touch nope)\n"
         );
         let normal = config.build_ssh_command("agent-server", None, &[]).unwrap();
         assert_eq!(
             normal.get_args().nth(1).unwrap(),
-            "'/srv/operator/.local/bin/remote-agent-rs'"
+            "'/srv/operator/.local/bin/remote-agent'"
         );
         assert!(config.build_ssh_command("desktop", None, &args).is_err());
         assert!(config.build_ssh_command("missing", None, &args).is_err());

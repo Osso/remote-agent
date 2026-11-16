@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
-use remote_agent_rs::{client, config::Config, control, protocol::*};
+use remote_agent::{client, config::Config, control, protocol::*};
 use serde_json::{Value, json};
 use std::io::Read;
 #[cfg(target_os = "linux")]
@@ -81,7 +81,7 @@ enum Action {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = run(Cli::parse()).await {
-        eprintln!("remote-agent-rs: {error:#}");
+        eprintln!("remote-agent: {error:#}");
         std::process::exit(1);
     }
 }
@@ -90,8 +90,8 @@ async fn run(cli: Cli) -> Result<()> {
     if let Action::AsUser { user, arguments } = &cli.command {
         #[cfg(target_os = "linux")]
         {
-            let account = remote_agent_rs::account::read_account(user)?;
-            let error = remote_agent_rs::account::build_user_command(&account, arguments)?.exec();
+            let account = remote_agent::account::read_account(user)?;
+            let error = remote_agent::account::build_user_command(&account, arguments)?.exec();
             return Err(error).context("execute isolated target-account command");
         }
         #[cfg(not(target_os = "linux"))]
@@ -102,7 +102,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
     if let Action::Serve { state } = &cli.command {
         #[cfg(target_os = "linux")]
-        return remote_agent_rs::server::serve(state.clone()).await;
+        return remote_agent::server::serve(state.clone()).await;
         #[cfg(not(target_os = "linux"))]
         bail!(
             "session server {} requires Linux; this platform supports the client only",

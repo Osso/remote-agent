@@ -1,8 +1,8 @@
 """Bounded native QUIC migration/outage proof; no provider or model requests.
 
 Only the two network cases are loaded. Evidence stays in
-/var/tmp/pi-resize-fix/rust-network/. Requires the same binary and Pi source
-variables as test_rust_attach.py. SSH/systemd are fixture shims; the CLI, QUIC,
+target/native-tests/network/. Requires the same binary and Pi source
+variables as test_attach.py. SSH/systemd are fixture shims; the CLI, QUIC,
 PTY, Pi components, and terminal replay are real.
 """
 
@@ -16,7 +16,7 @@ import time
 import unittest
 from pathlib import Path
 
-import test_rust_attach as native
+import test_attach as native
 
 
 class UdpForwarder:
@@ -85,7 +85,7 @@ class UdpForwarder:
 
 class NativeRustNetworkTests(native.NativeRustAttachTests):
     def setUp(self):
-        native.EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-network")
+        native.EVIDENCE = native.EVIDENCE_ROOT / "network"
         super().setUp()
         self.proxy = None
         self.original_runtime = None

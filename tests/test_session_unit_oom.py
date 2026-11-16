@@ -17,7 +17,7 @@ APPLIED = ("KillMode", "OOMPolicy")
 
 
 def unit_properties():
-    lines = (ROOT / "remote-agent-rs@.service").read_text().splitlines()
+    lines = (ROOT / "remote-agent@.service").read_text().splitlines()
     pairs = (line.split("=", 1) for line in lines if "=" in line)
     return [f"{key}={value}" for key, value in pairs if key in APPLIED]
 

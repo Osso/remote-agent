@@ -1,10 +1,10 @@
 """Native CLI -> QUIC -> session PTY -> real Pi bulk-output regression.
 
-Run directly with Python on Linux. REMOTE_AGENT_RUST_BIN overrides target/debug/
-remote-agent-rs. NODE_PATH and PI_TUI_SOURCE may override the local Pi checkout.
+Run directly with Python on Linux. REMOTE_AGENT_BIN overrides target/debug/
+remote-agent. NODE_PATH and PI_TUI_SOURCE may override the local Pi checkout.
 SSH and systemd-manager bootstrap are substituted; PTYs, QUIC, Rust processes,
 and the Pi TUI are native. No real account, provider, or model is used.
-Evidence, including failed runs, remains in /var/tmp/pi-resize-fix/rust-cli/.
+Evidence, including failed runs, remains in target/native-tests/attach/.
 """
 
 import ctypes
@@ -31,7 +31,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/mosh-resize.ts"
-EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-cli")
+EVIDENCE_ROOT = ROOT / "target/native-tests"
+EVIDENCE = EVIDENCE_ROOT / "attach"
 
 
 def ssh_bootstrap():
@@ -50,7 +51,7 @@ def ssh_bootstrap():
     if len(arguments) != 2 or arguments[0] != "fixture-host":
         raise RuntimeError(f"unexpected SSH bootstrap arguments: {arguments!r}")
     command = shlex.split(arguments[1])
-    expected = [str(root / ".local/bin/remote-agent-rs"), "__rpc"]
+    expected = [str(root / ".local/bin/remote-agent"), "__rpc"]
     if command != expected:
         raise RuntimeError(f"unexpected remote command: {command!r}")
     if (root / "ssh-offline").exists():
@@ -60,7 +61,7 @@ def ssh_bootstrap():
     os.execv(command[0], command)
 
 
-UNIT = re.compile(r"remote-agent-rs@([A-Za-z0-9][A-Za-z0-9_-]*)\.service")
+UNIT = re.compile(r"remote-agent@([A-Za-z0-9][A-Za-z0-9_-]*)\.service")
 
 
 def unit_fixture_state(unit):
@@ -69,15 +70,15 @@ def unit_fixture_state(unit):
         raise RuntimeError(f"unexpected session unit: {unit}")
     return (
         Path(os.environ["RUST_ATTACH_HOME"])
-        / ".local/state/remote-agent-rs/sessions"
+        / ".local/state/remote-agent/sessions"
         / match[1]
     )
 
 
 def start_unit_fixture(state):
-    """Run the server as the installed remote-agent-rs@.service template does."""
+    """Run the server as the installed remote-agent@.service template does."""
     home = Path(os.environ["RUST_ATTACH_HOME"])
-    command = [home / ".local/bin/remote-agent-rs", "__serve", "--state", state]
+    command = [home / ".local/bin/remote-agent", "__serve", "--state", state]
     with (state / "server.log").open("ab") as log:
         process = subprocess.Popen(
             command,
@@ -146,12 +147,12 @@ class NativeRustAttachTests(unittest.TestCase):
             )
         cls.binary = Path(
             os.environ.get(
-                "REMOTE_AGENT_RUST_BIN", ROOT / "target/debug/remote-agent-rs"
+                "REMOTE_AGENT_BIN", ROOT / "target/debug/remote-agent"
             )
         ).resolve()
         if not cls.binary.is_file() or not os.access(cls.binary, os.X_OK):
             raise unittest.SkipTest(
-                f"native Rust binary absent: {cls.binary}; set REMOTE_AGENT_RUST_BIN"
+                f"native Rust binary absent: {cls.binary}; set REMOTE_AGENT_BIN"
             )
         cls.node = shutil.which("node")
         if not cls.node:
@@ -189,7 +190,7 @@ class NativeRustAttachTests(unittest.TestCase):
     def setUp(self):
         EVIDENCE.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(prefix="run-", dir=EVIDENCE))
-        self.state = self.root / ".local/state/remote-agent-rs/sessions/bulk-proof"
+        self.state = self.root / ".local/state/remote-agent/sessions/bulk-proof"
         self.stages = []
         self.master = None
         self.client = None
@@ -241,7 +242,7 @@ class NativeRustAttachTests(unittest.TestCase):
         config.mkdir(parents=True)
         bindir = self.root / ".local/bin"
         bindir.mkdir(parents=True)
-        (bindir / "remote-agent-rs").symlink_to(self.binary)
+        (bindir / "remote-agent").symlink_to(self.binary)
         project = self.root / "project"
         project.mkdir()
         wrapper = bindir / "pi-fixture"
@@ -765,7 +766,7 @@ class NativeRustAttachTests(unittest.TestCase):
                 self.root / ".local/bin/systemctl",
                 "--user",
                 "start",
-                "remote-agent-rs@bulk-proof.service",
+                "remote-agent@bulk-proof.service",
             ],
             env=self.env,
             check=True,

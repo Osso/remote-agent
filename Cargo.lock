@@ -588,7 +588,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "remote-agent-rs"
+name = "remote-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",

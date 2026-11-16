@@ -72,7 +72,7 @@ fn build_pi_command(launch: &Launch) -> Command {
         .current_dir(&launch.cwd)
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
-        .env("TERM_PROGRAM", "remote-agent-rs")
+        .env("TERM_PROGRAM", "remote-agent")
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     // Pi must detect the virtual endpoint, not an inherited physical GUI terminal.
     for name in [

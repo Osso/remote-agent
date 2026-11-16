@@ -3,7 +3,7 @@
 Only the owned upgrade case is loaded. A/B are same-wire ELF images with distinct
 trailers, installed by deploy.py into an isolated HOME. No real SSH or systemd
 manager, account, provider, or model is used. Evidence remains in
-/var/tmp/pi-resize-fix/rust-upgrade/.
+target/native-tests/upgrade/.
 """
 
 import json
@@ -15,9 +15,9 @@ import time
 import unittest
 from pathlib import Path
 
-import test_rust_attach as native
+import test_attach as native
 
-EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-upgrade")
+EVIDENCE = native.EVIDENCE_ROOT / "upgrade"
 INSTALL = """
 import base64, hashlib, json, pathlib, runpy, sys
 support = runpy.run_path(sys.argv[1])['RUST_SUPPORT']
@@ -31,7 +31,7 @@ payload = {
     'binary': base64.b64encode(content).decode(),
     'sha256': hashlib.sha256(content).hexdigest(),
 }
-print(json.dumps(namespace['install_binary'](pathlib.Path.home(), payload, 'remote-agent-rs')))
+print(json.dumps(namespace['install_binary'](pathlib.Path.home(), payload, 'remote-agent')))
 """
 
 
@@ -72,7 +72,7 @@ class NativeRustUpgradeTests(native.NativeRustAttachTests):
         image_b = self.root / "image-b"
         image_a.write_bytes(content + b"\nremote-agent upgrade fixture A\n")
         image_b.write_bytes(content + b"\nremote-agent upgrade fixture B\n")
-        stable = self.root / ".local/bin/remote-agent-rs"
+        stable = self.root / ".local/bin/remote-agent"
         self.assertTrue(stable.is_symlink())
         self.assertEqual(stable.readlink(), self.binary)
         stable.unlink()  # Remove only the base fixture's owned foreign symlink.

@@ -110,9 +110,7 @@ pub fn build_user_command(account: &Account, args: &[String]) -> Result<Command>
         assignment.push(value);
         command.arg(assignment);
     }
-    command
-        .arg(home.join(".local/bin/remote-agent-rs"))
-        .args(args);
+    command.arg(home.join(".local/bin/remote-agent")).args(args);
     Ok(command)
 }
 
@@ -182,7 +180,7 @@ mod tests {
     fn executes_clean_target_environment_through_owned_provider() {
         let directory = tempfile::tempdir().unwrap();
         let account = fixture_account(directory.path().join("nonstandard-home"));
-        let worker = account.home.join(".local/bin/remote-agent-rs");
+        let worker = account.home.join(".local/bin/remote-agent");
         fs::create_dir_all(worker.parent().unwrap()).unwrap();
         let source = directory.path().join("account_probe.rs");
         fs::write(

@@ -25,7 +25,7 @@ class RustLoginTests(unittest.TestCase):
     def setUpClass(cls):
         cls.binary = Path(
             os.environ.get(
-                "REMOTE_AGENT_RUST_BIN", ROOT / "target/debug/remote-agent-rs"
+                "REMOTE_AGENT_BIN", ROOT / "target/debug/remote-agent"
             )
         ).resolve()
         if not cls.binary.is_file():
@@ -55,7 +55,7 @@ class RustLoginTests(unittest.TestCase):
                 {"agent-server": {"ssh": "fixture-host", "home": str(self.operator)}}
             )
         )
-        (self.operator / ".local/bin/remote-agent-rs").symlink_to(self.binary)
+        (self.operator / ".local/bin/remote-agent").symlink_to(self.binary)
         self.install_executable("claude", "native")
         self.install_executable("pi", "pi")
         ssh = self.operator / ".local/bin/ssh"
@@ -66,7 +66,7 @@ class RustLoginTests(unittest.TestCase):
             "assert sys.argv[1:3] == ['-t','fixture-host'], sys.argv[1:]\n"
             "argv=shlex.split(sys.argv[3])\n"
             "home=Path(os.environ['FIXTURE_OPERATOR_HOME'])\n"
-            "assert argv.pop(0)==str(home/'.local/bin/remote-agent-rs')\n"
+            "assert argv.pop(0)==str(home/'.local/bin/remote-agent')\n"
             "if argv[:1]==['__as-user']:\n"
             " assert argv[1]=='allison'\n"
             " home=Path(os.environ['FIXTURE_TARGET_HOME']); argv=argv[2:]\n"

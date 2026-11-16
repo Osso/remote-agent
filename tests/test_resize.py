@@ -1,4 +1,4 @@
-"""Native resize/replay proof. Run after rebuilding REMOTE_AGENT_RUST_BIN.
+"""Native resize/replay proof. Run after rebuilding REMOTE_AGENT_BIN.
 
 Uses only owned local fixture homes, PTYs, QUIC, and real Pi components.
 """
@@ -11,14 +11,13 @@ import shutil
 import struct
 import termios
 import unittest
-from pathlib import Path
 
-import test_rust_attach as fixture
+import test_attach as fixture
 
 
 class NativeRustResizeTests(fixture.NativeRustAttachTests):
     def setUp(self):
-        fixture.EVIDENCE = Path("/var/tmp/pi-resize-fix/rust-resize")
+        fixture.EVIDENCE = fixture.EVIDENCE_ROOT / "resize"
         super().setUp()
         self.peer = None
         self.geometry = (165, 46)

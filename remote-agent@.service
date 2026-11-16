@@ -1,12 +1,12 @@
-# One instance per remote-agent-rs session (%i is the session name).
+# One instance per remote-agent session (%i is the session name).
 # `start` enables it and `cancel` disables it, so enabled sessions start again at boot.
 [Unit]
-Description=remote-agent-rs Pi session %i
+Description=remote-agent Pi session %i
 
 [Service]
 Slice=agents.slice
-ExecStart=%h/.local/bin/remote-agent-rs __serve --state %h/.local/state/remote-agent-rs/sessions/%i
-StandardOutput=append:%h/.local/state/remote-agent-rs/sessions/%i/server.log
+ExecStart=%h/.local/bin/remote-agent __serve --state %h/.local/state/remote-agent/sessions/%i
+StandardOutput=append:%h/.local/state/remote-agent/sessions/%i/server.log
 StandardError=inherit
 KillMode=control-group
 # An OOM-killed tool process must not stop the session: the default `stop` kills Pi.
