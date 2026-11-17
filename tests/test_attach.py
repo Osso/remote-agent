@@ -447,8 +447,11 @@ class NativeRustAttachTests(unittest.TestCase):
         self.assertIn("BULK_LINE_000", history)
         self.assertIn("EVENT_WIDGET" if widgets else "BULK_LINE_079", visible)
         if phase != "bulk":
-            self.assertIn("TABLE_EXPANDED", transcript)
-            self.assertNotIn("TABLE_PENDING", transcript)
+            # Pi repaints only the viewport for off-screen changes (pi 91b189ab5), so the revised
+            # table above it keeps the version last painted there: one of the two, never both.
+            self.assertNotEqual(
+                "TABLE_EXPANDED" in transcript, "TABLE_PENDING" in transcript, phase
+            )
         else:
             self.assertIn("TABLE_PENDING", transcript)
         if phase == "partial":
