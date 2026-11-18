@@ -63,6 +63,7 @@ class RustDeployTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.manager_calls = self.root / "systemctl.jsonl"
+        self.ssh_calls = self.root / "ssh.jsonl"
         for home in (self.server, self.other):
             self.command(
                 home / ".local/bin",
@@ -111,7 +112,8 @@ os.execv(sys.argv[3],sys.argv[3:])
         self.command(
             self.bin,
             "ssh",
-            f"""import os,platform,pwd,shlex,sys,types
+            f"""import json,os,platform,pwd,shlex,sys,types
+with open({str(self.ssh_calls)!r},'a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')
 args=sys.argv[1:]
 while args[0]=='-o': args=args[2:]
 program=shlex.split(args[1])
@@ -148,18 +150,24 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
             for path in (home / ".config/remote-agent").iterdir()
         }
 
-    def deploy(self, mac=False):
+    def deploy(self, mac=False, client_only=False):
         if mac:
+            arguments = (
+                "['deploy.py', '--client-only']" if client_only else "['deploy.py']"
+            )
             command = [
                 sys.executable,
                 "-c",
                 "import platform,runpy,sys; "
                 "platform.system=lambda:'Darwin'; platform.machine=lambda:'arm64'; "
-                f"sys.argv=['deploy.py']; runpy.run_path({str(self.repo / 'deploy.py')!r},run_name='__main__')",
+                f"sys.argv={arguments}; "
+                f"runpy.run_path({str(self.repo / 'deploy.py')!r},run_name='__main__')",
             ]
             self.env["CLIENT_TARGET"] = MAC
         else:
             command = [str(self.repo / "deploy.sh")]
+            if client_only:
+                command.append("--client-only")
         return subprocess.run(
             command, env=self.env, text=True, capture_output=True, timeout=20
         )
@@ -192,6 +200,46 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
         self.assertEqual(binary.parent.stat().st_mode & 0o777, 0o500)
         self.assertEqual(binary.stat().st_mode & 0o777, 0o500)
         return binary
+
+    def test_client_only_replaces_verified_legacy_link_without_contacting_server(self):
+        content = b"verified old client"
+        digest = hashlib.sha256(content).hexdigest()
+        old_binary = (
+            self.client / ".local/share/remote-agent-rs" / digest / "remote-agent-rs"
+        )
+        old_binary.parent.mkdir(parents=True)
+        old_binary.write_bytes(content)
+        link = self.command_link(self.client)
+        link.symlink_to(old_binary)
+        before = self.maps()
+
+        result = self.deploy(client_only=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_installed(self.client, LINUX)
+        self.assertFalse(self.ssh_calls.exists())
+        self.assertFalse(self.manager_calls.exists())
+        self.assertEqual(self.maps(), before)
+        self.assertFalse((self.server / ".local/share/remote-agent").exists())
+
+    def test_client_only_rejects_legacy_link_with_invalid_hash(self):
+        content = b"tampered old client"
+        digest = "0" * 64
+        old_binary = (
+            self.client / ".local/share/remote-agent-rs" / digest / "remote-agent-rs"
+        )
+        old_binary.parent.mkdir(parents=True)
+        old_binary.write_bytes(content)
+        link = self.command_link(self.client)
+        link.symlink_to(old_binary)
+
+        result = self.deploy(client_only=True)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Not replacing foreign symlink", result.stderr)
+        self.assertEqual(link.readlink(), old_binary)
+        self.assertFalse(self.ssh_calls.exists())
+        self.assertFalse((self.server / ".local/share/remote-agent").exists())
 
     def test_linux_build_once_installs_all_accounts_syncing_maps_and_keeping_old_versions(
         self,

@@ -85,7 +85,15 @@ def build_binary(source):
 def check_link(link, root):
     if link.is_symlink():
         old = link.readlink()
-        if (old.parent.parent != root or old.name != 'remote-agent'
+        managed = (
+            old.parent.parent == root and old.name == 'remote-agent'
+        )
+        legacy_root = root.parent/'remote-agent-rs'
+        legacy = (
+            old.parent.parent == legacy_root and old.name == 'remote-agent-rs'
+            and not legacy_root.is_symlink()
+        )
+        if (not (managed or legacy)
                 or not re.fullmatch('[0-9a-f]{64}', old.parent.name)
                 or old.parent.is_symlink() or old.is_symlink() or not old.is_file()
                 or hashlib.sha256(old.read_bytes()).hexdigest() != old.parent.name):
@@ -258,6 +266,14 @@ def deploy_rust(host):
     print("remote-agent installed locally; remote-agent server installed on " + host)
 
 
+def deploy_client():
+    native = {}
+    exec(RUST_SUPPORT, native)
+    payload = native["build_binary"](ROOT)
+    native["install_binary"](Path.home(), payload, "remote-agent")
+    print("remote-agent client installed locally")
+
+
 def install_switcher():
     """Install only the local frontend; preserve remote clients, workers and maps."""
     source = ROOT / "agent-switcher"
@@ -300,6 +316,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=HOSTS, default=DEFAULT_HOST)
     parser.add_argument(
+        "--client-only",
+        action="store_true",
+        help="Install only the local Rust client; do not contact a server",
+    )
+    parser.add_argument(
         "--switcher",
         action="store_true",
         help="Install only the local Pi session switcher",
@@ -307,5 +328,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.switcher:
         install_switcher()
+    elif args.client_only:
+        deploy_client()
     else:
         deploy_rust(args.host)
