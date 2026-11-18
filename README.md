@@ -103,6 +103,9 @@ Each account reads its own private host/project maps. Remote commands require
 
 ### Installation
 
+Run `./deploy.sh --client-only` to install the local client without deploying
+the server.
+
 Run `./deploy.sh [--host HOST]` to install the client locally as
 `~/.local/bin/remote-agent`. Server accounts get `~/.local/bin/remote-agent`,
 which the session unit runs. Deploy copies both local maps byte-for-byte to the
