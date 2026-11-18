@@ -4,7 +4,8 @@
 Description=remote-agent Pi session %i
 
 [Service]
-Slice=agents.slice
+# Sessions stay out of agents.slice: freezing or capping agent workloads must not suspend Pi.
+Slice=remote-agent.slice
 ExecStart=%h/.local/bin/remote-agent __serve --state %h/.local/state/remote-agent/sessions/%i
 StandardOutput=append:%h/.local/state/remote-agent/sessions/%i/server.log
 StandardError=inherit

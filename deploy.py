@@ -165,17 +165,6 @@ def install_maps(home, maps):
         path.chmod(0o600)
         path.write_bytes(base64.b64decode(content))
 
-def install_slice(home, content):
-    # Session units run in agents.slice; never replace a host-provided one.
-    def fragment(user):
-        command = ['systemctl']+(['--user'] if user else [])+['show', 'agents.slice', '-p', 'FragmentPath', '--value']
-        return subprocess.run(command, text=True, capture_output=True, check=True).stdout.strip()
-    path = home/'.config/systemd/user/agents.slice'
-    if fragment(False) or fragment(True) or path.exists() or path.is_symlink():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-
 request = json.load(sys.stdin)
 home = pathlib.Path.home()
 if home != pathlib.Path(request['home']):
@@ -197,7 +186,6 @@ elif request['action'] == 'build':
 elif request['action'] == 'install':
     # The session unit template runs %h/.local/bin/remote-agent.
     result = install_binary(home, request['payload'], 'remote-agent')
-    install_slice(home, request['slice'])
     install_session_unit(home, request['unit'])
 else:
     raise RuntimeError('Unknown Rust deployment action '+request['action'])
@@ -256,10 +244,7 @@ def deploy_rust(host):
         payload if client == server else remote("build", source=bundle_rust_source())
     )
     native["install_binary"](home, payload, "remote-agent")
-    files = {
-        "unit": (ROOT / "remote-agent@.service").read_text(),
-        "slice": (ROOT / "agents.slice").read_text(),
-    }
+    files = {"unit": (ROOT / "remote-agent@.service").read_text()}
     remote("install", payload=server_payload, **files)
     for user in users:
         remote("install", user, payload=server_payload, **files)

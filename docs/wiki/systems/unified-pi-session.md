@@ -94,7 +94,9 @@ This is the single justification inventory for direct `Cargo.toml` dependencies.
 The repository-root `remote-agent@.service` template is installed by
 `deploy.sh` into every server account's `~/.config/systemd/user/`, followed
 by `systemctl --user daemon-reload`. Each session uses the enabled user unit
-`remote-agent@NAME.service` with `Slice=agents.slice` (the user slice).
+`remote-agent@NAME.service` with `Slice=remote-agent.slice`. It is kept apart
+from `agents.slice` because an agent that froze `agents.slice` on 2026-11-18
+suspended every session, including its own.
 Its launch directive is:
 
 ```text

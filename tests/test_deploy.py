@@ -29,7 +29,6 @@ class RustDeployTests(unittest.TestCase):
             "deploy.py",
             "deploy.sh",
             "remote-agent@.service",
-            "agents.slice",
         ):
             shutil.copy2(ROOT / name, self.repo / name)
         (self.repo / "Cargo.toml").write_text('[package]\nname="remote-agent"\n')
@@ -259,7 +258,7 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
             self.assertEqual(path.read_bytes(), f"native:{LINUX}:one".encode())
         self.assert_maps_deployed()
 
-    def test_server_accounts_get_session_unit_slice_and_reload(self):
+    def test_server_accounts_get_session_unit_and_reload(self):
         provided = self.other / ".config/systemd/user/agents.slice"
         provided.parent.mkdir(parents=True)
         provided.write_text("[Slice]\nMemoryMax=1G\n")
@@ -271,24 +270,17 @@ exec(compile(program[2],'<fixture-ssh>','exec'))
                 (home / units / "remote-agent@.service").read_bytes(),
                 (ROOT / "remote-agent@.service").read_bytes(),
             )
-        self.assertEqual(
-            (self.server / units / "agents.slice").read_bytes(),
-            (ROOT / "agents.slice").read_bytes(),
-        )
+        self.assertFalse((self.server / units / "agents.slice").exists())
         self.assertEqual(provided.read_text(), "[Slice]\nMemoryMax=1G\n")
         self.assertFalse((self.client / units).exists())
         calls = [
             json.loads(line) for line in self.manager_calls.read_text().splitlines()
         ]
-        show = ["show", "agents.slice", "-p", "FragmentPath", "--value"]
-        self.assertEqual(
-            [call["args"] for call in calls if call["home"] == str(self.server)],
-            [show, ["--user", *show], ["--user", "daemon-reload"]],
-        )
-        self.assertEqual(
-            [call["args"] for call in calls if call["home"] == str(self.other)],
-            [show, ["--user", *show], ["--user", "daemon-reload"]],
-        )
+        for home in (self.server, self.other):
+            self.assertEqual(
+                [call["args"] for call in calls if call["home"] == str(home)],
+                [["--user", "daemon-reload"]],
+            )
 
     def test_macos_client_builds_linux_source_once_and_redistributes(self):
         result = self.deploy(mac=True)

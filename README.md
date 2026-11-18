@@ -114,8 +114,7 @@ default SSH account's `~/.config/remote-agent/` (`0700`/`0600`). Optional host
 through `authsudo -u USER` with an isolated environment; their maps must already
 exist and are preserved. Missing maps fail explicitly.
 On every server account it installs the repository-root `remote-agent@.service`
-template into `~/.config/systemd/user/`, installs the bundled `agents.slice`
-unless a system or user slice already exists, and runs
+template into `~/.config/systemd/user/` and runs
 `systemctl --user daemon-reload`. Running sessions keep their own binary.
 
 The local client requires Cargo/rustc with edition 2024 support. Supported native
@@ -164,7 +163,8 @@ Ctrl+V sends the local clipboard image to the session. Clipboard
 providers are `wl-paste` (Wayland), `xclip` (X11), or `osascript` (macOS).
 
 `start` enables and starts `remote-agent@NAME.service` in the user's
-`agents.slice`. Enabled units return when the user manager starts at boot;
+`remote-agent.slice`, apart from `agents.slice`, so freezing or capping agent
+workloads cannot suspend a session. Enabled units return when the user manager starts at boot;
 this requires linger. On agent-server, `osso` has `Linger=yes`; `allison` linger
 was enabled with user approval on 2026-10-25. The server reuses `launch.json`:
 Pi's `--session-id UUID` opens an existing conversation in the project, while

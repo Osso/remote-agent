@@ -8,7 +8,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 
 - [x] Manage Pi sessions independently of attached clients, with Linux servers and Linux clients. Keep sessions alive across clean detach and attachment loss.
 - [x] Support installed macOS-to-Linux attachment (arm64 macOS laptop at `7831e16`).
-- [x] Start each session as an enabled systemd user service in the user's `agents.slice`; deploy its template and reload each server account's user manager.
+- [x] Start each session as an enabled systemd user service in the user's `remote-agent.slice`, apart from `agents.slice`, so freezing or capping agent workloads cannot suspend a session; deploy its template and reload each server account's user manager.
 - [x] Keep the session running when the kernel OOM killer kills a process in its unit, such as a tool process (`OOMPolicy=continue`). The default policy stops the whole unit and kills Pi.
 - [x] Cancel by disabling and stopping the service, wait for the server PID to exit, then invoke the configured project cancellation hook with the conversation ID. Repeated stop must be a no-op so a failed hook can be retried. Preserve errors and retry state.
 - [x] Support `remote-agent restart NAME` for the systemd session service on the selected host and user account. Resume the saved conversation. Restart interrupts foreground work and jobs in the service control group; do not promise to restore them.
@@ -50,7 +50,7 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 ## Implementation inventory
 
 - `src/main.rs`, `src/config.rs`, `src/account.rs`, `src/control.rs`: commands, maps, target-account dispatch, launch records and service lifecycle.
-- `remote-agent@.service`, `agents.slice`, `deploy.py`, `deploy.sh`: user service template, slice and installation.
+- `remote-agent@.service`, `deploy.py`, `deploy.sh`: user service template and installation.
 - `src/server.rs`, `src/pty.rs`: QUIC server, in-memory output, snapshot logs and Pi PTY ownership.
 - `src/client.rs`, `src/local.rs`: SSH control, attachment, reconnect, notices, terminal lifetime and clipboard acquisition.
 - `src/terminal.rs`, `src/protocol.rs`: ordered display/replay, terminal parsing, authenticated frames and size limits.

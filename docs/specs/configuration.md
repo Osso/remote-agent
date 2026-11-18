@@ -19,7 +19,7 @@ and `allison`; actual reboot and current macOS CI remain unproven.
 - [x] Resolve `projects` and session operations through RPC to the selected host/account, using that account's private maps.
 - [x] Native Linux `--user` must resolve identity/home through passwd, enter the target home, and execute only the target Rust RPC/login operation through existing `authsudo` authorization. Start with an empty environment plus the 13 explicit account variables; do not inherit administrator credentials.
 - [x] Require selected-host `cargo_build_jobs` as a positive integer string and pass it as `CARGO_BUILD_JOBS`. Pass optional `build_host_scripts` as `BUILD_HOST_SCRIPTS` without an implicit path. Record launch values explicitly in the launch record's environment field.
-- [x] Run each session as an enabled systemd user service in the selected account's user `agents.slice`. Install the service template, the bundled slice when none exists, and reload every server account's user manager during deployment.
+- [x] Run each session as an enabled systemd user service in the selected account's user `remote-agent.slice`, apart from `agents.slice`. Install the service template and reload every server account's user manager during deployment.
 - [x] Identify the server by exact `__serve --state <absolute state path>` argv, without requiring the current installed executable inode, so upgrades preserve manageability.
 - [x] Cancellation must disable and stop the session unit, then wait for the server PID to exit before invoking `pi_cancel_executable` with the conversation ID. Repeated unit stop is a no-op so a failed hook can be retried. Keep errors and saved state available; never run the hook after an identity mismatch or while the server remains alive.
 - [ ] Restore enabled sessions when the user manager starts after an actual reboot, with linger required. Whole-unit kill/start and simulated-reboot tests establish conversation restoration, not actual host reboot acceptance.
@@ -40,11 +40,11 @@ Linger state and service mechanics are recorded in the
 - `deploy.py` — private mapping transfer and Rust installation.
 - `src/account.rs`, `src/config.rs`, `src/main.rs` — native target-account dispatch, map selection and launch environment.
 - `src/control.rs` — launch records, server identity validation and user service lifecycle.
-- `remote-agent@.service`, `agents.slice` — per-session user service template and its slice.
+- `remote-agent@.service` — per-session user service template.
 
 ## Tests asserting this spec
 
-- `tests/test_deploy.py` — real local subprocesses with fixture SSH/rustc/cargo/systemctl/authsudo: map transfer, preserved target maps, slice and unit installation, immutable versions, platform routing and failure handling. No real UID switch or live deployment.
+- `tests/test_deploy.py` — real local subprocesses with fixture SSH/rustc/cargo/systemctl/authsudo: map transfer, preserved target maps, unit installation, immutable versions, platform routing and failure handling. No real UID switch or live deployment.
 - `tests/test_periodic_runtime.py` with `tests/fixtures/periodic-runtime-provider.ts` — installed-Pi integration acceptance for bundled periodic commands, without explicit `--extension` injection. Uses private state and an offline faux provider during held model/tool turns.
 
 Native scheduler/dispatch coverage belongs to [Pi's scheduler spec](https://github.com/Osso/pi/blob/master/docs/specs/periodic-checks.md#tests-asserting-this-spec); this spec makes no bundled-runtime verification claim.
