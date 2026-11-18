@@ -103,7 +103,12 @@ def systemctl_bootstrap():
     path = state / "fixture-unit.json"
     info = json.loads(path.read_text()) if path.exists() else None
     if arguments[1:3] == ["enable", "--now"]:
-        start_unit_fixture(state)
+        # Like systemd, starting an active unit only enables it.
+        # An exited, not yet reaped server has an empty command line.
+        if info and process_exists(info["pid"]) and Path(f"/proc/{info['pid']}/cmdline").read_bytes():
+            path.write_text(json.dumps({**info, "enabled": True}))
+        else:
+            start_unit_fixture(state)
     elif action == "start" and info and info["enabled"]:
         start_unit_fixture(state)
     elif action == "restart" and info and info["enabled"]:
@@ -707,6 +712,52 @@ class NativeRustAttachTests(unittest.TestCase):
             time.sleep(0.02)
         argv = json.loads(argv_log.read_text().splitlines()[-1])
         self.assertEqual(argv[:2], ["--session", started["conversation"]])
+
+    def test_stop_clears_started_mark_and_start_resumes_conversation(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        self.assertTrue(started["started"])
+        stopped = self.cli("stop", "bulk-proof")
+        self.assertFalse(stopped["started"])
+        self.assertFalse(stopped["running"])
+        unit = json.loads((self.state / "fixture-unit.json").read_text())
+        self.assertFalse(unit["enabled"])
+        refused = self.cli("restart", "bulk-proof", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("is not started", refused.stderr)
+        with_options = self.cli("start", "demo", "bulk-proof", "--resume", "x", check=False)
+        self.assertNotEqual(with_options.returncode, 0)
+        self.assertIn("resumes its saved conversation", with_options.stderr)
+
+        resumed = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((resumed["pid"], resumed["child_pid"]))
+        self.assertTrue(resumed["started"])
+        self.assertTrue(resumed["running"])
+        self.assertNotEqual(resumed["pid"], started["pid"])
+        self.assertEqual(resumed["conversation"], started["conversation"])
+        argv_log = self.root / "pi-argv.jsonl"
+        deadline = time.monotonic() + 5
+        while not argv_log.exists() or len(argv_log.read_text().splitlines()) < 2:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        argv = json.loads(argv_log.read_text().splitlines()[-1])
+        self.assertEqual(argv[:2], ["--session", started["conversation"]])
+        again = self.cli("start", "demo", "bulk-proof", check=False)
+        self.assertNotEqual(again.returncode, 0)
+        self.assertIn("already exists and is started", again.stderr)
+
+    def test_start_marks_running_session_recorded_without_mark(self):
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        path = self.state / "launch.json"
+        launch = json.loads(path.read_text())
+        del launch["started"]
+        path.write_text(json.dumps(launch))
+        self.assertFalse(self.cli("status", "bulk-proof")["started"])
+        marked = self.cli("start", "demo", "bulk-proof")
+        self.assertTrue(marked["started"])
+        self.assertEqual(marked["pid"], started["pid"])
+        self.assertEqual(marked["child_pid"], started["child_pid"])
 
     def test_restart_refuses_unrelated_live_server_pid(self):
         started = self.cli("start", "demo", "bulk-proof")

@@ -106,6 +106,10 @@ pub struct Launch {
     pub prompt: Option<String>,
     pub size: Size,
     pub history_bytes: usize,
+    /// Set by `start`, cleared by `stop` and `cancel`: the session is meant to be running.
+    /// Records written before this field existed read as not started.
+    #[serde(default)]
+    pub started: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -130,6 +134,9 @@ pub enum ControlRequest {
         name: String,
     },
     Cancel {
+        name: String,
+    },
+    Stop {
         name: String,
     },
     Restart {

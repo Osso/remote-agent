@@ -47,6 +47,10 @@ enum Action {
     Cancel {
         name: String,
     },
+    /// Stop the session service and clear its started mark; `start PROJECT NAME` resumes it.
+    Stop {
+        name: String,
+    },
     /// Restart the session service; its foreground work and service jobs are interrupted.
     Restart {
         name: String,
@@ -200,6 +204,7 @@ async fn run_client_command(
         Action::Status { name } => ControlRequest::Status { name },
         Action::Logs { name } => ControlRequest::Logs { name },
         Action::Cancel { name } => ControlRequest::Cancel { name },
+        Action::Stop { name } => ControlRequest::Stop { name },
         Action::Restart { name } => ControlRequest::Restart { name },
         _ => bail!("command is not a client action"),
     };
@@ -224,6 +229,12 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         } => {
             let name = name.unwrap_or_else(|| project.clone());
             let state = control::session_dir(home, &name)?;
+            if state.exists() {
+                let has_launch_options =
+                    resume.is_some() || prompt.is_some() || history_bytes.is_some();
+                return start_existing_session(home, &state, &name, &project, has_launch_options)
+                    .await;
+            }
             let (cwd, pi) = config.remote_project(&project)?;
             let history_bytes = history_bytes.unwrap_or(DEFAULT_HISTORY_BYTES);
             ensure!(
@@ -247,6 +258,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 prompt,
                 size: Size { rows: 24, cols: 80 },
                 history_bytes,
+                started: true,
             };
             let child = control::start_session_unit(&launch, &state)?;
             wait_for_runtime(&state, child).await?;
@@ -260,6 +272,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
             Ok(serde_json::to_value(read_running_ticket(home, &name)?)?)
         }
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
+        ControlRequest::Stop { name } => stop_session(home, &name).await,
         ControlRequest::Restart { name } => restart_session(home, &name).await,
         ControlRequest::PiLogin { .. } => bail!("provider login needs a TTY; use login PROVIDER"),
     }
@@ -271,6 +284,11 @@ async fn restart_session(home: &Path, name: &str) -> Result<Value> {
     ensure!(
         launch.name == name,
         "launch name does not match session directory"
+    );
+    ensure!(
+        launch.started,
+        "session {name} is not started; run `remote-agent start {} {name}`",
+        launch.project
     );
     let previous = control::status(home, name)?;
     if let Some(pid) = previous["pid"].as_u64() {
@@ -376,6 +394,26 @@ async fn cancel_session(home: &Path, config: &Config, name: &str) -> Result<Valu
         "session name does not match launch record"
     );
     let hook = config.cancel_hook(&launch.project)?;
+    let conversation = launch.conversation.clone();
+    stop_session_server(&state, launch).await?;
+    invoke_cancel_hook(hook.as_deref(), &conversation)?;
+    Ok(json!({"cancelled":name}))
+}
+
+async fn stop_session(home: &Path, name: &str) -> Result<Value> {
+    let state = control::session_dir(home, name)?;
+    let launch = control::read_launch(&state)?;
+    ensure!(
+        launch.name == name,
+        "session name does not match launch record"
+    );
+    stop_session_server(&state, launch).await?;
+    control::status(home, name)
+}
+
+/// Disable and stop the unit, wait for the recorded server to exit, then clear the started mark.
+/// The mark stays set when stopping fails, so the stop can be retried.
+async fn stop_session_server(state: &Path, mut launch: Launch) -> Result<()> {
     let runtime_path = state.join("runtime.json");
     let runtime: Option<control::Runtime> = if runtime_path.exists() {
         Some(serde_json::from_slice(&std::fs::read(runtime_path)?)?)
@@ -386,16 +424,61 @@ async fn cancel_session(home: &Path, config: &Config, name: &str) -> Result<Valu
         && process_is_live(runtime.pid)?
     {
         ensure!(
-            control::server_matches_state(runtime.pid, &state)?,
+            control::server_matches_state(runtime.pid, state)?,
             "refusing to signal a PID that does not own this session"
         );
     }
-    control::stop_session_unit(name)?;
+    control::stop_session_unit(&launch.name)?;
     if let Some(runtime) = runtime {
         wait_for_session_exit(runtime.pid).await?;
     }
-    invoke_cancel_hook(hook.as_deref(), &launch.conversation)?;
-    Ok(json!({"cancelled":name}))
+    launch.started = false;
+    control::write_private_json(&state.join("launch.json"), &launch)
+}
+
+/// Start the unit of an existing session that is not marked started and mark it.
+/// A running unmarked session (recorded before the mark existed) is only marked.
+async fn start_existing_session(
+    home: &Path,
+    state: &Path,
+    name: &str,
+    project: &str,
+    has_launch_options: bool,
+) -> Result<Value> {
+    let mut launch = control::read_launch(state)?;
+    ensure!(
+        launch.name == name,
+        "session name does not match launch record"
+    );
+    ensure!(
+        !launch.started,
+        "session {name} already exists and is started"
+    );
+    ensure!(
+        launch.project == project,
+        "session {name} belongs to project {}",
+        launch.project
+    );
+    ensure!(
+        !has_launch_options,
+        "starting existing session {name} resumes its saved conversation; --resume, --prompt-file and --history-bytes do not apply"
+    );
+    if control::status(home, name)?["server_running"] != true {
+        // The stale record would satisfy the wait below before the new server writes its own.
+        match std::fs::remove_file(state.join("runtime.json")) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(error).context("remove stale session runtime");
+            }
+            _ => {}
+        }
+    }
+    launch.started = true;
+    launch.resume = true;
+    launch.prompt = None;
+    control::write_private_json(&state.join("launch.json"), &launch)?;
+    let child = control::resume_session_unit(name, state)?;
+    wait_for_runtime(state, child).await?;
+    control::status(home, name)
 }
 
 fn process_is_live(pid: u32) -> Result<bool> {
@@ -426,9 +509,7 @@ async fn wait_for_session_exit(pid: u32) -> Result<()> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    bail!(
-        "session unit stopped but its recorded process remains alive; teardown hook was not invoked"
-    )
+    bail!("session unit stopped but its recorded process remains alive")
 }
 
 fn invoke_cancel_hook(hook: Option<&Path>, conversation: &str) -> Result<()> {

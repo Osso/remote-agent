@@ -136,7 +136,7 @@ pub fn status(home: &Path, name: &str) -> Result<Value> {
     };
     let running = server_running && runtime.as_ref().is_some_and(|r| r.exit_code.is_none());
     Ok(serde_json::json!({
-        "name":name,"project":launch.project,"cwd":launch.cwd,"conversation":launch.conversation,
+        "name":name,"project":launch.project,"cwd":launch.cwd,"conversation":launch.conversation,"started":launch.started,
         "server_running":server_running,"running":running,
         "pid":runtime.as_ref().map(|r|r.pid),"address":runtime.as_ref().map(|r|&r.address),
         "child_pid":runtime.as_ref().and_then(|r|r.child_pid),"exit_code":runtime.as_ref().and_then(|r|r.exit_code)
@@ -218,6 +218,23 @@ fn start_session_unit_with(systemctl: &Path, launch: &Launch, state: &Path) -> R
         .mode(0o600)
         .open(state.join("server.log"))?;
     Command::new(systemctl)
+        .args(["--user", "enable", "--now", &unit])
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log)
+        .spawn()
+        .with_context(|| format!("start session unit {unit}"))
+}
+
+/// Enable and start the unit of an existing session record. Starting a running unit is a no-op.
+pub fn resume_session_unit(name: &str, state: &Path) -> Result<Child> {
+    let unit = session_unit(name)?;
+    let log = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o600)
+        .open(state.join("server.log"))?;
+    Command::new("systemctl")
         .args(["--user", "enable", "--now", &unit])
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
@@ -430,6 +447,7 @@ mod tests {
             prompt: Some("hello".into()),
             size: Size { rows: 24, cols: 80 },
             history_bytes: 1024,
+            started: true,
         }
     }
     #[test]

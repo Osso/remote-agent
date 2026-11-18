@@ -151,7 +151,15 @@ session service and resumes its saved conversation. Restart interrupts foregroun
 work and jobs in the service control group; those jobs, in-progress model turns
 and unsent editor text are not restored.
 
-Other commands are `status NAME` and `cancel NAME`; cancel stops the
+`start` marks the session `started` in its `launch.json`; `list` and `status`
+report the mark. `stop NAME` disables and stops the unit, waits for the server
+to exit, then clears the mark; it keeps the conversation and runs no hook.
+`start PROJECT NAME` on an existing unmarked session marks it and resumes its
+saved conversation (a running session recorded before the mark existed is only
+marked). `restart NAME` refuses unmarked sessions. Restart and deploy sweeps
+must restart only sessions marked `started`.
+
+Other commands are `status NAME` and `cancel NAME`; cancel also clears the mark. It stops the
 enabled user unit with `systemctl --user disable --now`, waits for the server PID
 to exit, then runs the project's `pi_cancel_executable` hook with the conversation
 ID. Repeating the unit stop is a no-op, so a failed hook can be retried.

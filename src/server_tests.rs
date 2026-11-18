@@ -32,6 +32,7 @@ impl Fixture {
                 cols: 165,
             },
             history_bytes: DEFAULT_HISTORY_BYTES,
+            started: true,
         };
         write_private_json(&root.path().join("launch.json"), &launch).unwrap();
         let state = root.path().to_owned();
