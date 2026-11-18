@@ -296,21 +296,38 @@ async fn restart_session(home: &Path, name: &str) -> Result<Value> {
     bail!("restarted session {name} did not become ready")
 }
 
-async fn wait_for_runtime(state: &Path, mut child: std::process::Child) -> Result<()> {
-    for _ in 0..100 {
+const RUNTIME_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const RUNTIME_READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+async fn wait_for_runtime(state: &Path, child: std::process::Child) -> Result<()> {
+    wait_for_runtime_with(state, child, RUNTIME_READY_TIMEOUT, RUNTIME_READY_POLL).await
+}
+
+async fn wait_for_runtime_with(
+    state: &Path,
+    mut child: std::process::Child,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
         if state.join("runtime.json").is_file() {
             return Ok(());
         }
         if let Some(status) = child.try_wait()?
             && !status.success()
         {
-            let log = std::fs::read_to_string(state.join("server.log"))?;
+            let log = std::fs::read_to_string(state.join("server.log")).unwrap_or_default();
             bail!("session launcher exited {status}: {log}");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(poll).await;
     }
     bail!(
-        "session startup timed out; inspect {}",
+        "session startup timed out after {}s; the unit may still be starting, inspect {}",
+        timeout.as_secs(),
         state.join("server.log").display()
     )
 }
@@ -430,4 +447,88 @@ fn invoke_cancel_hook(hook: Option<&Path>, conversation: &str) -> Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+
+    fn session_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("remote-agent-wait-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create session dir");
+        dir
+    }
+
+    fn live_child(seconds: &str) -> std::process::Child {
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("sleep {seconds}"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn child")
+    }
+
+    #[tokio::test]
+    async fn waits_past_the_former_five_second_window() {
+        let state = session_dir("late");
+        std::fs::write(state.join("server.log"), "Created symlink").expect("write log");
+        let child = live_child("8");
+        let ready = state.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5600));
+            std::fs::write(ready.join("runtime.json"), "{}").expect("write runtime");
+        });
+        wait_for_runtime_with(
+            &state,
+            child,
+            std::time::Duration::from_secs(20),
+            std::time::Duration::from_millis(50),
+        )
+        .await
+        .expect("late runtime must be accepted");
+        writer.await.expect("writer task");
+    }
+
+    #[tokio::test]
+    async fn reports_launcher_failure_with_its_log() {
+        let state = session_dir("fail");
+        std::fs::write(state.join("server.log"), "Failed to enable unit").expect("write log");
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 0.1; exit 3")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn child");
+        let error = wait_for_runtime_with(
+            &state,
+            child,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect_err("failed launcher must fail");
+        let message = error.to_string();
+        assert!(message.contains("session launcher exited"), "{message}");
+        assert!(message.contains("Failed to enable unit"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn times_out_when_runtime_never_appears() {
+        let state = session_dir("timeout");
+        let child = live_child("3");
+        let error = wait_for_runtime_with(
+            &state,
+            child,
+            std::time::Duration::from_millis(200),
+            std::time::Duration::from_millis(20),
+        )
+        .await
+        .expect_err("missing runtime must time out");
+        assert!(error.to_string().contains("timed out"), "{error}");
+    }
 }
