@@ -15,8 +15,9 @@ cross-host session discovery service.
   manager. Enable linger if sessions must survive logout or reboot.
 - Install and authenticate Pi independently on the server account. Pi and its
   configuration are user-provisioned, not installed by deploy.
-- Create project checkouts at their mapped remote paths. Provision project build
-  tools, dependencies, permissions and resource limits separately.
+- Create project checkouts at their mapped remote paths, manually or with
+  `remote-agent create`. Provision project build tools, dependencies, permissions
+  and resource limits separately.
 
 ## Mapping setup
 
@@ -156,9 +157,15 @@ remote-agent create creatures --local /syncthing/Sync/Projects/creatures
 It creates the local checkout and the remote checkout (`Projects/PROJECT` by
 default), initializes `master` in both with `git init`, and registers the
 mapping in the local and selected remote account's `remote-projects.json`.
-Existing paths and different mappings under the same name fail without
-overwriting; repeating an identical create reports `"created": false`. The
-command does not commit, push, host a repository, or start a session.
+The local path must be absolute; the remote path must be relative to the remote
+account's home. Both project maps must already exist. When a mapping is new,
+an existing checkout path fails without overwriting it; a different mapping under
+the same name also fails. On a repeat, an identical local mapping is accepted
+without checking its checkout; an identical remote mapping returns `"created": false`
+only if its path is a directory. Map writes use mode `0600`. Local preparation
+happens first and is not rolled back if remote creation fails; retrying can
+complete the remote side. The command does not commit, push, host a repository,
+or start a session.
 
 `restart NAME` targets the selected `--host` and `--user` account's systemd
 session service and resumes its saved conversation. Restart interrupts foreground
