@@ -146,6 +146,20 @@ remote-agent --host agent-server logs demo
 remote-agent --host agent-server login PROVIDER
 ```
 
+`create PROJECT --local PATH [--remote PATH]` prepares a new project on both
+sides, for example:
+
+```text
+remote-agent create creatures --local /syncthing/Sync/Projects/creatures
+```
+
+It creates the local checkout and the remote checkout (`Projects/PROJECT` by
+default), initializes `master` in both with `git init`, and registers the
+mapping in the local and selected remote account's `remote-projects.json`.
+Existing paths and different mappings under the same name fail without
+overwriting; repeating an identical create reports `"created": false`. The
+command does not commit, push, host a repository, or start a session.
+
 `restart NAME` targets the selected `--host` and `--user` account's systemd
 session service and resumes its saved conversation. Restart interrupts foreground
 work and jobs in the service control group; those jobs, in-progress model turns

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -151,6 +151,13 @@ impl Config {
 
     pub fn list_projects(&self) -> Value {
         self.projects.clone()
+    }
+    pub fn read_projects(&self) -> Result<Map<String, Value>> {
+        let value = read_map(&self.projects_path())?;
+        Ok(value.as_object().cloned().unwrap_or_default())
+    }
+    pub fn projects_path(&self) -> PathBuf {
+        self.home.join(".config/remote-agent/remote-projects.json")
     }
     pub fn state_root(&self) -> PathBuf {
         self.home.join(".local/state/remote-agent")

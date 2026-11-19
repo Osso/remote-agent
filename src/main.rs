@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
-use remote_agent::{client, config::Config, control, protocol::*};
+use remote_agent::{client, config::Config, control, project, protocol::*};
 use serde_json::{Value, json};
 use std::io::Read;
 #[cfg(target_os = "linux")]
@@ -56,6 +56,16 @@ enum Action {
         name: String,
     },
     Projects,
+    /// Create a project checkout locally and on the remote account, then map it.
+    Create {
+        project: String,
+        /// Absolute path of the new local checkout.
+        #[arg(long)]
+        local: String,
+        /// Checkout path relative to the remote account home (default: Projects/<PROJECT>).
+        #[arg(long)]
+        remote: Option<String>,
+    },
     /// Sign in to Claude bridge or another Pi provider on the remote account.
     Login {
         provider: String,
@@ -200,6 +210,15 @@ async fn run_client_command(
             }
         }
         Action::Projects => ControlRequest::Projects,
+        Action::Create {
+            project: name,
+            local,
+            remote,
+        } => {
+            let remote = remote.unwrap_or_else(|| format!("Projects/{name}"));
+            create_project(config, host, user, &name, &local, &remote).await?;
+            return Ok(());
+        }
         Action::List => ControlRequest::List,
         Action::Status { name } => ControlRequest::Status { name },
         Action::Logs { name } => ControlRequest::Logs { name },
@@ -214,6 +233,40 @@ async fn run_client_command(
     } else {
         println!("{}", serde_json::to_string_pretty(&response)?);
     }
+    Ok(())
+}
+
+async fn create_project(
+    config: &Config,
+    host: &str,
+    user: Option<&str>,
+    name: &str,
+    local: &str,
+    remote: &str,
+) -> Result<()> {
+    prepare_local(config, name, local, remote)?;
+    let request = ControlRequest::Create {
+        project: name.into(),
+        local: local.into(),
+        remote: remote.into(),
+    };
+    let reply = client::query_remote(config, host, user, &request)
+        .await
+        .with_context(|| {
+            format!("local checkout and mapping are ready at {local}; remote creation failed")
+        })?;
+    println!("{}", serde_json::to_string_pretty(&reply)?);
+    Ok(())
+}
+
+fn prepare_local(config: &Config, name: &str, local: &str, remote: &str) -> Result<()> {
+    let map = config.projects_path();
+    let mut projects = config.read_projects()?;
+    if project::registered(&projects, name, local, remote)? {
+        return Ok(());
+    }
+    project::create_checkout(Path::new(local))?;
+    project::register(&map, &mut projects, name, local, remote)?;
     Ok(())
 }
 
@@ -267,6 +320,15 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         ControlRequest::List => Ok(json!({"sessions":control::list_sessions(home)?})),
         ControlRequest::Status { name } => control::status(home, &name),
         ControlRequest::Projects => Ok(json!({"projects":config.list_projects()})),
+        ControlRequest::Create {
+            project: name,
+            local,
+            remote,
+        } => {
+            let map = config.projects_path();
+            let mut projects = config.read_projects()?;
+            project::create_remote(home, &map, &mut projects, &name, &local, &remote)
+        }
         ControlRequest::Logs { name } => read_logs(&read_running_ticket(home, &name)?).await,
         ControlRequest::Attach { name } => {
             Ok(serde_json::to_value(read_running_ticket(home, &name)?)?)
@@ -551,6 +613,52 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn child")
+    }
+
+    #[test]
+    fn create_prepares_the_local_checkout_and_mapping_once() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(".config/remote-agent");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("remote-hosts.json"),
+            r#"{"agent-server":{"ssh":"agent-server","home":"/home/dev","wrap":[],"windows_shell":false,"cargo_build_jobs":"4"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            config_dir.join("remote-projects.json"),
+            r#"{"engine":{"local":"/src/engine","remote":"Projects/engine"}}"#,
+        )
+        .unwrap();
+        let config = Config::load(home.path()).unwrap();
+        let checkout = home.path().join("demo");
+        let local = checkout.to_str().unwrap();
+
+        prepare_local(&config, "demo", local, "Projects/demo").unwrap();
+        assert!(checkout.join(".git").is_dir());
+        let map: Value =
+            serde_json::from_slice(&std::fs::read(config.projects_path()).unwrap()).unwrap();
+        assert_eq!(
+            map["demo"],
+            json!({"local": local, "remote": "Projects/demo"})
+        );
+        assert_eq!(map["engine"]["remote"], "Projects/engine");
+
+        prepare_local(&config, "demo", local, "Projects/demo").unwrap();
+        let error = prepare_local(&config, "demo", local, "Projects/other").unwrap_err();
+        assert!(error.to_string().contains("already mapped"), "{error}");
+
+        let occupied = home.path().join("occupied");
+        std::fs::create_dir_all(&occupied).unwrap();
+        let error = prepare_local(
+            &config,
+            "occupied",
+            occupied.to_str().unwrap(),
+            "Projects/occupied",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert!(!config.read_projects().unwrap().contains_key("occupied"));
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ pub mod client;
 pub mod config;
 pub mod control;
 pub mod local;
+pub mod project;
 pub mod protocol;
 #[cfg(target_os = "linux")]
 pub mod pty;

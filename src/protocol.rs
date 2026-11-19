@@ -143,6 +143,11 @@ pub enum ControlRequest {
         name: String,
     },
     Projects,
+    Create {
+        project: String,
+        local: String,
+        remote: String,
+    },
     PiLogin {
         provider: String,
     },
