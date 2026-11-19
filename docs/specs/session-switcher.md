@@ -143,7 +143,16 @@ is not live desktop acceptance.
 
 ### Proof ledger
 
-Existing evidence was inspected, not rerun for this documentation update.
+Archive/delete change `08fe79c`:
+
+| Command | Result |
+| --- | --- |
+| `./run-tests.sh unit 'test_switcher_*.py'` | 84/84 pass |
+| `ruff check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_mutations.py tests/test_switcher_deploy.py` | Clean |
+| `ruff format --check` on the same paths | 10 files formatted |
+| `agent-switcher --list` through the installed symlink | 57 sessions, 0 errors |
+
+Earlier evidence was inspected, not rerun for this documentation update.
 Commands below cover `43f4e93b1ca909850a17fefc106beaac94a1e795`;
 `/tmp/pi-switcher/FINAL-VERIFIER-2.md` records full results and applicability.
 
