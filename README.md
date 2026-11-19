@@ -237,7 +237,7 @@ attachment passed at `7831e16` on an arm64 macOS 26.6.2 laptop; see the
 ## Pi session switcher
 
 The local `agent-switcher` provides searchable Pi sessions from the laptop's
-read-only Pi control database, the configured `agent-server` account, and
+Pi control database, the configured `agent-server` account, and
 `allison`'s agent-server sessions (shown as `allison@agent-server`, opened with
 `--user allison`), through its registered installed `remote-agent` client.
 
@@ -259,7 +259,11 @@ local sessions.
 Remote rows are cyan; local rows use the default foreground, with host/state labels
 visible in both groups.
 The prompt and initial list start at the top; typing retains normal search ranking.
-Esc cancels. Errors must remain visible. The desktop binding contract is Super+A
+Esc cancels. Errors must remain visible. Ctrl+A archives the highlighted stopped
+local session; Ctrl+D deletes it after a `[y/N]` confirmation. Archive sets Pi's
+archive flag in place, and delete removes the transcript tree and control rows.
+Both revalidate the selection and refuse running, unknown, and remote sessions.
+The desktop binding contract is Super+A
 for this selector, Super+S unchanged for Noctalia Session Menu, and removal of
 the Settings shortcut.
 

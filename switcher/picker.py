@@ -7,10 +7,21 @@ import os
 import subprocess
 import sys
 import unicodedata
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .inventory import Session
+
+PickAction = Literal["open", "archive", "delete"]
+_EXPECTED_KEYS: dict[str, PickAction] = {"ctrl-a": "archive", "ctrl-d": "delete"}
+
+
+@dataclass(frozen=True)
+class Pick:
+    session: Session
+    action: PickAction
+
 
 REMOTE_ROW_COLOR = "\x1b[36m"
 RESET_COLOR = "\x1b[0m"
@@ -51,8 +62,10 @@ def _render_row(row: str, session: Session) -> str:
     return f"{selector}\t{REMOTE_ROW_COLOR}{label}{RESET_COLOR}"
 
 
-def choose_session(sessions: list[Session], errors: list[str]) -> Session | None:
-    """Return the selected original session, or None for cancellation/empty inventory.
+def choose_session(
+    sessions: list[Session], errors: list[str], notice: str = ""
+) -> Pick | None:
+    """Return the selected session and action, or None for cancellation.
 
     Inventory failures without sessions, fzf failures, and invalid selections raise
     RuntimeError. Display data never supplies commands or session identity.
@@ -87,7 +100,9 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
         selector = hashlib.sha256(repr(session.key).encode("utf-8")).hexdigest()
         rows[selector + "\t" + label] = session
 
-    header = "Enter select / Esc cancel"
+    header = "Enter select / Ctrl+A archive / Ctrl+D delete / Esc cancel"
+    if notice:
+        header = _safe(notice) + "\n" + header
     if safe_errors:
         header += "\nInventory errors: " + "; ".join(safe_errors)
     header += "\n" + display[0]
@@ -109,6 +124,7 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
                 "--no-preview",
                 "--delimiter=\t",
                 "--with-nth=2..",
+                "--expect=ctrl-a,ctrl-d",
                 "--header",
                 header,
                 "--prompt=Session> ",
@@ -130,7 +146,13 @@ def choose_session(sessions: list[Session], errors: list[str]) -> Session | None
         raise RuntimeError(
             f"fzf exited with status {result.returncode}: {_safe(result.stderr).strip()}"
         )
-    selected = result.stdout.removesuffix("\n")
+    lines = result.stdout.splitlines()
+    if len(lines) == 1:
+        key, selected = "", lines[0]
+    elif len(lines) == 2 and lines[0] in {*_EXPECTED_KEYS, ""}:
+        key, selected = lines
+    else:
+        raise RuntimeError("fzf returned an empty, stale, or unrecognized selection")
     if selected not in rows:
         raise RuntimeError("fzf returned an empty, stale, or unrecognized selection")
-    return rows[selected]
+    return Pick(rows[selected], _EXPECTED_KEYS.get(key, "open"))

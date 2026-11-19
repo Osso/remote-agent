@@ -17,7 +17,8 @@ from .inventory import (
     load_remote_sessions,
     local_control_db_path,
 )
-from .picker import choose_session
+from .mutations import archive_local_session, delete_local_session
+from .picker import Pick, choose_session
 
 
 def _refresh_selection(selected: Session) -> Session:
@@ -37,6 +38,30 @@ def _open(selected: Session) -> None:
     open_session(_refresh_selection(selected))
 
 
+def _confirm_delete(session: Session) -> bool:
+    try:
+        answer = input(f"Delete '{session.name}' at {session.cwd}? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().casefold() in {"y", "yes"}
+
+
+def _perform(pick: Pick) -> str | None:
+    """Archive or delete a refreshed local session; None means delete was declined."""
+    session = _refresh_selection(pick.session)
+    if session.backend != "local":
+        verb = "archived" if pick.action == "archive" else "deleted"
+        raise RuntimeError(f"Remote sessions cannot be {verb} from this switcher.")
+    if pick.action == "archive":
+        archive_local_session(local_control_db_path(), session)
+        return f"Archived '{session.name}'."
+    if not _confirm_delete(session):
+        return None
+    session = _refresh_selection(session)
+    delete_local_session(local_control_db_path(), session)
+    return f"Deleted '{session.name}'."
+
+
 def _wait_for_close() -> None:
     try:
         input("Press Enter to close.")
@@ -52,24 +77,29 @@ def _pick() -> int:
     sys.stdout.write(f"\x1b]0;{PICKER_TITLE}\x07")
     sys.stdout.flush()
     last_error: list[str] = []
+    notice = ""
     while True:
         print(
             "Loading laptop and agent-server sessions...", file=sys.stderr, flush=True
         )
         sessions, errors = collect_sessions()
         try:
-            selected = choose_session(sessions, [*errors, *last_error])
+            pick = choose_session(sessions, [*errors, *last_error], notice)
         except RuntimeError as error:
             print(str(error), file=sys.stderr)
             _wait_for_close()
             return 1
-        if selected is None:
+        if pick is None:
             return 0
         try:
-            _open(selected)
-            return 0
+            if pick.action == "open":
+                _open(pick.session)
+                return 0
+            notice = _perform(pick) or ""
+            last_error = []
         except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
             last_error = [str(error)]
+            notice = ""
 
 
 def _parse_arguments(arguments: list[str] | None) -> argparse.Namespace:

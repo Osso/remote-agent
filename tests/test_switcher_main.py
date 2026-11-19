@@ -742,6 +742,90 @@ else:
                     pass
                 os.waitpid(pid, 0)
 
+    def test_picker_ctrl_a_archives_local_session_without_opening_it(self):
+        self.write_picker_fixture([{"key": "ctrl-a", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(), 0)
+        with sqlite3.connect(self.state / "control.sqlite") as db:
+            archived_at = db.execute(
+                "SELECT archived_at FROM session_metadata WHERE session_path = ?",
+                (str(self.session_file),),
+            ).fetchone()[0]
+        self.assertIsNotNone(archived_at)
+        self.assertTrue(self.session_file.is_file())
+        self.assertEqual(self.recorded(), [])
+
+    def test_picker_ctrl_d_deletes_local_session_after_confirmation(self):
+        self.write_picker_fixture([{"key": "ctrl-d", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"y\n"), 0)
+        self.assertFalse(self.session_file.exists())
+        with sqlite3.connect(self.state / "control.sqlite") as db:
+            self.assertIsNone(
+                db.execute(
+                    "SELECT 1 FROM session_metadata WHERE session_path = ?",
+                    (str(self.session_file),),
+                ).fetchone()
+            )
+        self.assertEqual(self.recorded(), [])
+
+    def test_picker_ctrl_d_declined_leaves_session(self):
+        self.write_picker_fixture([{"key": "ctrl-d", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"n\n"), 0)
+        self.assertTrue(self.session_file.is_file())
+
+    def write_picker_fixture(self, plan):
+        counter = self.home / "picker-calls"
+        self.write_command(
+            "fzf",
+            f"""import json, pathlib, re, sys
+rows = [re.sub(r'\\x1b\\[[0-9;]*m', '', row) for row in sys.stdin.read().splitlines()]
+plan = {plan!r}
+count = pathlib.Path({str(counter)!r})
+call = int(count.read_text()) if count.exists() else 0
+count.write_text(str(call + 1))
+entry = plan[call] if call < len(plan) else {{'cancel': True}}
+if entry.get('cancel'):
+    sys.exit(130)
+if entry.get('key'):
+    print(entry['key'])
+print(rows[entry['row']])
+""",
+        )
+
+    def run_picker(self, answers=b""):
+        pid, terminal = pty.fork()
+        if pid == 0:
+            os.execve(
+                sys.executable,
+                [sys.executable, str(SCRIPT), "--pick"],
+                self.environment,
+            )
+        reaped = False
+        output = bytearray()
+        try:
+            if answers:
+                os.write(terminal, answers)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if select.select([terminal], [], [], 0.1)[0]:
+                    try:
+                        chunk = os.read(terminal, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+            _, status = os.waitpid(pid, 0)
+            reaped = True
+            return os.waitstatus_to_exitcode(status)
+        finally:
+            os.close(terminal)
+            if not reaped:
+                try:
+                    os.kill(pid, 15)
+                except ProcessLookupError:
+                    pass
+                os.waitpid(pid, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -76,13 +76,17 @@ class PickerTests(unittest.TestCase):
             self.fail(f"Picker API is not implemented: {error}")
         return picker.choose_session(sessions, errors or [])
 
+    def pick_session(self, sessions, errors=None):
+        result = self.choose(sessions, errors)
+        return None if result is None else result.session
+
     def recorded(self):
         return json.loads(self.record.read_text())
 
     def test_selects_duplicate_unicode_name_by_opaque_identity(self):
         first = self.session("first handle")
         second = self.session("second handle", host="agent-server", status="stopped")
-        self.assertIs(self.choose([first, second]), second)
+        self.assertIs(self.pick_session([first, second]), second)
         record = self.recorded()
         rows = record["stdin"].splitlines()
         self.assertEqual(len(rows), 2)
@@ -103,7 +107,7 @@ class PickerTests(unittest.TestCase):
         )
         local = self.session("local", backend="local", name="Local session")
         self.write_fzf("print(rows[0])")
-        self.assertIs(self.choose([remote, local]), remote)
+        self.assertIs(self.pick_session([remote, local]), remote)
         record = self.recorded()
         remote_row, local_row = record["stdin"].splitlines()
         self.assertIn("\x1b[36mRemote session", remote_row)
@@ -131,15 +135,41 @@ class PickerTests(unittest.TestCase):
             "remote", host="agent-server", backend="remote", name="Remote session"
         )
         local = self.session("local", backend="local", name="Local session")
-        self.assertIs(self.choose([remote, local]), remote)
+        self.assertIs(self.pick_session([remote, local]), remote)
 
     def test_requests_top_to_bottom_layout_without_disabling_search_relevance(self):
         self.write_fzf("print(rows[0])")
         session = self.session("remote", host="agent-server")
-        self.assertIs(self.choose([session]), session)
+        self.assertIs(self.pick_session([session]), session)
         arguments = self.recorded()["argv"]
         self.assertIn("--layout=reverse", arguments)
         self.assertNotIn("--no-sort", arguments)
+
+    def test_ctrl_keys_request_archive_and_delete_for_the_selected_session(self):
+        archive = self.session("archive")
+        delete = self.session("delete")
+        self.write_fzf("print('ctrl-a'); print(rows[0])")
+        pick = self.choose([archive, delete])
+        self.assertEqual((pick.action, pick.session), ("archive", archive))
+        arguments = self.recorded()["argv"]
+        self.assertIn("--expect=ctrl-a,ctrl-d", arguments)
+        header = arguments[arguments.index("--header") + 1]
+        self.assertIn("Ctrl+A archive", header)
+        self.assertIn("Ctrl+D delete", header)
+        self.write_fzf("print('ctrl-d'); print(rows[1])")
+        pick = self.choose([archive, delete])
+        self.assertEqual((pick.action, pick.session), ("delete", delete))
+
+    def test_enter_returns_open_action(self):
+        session = self.session("one")
+        self.write_fzf("print(rows[0])")
+        pick = self.choose([session])
+        self.assertEqual((pick.action, pick.session), ("open", session))
+
+    def test_unexpected_expect_key_is_rejected(self):
+        self.write_fzf("print('ctrl-x'); print(rows[0])")
+        with self.assertRaisesRegex(RuntimeError, "selection"):
+            self.choose([self.session("one")])
 
     def test_aligns_columns_and_keeps_selectors_stable_when_reordered(self):
         sessions = [
@@ -156,7 +186,7 @@ class PickerTests(unittest.TestCase):
         bad = "unsafe\x1b[31m\n\r\t\x00\x7f\x85\u202e"
         session = self.session("one", name=bad, host=bad, cwd=bad, status="unknown")
         self.write_fzf("print(rows[0])")
-        self.assertIs(self.choose([session], ["agent-server: " + bad]), session)
+        self.assertIs(self.pick_session([session], ["agent-server: " + bad]), session)
         record = self.recorded()
         self.assertEqual(len(record["stdin"].splitlines()), 1)
         header = record["argv"][record["argv"].index("--header") + 1]
@@ -184,7 +214,7 @@ class PickerTests(unittest.TestCase):
         for code in (1, 130):
             with self.subTest(code=code):
                 self.write_fzf("pass", code)
-                self.assertIsNone(self.choose([self.session("one")]))
+                self.assertIsNone(self.pick_session([self.session("one")]))
 
     def test_other_exit_codes_raise_with_sanitized_fzf_error(self):
         self.write_fzf("print('invalid option\\x1b[31m', file=sys.stderr)", 2)
@@ -212,7 +242,7 @@ class PickerTests(unittest.TestCase):
     def test_long_names_keep_host_and_state_visible_without_changing_identity(self):
         session = self.session("long", name="Very long session title " * 12)
         self.write_fzf("print(rows[0])")
-        self.assertIs(self.choose([session]), session)
+        self.assertIs(self.pick_session([session]), session)
         row = self.recorded()["stdin"].split("\t", 1)[1]
         self.assertLess(row.index("aso"), 60)
         self.assertIn("…", row)
@@ -221,7 +251,7 @@ class PickerTests(unittest.TestCase):
     def test_empty_healthy_inventory_reports_no_sessions_without_fzf(self):
         output = io.StringIO()
         with contextlib.redirect_stderr(output), contextlib.redirect_stdout(output):
-            self.assertIsNone(self.choose([]))
+            self.assertIsNone(self.pick_session([]))
         self.assertIn("No sessions", output.getvalue())
         self.assertFalse(self.record.exists())
 

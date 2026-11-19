@@ -35,6 +35,22 @@ for the installed remote-agent backend or protocol.
   Fatal chooser errors wait for Enter before exit 1; normal cancellation exits 0.
 - [x] Before any action, re-read the selected entry. Unknown or stale selections
   fail explicitly without fallback.
+
+### Archive and delete
+
+- [x] Ctrl+A archives the highlighted stopped local session: Pi's
+  `session_metadata.archived_at` is set without moving the transcript, which Pi
+  accepts as a legacy archive and later compresses with `pi sessions
+  compress-archived`. Ctrl+D deletes the highlighted stopped local session after
+  a `[y/N]` confirmation: its transcript and subagent descendants go to `trash`
+  (unlink when `trash` fails), then its control rows are removed.
+- [x] Running, `unknown`, and remote sessions are refused with an explicit
+  message before any transcript or database change. A stale selection fails on
+  re-read. A missing transcript is refused for archive and removed as a stale
+  row for delete.
+- [x] Actions revalidate the selection and return to the picker with a visible
+  notice; they never open a session. Inventory reads stay read-only; only the
+  requested action writes.
 - [ ] Ambiguous selections fail explicitly without fallback.
 
 ### Open and resume
@@ -91,6 +107,7 @@ These paths identify the implementation scope; they do not assert acceptance.
 
 - `agent-switcher`: local executable entry point.
 - `switcher/inventory.py`: read-only local control-database and installed remote inventory.
+- `switcher/mutations.py`: local archive and delete writes to Pi's control database and transcripts.
 - `switcher/picker.py`: searchable terminal selection.
 - `switcher/main.py`: command dispatch and visible error handling.
 - `switcher/actions.py`: selection revalidation, local focus/resume, and remote attachment.
@@ -103,10 +120,14 @@ is not live desktop acceptance.
 
 - `tests/test_switcher_inventory.py` (27, including Allison listing and per-account errors): read-only inventory sources, process
   identity, invalid data, partial failures, bounded retries, and remote-first ordering.
-- `tests/test_switcher_picker.py` (15, including `allison@agent-server` display): names/host/state display, selection identity,
+- `tests/test_switcher_picker.py` (18, including action keys): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
-  layout, remote color, and selection through native fzf's ANSI-stripped output.
-- `tests/test_switcher_main.py` (26, including Allison attach with `--user` and
+  layout, remote color, Ctrl+A/Ctrl+D actions, and selection through native fzf's
+  ANSI-stripped output.
+- `tests/test_switcher_mutations.py` (7): archive metadata changes, stopped-only
+  refusal, missing transcripts, descendant deletion, trash fallback, control-row
+  cleanup, and partial-failure reporting.
+- `tests/test_switcher_main.py` (29, including Allison attach with `--user` and
   pane reselection that ignores a same-named default-account client): combined inventory without transcript changes,
   stale selections, stopped-remote refusal, and WezTerm actions with real PTY child
   processes and executable `wezterm`/`niri` fixtures: hidden-tab activation for local
