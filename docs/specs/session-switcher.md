@@ -151,6 +151,7 @@ Archive/delete change `08fe79c`:
 | `ruff check agent-switcher switcher/ tests/test_switcher_inventory.py tests/test_switcher_picker.py tests/test_switcher_main.py tests/test_switcher_mutations.py tests/test_switcher_deploy.py` | Clean |
 | `ruff format --check` on the same paths | 10 files formatted |
 | `agent-switcher --list` through the installed symlink | 57 sessions, 0 errors |
+| Native fzf in isolated tmux | Ctrl+A prints `ctrl-a` then the row; Enter prints an empty first line then the row |
 
 Earlier evidence was inspected, not rerun for this documentation update.
 Commands below cover `43f4e93b1ca909850a17fefc106beaac94a1e795`;
