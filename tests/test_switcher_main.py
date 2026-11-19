@@ -767,6 +767,11 @@ else:
             )
         self.assertEqual(self.recorded(), [])
 
+    def test_picker_ctrl_d_enter_confirms_delete(self):
+        self.write_picker_fixture([{"key": "ctrl-d", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"\n"), 0)
+        self.assertFalse(self.session_file.exists())
+
     def test_picker_ctrl_d_declined_leaves_session(self):
         self.write_picker_fixture([{"key": "ctrl-d", "row": 1}, {"cancel": True}])
         self.assertEqual(self.run_picker(answers=b"n\n"), 0)

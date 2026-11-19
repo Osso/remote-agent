@@ -42,7 +42,7 @@ for the installed remote-agent backend or protocol.
   `session_metadata.archived_at` is set without moving the transcript, which Pi
   accepts as a legacy archive and later compresses with `pi sessions
   compress-archived`. Ctrl+D deletes the highlighted stopped local session after
-  a `[y/N]` confirmation: its transcript and subagent descendants go to `trash`
+  a `[Y/n]` confirmation: its transcript and subagent descendants go to `trash`
   (unlink when `trash` fails), then its control rows are removed.
 - [x] Running, `unknown`, and remote sessions are refused with an explicit
   message before any transcript or database change. A stale selection fails on

@@ -40,10 +40,10 @@ def _open(selected: Session) -> None:
 
 def _confirm_delete(session: Session) -> bool:
     try:
-        answer = input(f"Delete '{session.name}' at {session.cwd}? [y/N] ")
+        answer = input(f"Delete '{session.name}' at {session.cwd}? [Y/n] ")
     except EOFError:
         return False
-    return answer.strip().casefold() in {"y", "yes"}
+    return answer.strip().casefold() in {"", "y", "yes"}
 
 
 def _perform(pick: Pick) -> str | None:

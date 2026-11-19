@@ -260,7 +260,7 @@ Remote rows are cyan; local rows use the default foreground, with host/state lab
 visible in both groups.
 The prompt and initial list start at the top; typing retains normal search ranking.
 Esc cancels. Errors must remain visible. Ctrl+A archives the highlighted stopped
-local session; Ctrl+D deletes it after a `[y/N]` confirmation. Archive sets Pi's
+local session; Ctrl+D deletes it after a `[Y/n]` confirmation. Archive sets Pi's
 archive flag in place, and delete removes the transcript tree and control rows.
 Both revalidate the selection and refuse running, unknown, and remote sessions.
 The desktop binding contract is Super+A
