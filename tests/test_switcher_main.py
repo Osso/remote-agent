@@ -714,6 +714,18 @@ else:
         )
         self.assertEqual(spawn["socket"], str(live))
 
+    def test_live_gui_spawn_failure_is_reported_on_the_desktop(self):
+        self.live_gui_socket()
+        (self.home / "gui-unreachable").touch()
+        result = self.run_cli()
+        self.assertNotEqual(result.returncode, 0)
+        attempted, alert = self.recorded()
+        self.assertEqual(
+            attempted["args"][:4], ["cli", "--no-auto-start", "spawn", "--new-window"]
+        )
+        self.assertEqual(alert["program"], "notify-send")
+        self.assertIn("gui-sock-1553894", alert["args"][-1])
+
     def test_wezterm_start_failure_is_reported_on_the_desktop(self):
         (self.home / "gui-unreachable").touch()
         result = self.run_cli()
