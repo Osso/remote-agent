@@ -14,6 +14,7 @@ import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agent-switcher"
@@ -882,6 +883,35 @@ print(rows[entry['row']])
                 except ProcessLookupError:
                     pass
                 os.waitpid(pid, 0)
+
+
+class SwitcherLaunchTests(unittest.TestCase):
+    """Launcher fallbacks that a fake WezTerm cannot reach."""
+
+    def test_unreadable_socket_table_reports_unknown_liveness(self):
+        sys.path.insert(0, str(ROOT))
+        self.addCleanup(sys.path.remove, str(ROOT))
+        from switcher import main
+
+        with mock.patch.object(main.Path, "read_text", side_effect=OSError("denied")):
+            self.assertIsNone(main._live_gui_sockets())
+
+    def test_unknown_gui_liveness_only_spawns_into_an_existing_gui(self):
+        sys.path.insert(0, str(ROOT))
+        self.addCleanup(sys.path.remove, str(ROOT))
+        from switcher import main
+
+        with (
+            mock.patch.object(main, "_live_gui_sockets", return_value=None),
+            mock.patch.object(main.subprocess, "run") as run,
+        ):
+            run.return_value = mock.Mock(returncode=0)
+            self.assertEqual(main._launch_picker(), 0)
+        self.assertEqual(
+            run.call_args.args[0][:4],
+            ["wezterm", "cli", "--no-auto-start", "spawn"],
+        )
+        self.assertIsNone(run.call_args.kwargs["env"])
 
 
 if __name__ == "__main__":

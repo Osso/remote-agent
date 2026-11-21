@@ -156,17 +156,17 @@ def _wezterm_runtime_dir() -> Path:
     return Path(base) / "wezterm"
 
 
-def _live_gui_sockets() -> list[Path]:
+def _live_gui_sockets() -> list[Path] | None:
     """GUI sockets a live WezTerm still listens on, ignoring stale socket files.
 
     A crashed GUI leaves gui-sock files and a discovery symlink behind; only a
-    bound socket appears in /proc/net/unix.
+    bound socket appears in /proc/net/unix. None means liveness is unknown.
     """
     prefix = str(_wezterm_runtime_dir()) + "/"
     try:
         table = Path("/proc/net/unix").read_text()
     except OSError:
-        return []
+        return None
     paths = {
         columns[-1]
         for columns in (line.split() for line in table.splitlines()[1:])
@@ -205,10 +205,10 @@ def _launch_picker() -> int:
     """Spawn the picker into a live GUI, or start the only GUI when none is live."""
     launcher = str(Path(sys.argv[0]).resolve())
     live = _live_gui_sockets()
-    if not live:
+    if live is not None and not live:
         return _run_wezterm(["wezterm", "start", "--", launcher, "--pick"])
     environment = None
-    if _discovery_socket() not in live:
+    if live and _discovery_socket() not in live:
         environment = {**os.environ, "WEZTERM_UNIX_SOCKET": str(live[0])}
     return _run_wezterm(
         [
