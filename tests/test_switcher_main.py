@@ -896,7 +896,7 @@ class SwitcherLaunchTests(unittest.TestCase):
         with mock.patch.object(main.Path, "read_text", side_effect=OSError("denied")):
             self.assertIsNone(main._live_gui_sockets())
 
-    def test_unknown_gui_liveness_only_spawns_into_an_existing_gui(self):
+    def test_unknown_gui_liveness_reports_and_starts_nothing(self):
         sys.path.insert(0, str(ROOT))
         self.addCleanup(sys.path.remove, str(ROOT))
         from switcher import main
@@ -904,14 +904,18 @@ class SwitcherLaunchTests(unittest.TestCase):
         with (
             mock.patch.object(main, "_live_gui_sockets", return_value=None),
             mock.patch.object(main.subprocess, "run") as run,
+            self.assertRaises(RuntimeError),
         ):
-            run.return_value = mock.Mock(returncode=0)
-            self.assertEqual(main._launch_picker(), 0)
+            main._launch_picker()
         self.assertEqual(
-            run.call_args.args[0][:4],
-            ["wezterm", "cli", "--no-auto-start", "spawn"],
+            [(call.args[0][0], call.args[0][-1]) for call in run.call_args_list],
+            [
+                (
+                    "notify-send",
+                    "Cannot read WezTerm socket liveness; no GUI was started.",
+                )
+            ],
         )
-        self.assertIsNone(run.call_args.kwargs["env"])
 
 
 if __name__ == "__main__":

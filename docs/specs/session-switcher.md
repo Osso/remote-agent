@@ -29,9 +29,8 @@ for the installed remote-agent backend or protocol.
   `gui-sock-*` sockets, so a stale discovery symlink
   (`/run/user/UID/wezterm/<display>-org.wezfurlong.wezterm`) or stale socket file
   never starts a second GUI; a live socket missing from the discovery link is
-  passed as `WEZTERM_UNIX_SOCKET`. When socket liveness cannot be read, it only
-  spawns into an existing GUI and never auto-starts one. Failures are reported
-  with `notify-send`.
+  passed as `WEZTERM_UNIX_SOCKET`. When socket liveness cannot be read, it reports
+  the failure and starts nothing. Failures are reported with `notify-send`.
   `--pick` runs the selector in the current terminal; `--open KEY` acts on one
   selected entry.
 - [x] Search covers local and remote entries. Esc cancels without opening a
@@ -140,7 +139,7 @@ is not live desktop acceptance.
   attach-argument variants, multiple-window refusal, malformed pane inventory, the
   `cli spawn --new-window` launcher argv, starting the only GUI when none is live,
   a stale discovery link that reuses the live GUI instead of starting a second, and
-  an unreadable socket table that never auto-starts a GUI.
+  an unreadable socket table that reports and starts nothing.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
   the error, live dismissal wait, Enter, and exit 1.
 - `tests/test_switcher_deploy.py` (3): repeatable local-only installation, unchanged

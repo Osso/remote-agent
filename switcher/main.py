@@ -187,13 +187,7 @@ def _discovery_socket() -> Path | None:
     return candidates[0].resolve() if candidates else None
 
 
-def _run_wezterm(command: list[str], environment: dict[str, str] | None = None) -> int:
-    result = subprocess.run(
-        command, env=environment, capture_output=True, text=True, check=False
-    )
-    if not result.returncode:
-        return 0
-    error = f"Cannot open the picker in WezTerm: {result.stderr.strip() or result.returncode}"
+def _report_failure(error: str) -> None:
     subprocess.run(
         ["notify-send", "--app-name=agent-switcher", "Agent switcher", error],
         check=False,
@@ -201,14 +195,27 @@ def _run_wezterm(command: list[str], environment: dict[str, str] | None = None) 
     raise RuntimeError(error)
 
 
+def _run_wezterm(command: list[str], environment: dict[str, str] | None = None) -> int:
+    result = subprocess.run(
+        command, env=environment, capture_output=True, text=True, check=False
+    )
+    if result.returncode:
+        _report_failure(
+            f"Cannot open the picker in WezTerm: {result.stderr.strip() or result.returncode}"
+        )
+    return 0
+
+
 def _launch_picker() -> int:
     """Spawn the picker into a live GUI, or start the only GUI when none is live."""
     launcher = str(Path(sys.argv[0]).resolve())
     live = _live_gui_sockets()
-    if live is not None and not live:
+    if live is None:
+        _report_failure("Cannot read WezTerm socket liveness; no GUI was started.")
+    if not live:
         return _run_wezterm(["wezterm", "start", "--", launcher, "--pick"])
     environment = None
-    if live and _discovery_socket() not in live:
+    if _discovery_socket() not in live:
         environment = {**os.environ, "WEZTERM_UNIX_SOCKET": str(live[0])}
     return _run_wezterm(
         [
