@@ -50,10 +50,13 @@ class SwitcherMainTests(unittest.TestCase):
         self.remote_file.write_text(json.dumps({"sessions": self.remote}))
         self.allison_file = self.home / "allison.json"
         self.allison_file.write_text(json.dumps({"sessions": []}))
+        self.runtime = self.home / "wezterm"
+        self.runtime.mkdir()
         self.environment = {
             **os.environ,
             "HOME": str(self.home),
             "PI_CODING_AGENT_STATE_DIR": str(self.state),
+            "XDG_RUNTIME_DIR": str(self.home),
             "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
         }
         self.write_command(
@@ -76,14 +79,16 @@ with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({
         self.set_panes([self.pane(30, window=3, tty="/dev/pts/unrelated")])
         self.write_command(
             "wezterm",
-            f"""import json,pathlib,sys
+            f"""import json,os,pathlib,sys
 args=sys.argv[1:]
+event={{'program':'wezterm','args':args}}
+if os.environ.get('WEZTERM_UNIX_SOCKET'): event['socket']=os.environ['WEZTERM_UNIX_SOCKET']
 if args[-3:]==['list','--format','json']: print(pathlib.Path({str(self.panes_file)!r}).read_text())
 elif pathlib.Path({str(self.home / "gui-unreachable")!r}).exists():
- with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'wezterm','args':args}})+'\\n')
+ with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps(event)+'\\n')
  sys.exit('failed to connect to Socket("/run/user/1000/wezterm/gui-sock-1553894")')
 else:
- with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'wezterm','args':args}})+'\\n')
+ with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps(event)+'\\n')
  if 'spawn' in args: print(77)
 """,
         )
@@ -164,6 +169,15 @@ else:
                     *(["2026-10-25T12:00:00Z"] * 3),
                 ),
             )
+
+    def live_gui_socket(self, pid=4242):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        path = self.runtime / f"gui-sock-{pid}"
+        listener.bind(str(path))
+        listener.listen()
+        self.addCleanup(listener.close)
+        self.addCleanup(path.unlink)
+        return path
 
     def run_cli(self, *args):
         return subprocess.run(
@@ -651,7 +665,8 @@ else:
         self.assertIn("2 wezterm windows", result.stderr.lower())
         self.assertEqual(self.recorded(), [])
 
-    def test_desktop_launcher_opens_the_selector_in_wezterm_not_a_new_pi(self):
+    def test_desktop_launcher_spawns_into_the_running_wezterm(self):
+        live = self.live_gui_socket()
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -668,18 +683,43 @@ else:
                         str(SCRIPT),
                         "--pick",
                     ],
+                    "socket": str(live),
                 }
             ],
         )
 
-    def test_unreachable_wezterm_reports_on_the_desktop_without_a_second_gui(self):
+    def test_desktop_launcher_starts_the_only_gui_when_none_is_running(self):
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.recorded(),
+            [
+                {
+                    "program": "wezterm",
+                    "args": ["start", "--", str(SCRIPT), "--pick"],
+                }
+            ],
+        )
+
+    def test_stale_discovery_link_never_starts_a_second_gui(self):
+        live = self.live_gui_socket()
+        stale = self.runtime / "wayland-wayland-1-org.wezfurlong.wezterm"
+        stale.symlink_to(self.runtime / "gui-sock-21167")
+        self.environment["WAYLAND_DISPLAY"] = "wayland-1"
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (spawn,) = self.recorded()
+        self.assertEqual(
+            spawn["args"][:4], ["cli", "--no-auto-start", "spawn", "--new-window"]
+        )
+        self.assertEqual(spawn["socket"], str(live))
+
+    def test_wezterm_start_failure_is_reported_on_the_desktop(self):
         (self.home / "gui-unreachable").touch()
         result = self.run_cli()
         self.assertNotEqual(result.returncode, 0)
         attempted, alert = self.recorded()
-        self.assertEqual(
-            attempted["args"][:4], ["cli", "--no-auto-start", "spawn", "--new-window"]
-        )
+        self.assertEqual(attempted["args"], ["start", "--", str(SCRIPT), "--pick"])
         self.assertEqual(alert["program"], "notify-send")
         self.assertIn("gui-sock-1553894", alert["args"][-1])
 

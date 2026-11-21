@@ -251,7 +251,8 @@ agent-switcher --open KEY
 
 Deployment is local-only; it does not replace the remote backend, server, or
 protocol. The selector requires WezTerm and fzf; window focus uses Niri.
-Default invocation opens a WezTerm window with fzf; `--pick` uses the current terminal,
+Default invocation opens a WezTerm window with fzf, starting WezTerm when it is not
+running; `--pick` uses the current terminal,
 `--list` emits JSON, and `--open` revalidates a selection key before acting.
 Session IDs listed one per line in `~/.config/agent-switcher/pinned` appear at
 the top, in file order. Named remote sessions follow, alphabetically, above the

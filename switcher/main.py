@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import socket
 import sqlite3
 import subprocess
@@ -150,10 +151,66 @@ def run(arguments: list[str] | None = None) -> int:
     return _launch_picker()
 
 
-def _launch_picker() -> int:
-    """Open the picker window inside the running WezTerm GUI; never start another GUI."""
-    launcher = str(Path(sys.argv[0]).resolve())
+def _wezterm_runtime_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    return Path(base) / "wezterm"
+
+
+def _live_gui_sockets() -> list[Path]:
+    """GUI sockets a live WezTerm still listens on, ignoring stale socket files.
+
+    A crashed GUI leaves gui-sock files and a discovery symlink behind; only a
+    bound socket appears in /proc/net/unix.
+    """
+    prefix = str(_wezterm_runtime_dir()) + "/"
+    try:
+        table = Path("/proc/net/unix").read_text()
+    except OSError:
+        return []
+    paths = {
+        columns[-1]
+        for columns in (line.split() for line in table.splitlines()[1:])
+        if columns
+        and columns[-1].startswith(prefix)
+        and Path(columns[-1]).name.startswith("gui-sock-")
+    }
+    return sorted(Path(path) for path in paths)
+
+
+def _discovery_socket() -> Path | None:
+    display = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
+    links = sorted(_wezterm_runtime_dir().glob("*-org.wezfurlong.wezterm"))
+    preferred = [
+        link for link in links if display and link.name.startswith(display + "-")
+    ]
+    candidates = preferred or links
+    return candidates[0].resolve() if candidates else None
+
+
+def _run_wezterm(command: list[str], environment: dict[str, str] | None = None) -> int:
     result = subprocess.run(
+        command, env=environment, capture_output=True, text=True, check=False
+    )
+    if not result.returncode:
+        return 0
+    error = f"Cannot open the picker in WezTerm: {result.stderr.strip() or result.returncode}"
+    subprocess.run(
+        ["notify-send", "--app-name=agent-switcher", "Agent switcher", error],
+        check=False,
+    )
+    raise RuntimeError(error)
+
+
+def _launch_picker() -> int:
+    """Spawn the picker into a live GUI, or start the only GUI when none is live."""
+    launcher = str(Path(sys.argv[0]).resolve())
+    live = _live_gui_sockets()
+    if not live:
+        return _run_wezterm(["wezterm", "start", "--", launcher, "--pick"])
+    environment = None
+    if _discovery_socket() not in live:
+        environment = {**os.environ, "WEZTERM_UNIX_SOCKET": str(live[0])}
+    return _run_wezterm(
         [
             "wezterm",
             "cli",
@@ -164,18 +221,8 @@ def _launch_picker() -> int:
             launcher,
             "--pick",
         ],
-        capture_output=True,
-        text=True,
-        check=False,
+        environment,
     )
-    if result.returncode:
-        error = f"Cannot open the picker in the running WezTerm: {result.stderr.strip() or result.returncode}"
-        subprocess.run(
-            ["notify-send", "--app-name=agent-switcher", "Agent switcher", error],
-            check=False,
-        )
-        raise RuntimeError(error)
-    return 0
 
 
 def main() -> int:
