@@ -64,7 +64,9 @@ class InventoryTests(unittest.TestCase):
             " print('ssh: Connection refused', file=sys.stderr); sys.exit(1)\n"
             "if mode == 'permanent':\n"
             " print('Permission denied (publickey)', file=sys.stderr); sys.exit(1)\n"
-            "if '--user' not in sys.argv: print((root / 'payload.json').read_text())\n"
+            "if '--host' in sys.argv and sys.argv[sys.argv.index('--host') + 1] == 'aso':\n"
+            " print((root / 'aso-payload.json').read_text() if (root / 'aso-payload.json').exists() else '{\"sessions\": []}')\n"
+            "elif '--user' not in sys.argv: print((root / 'payload.json').read_text())\n"
             "elif (root / 'allison-payload.json').exists():\n"
             " print((root / 'allison-payload.json').read_text())\n"
             "else: print('{\"sessions\": []}')\n"
@@ -408,6 +410,7 @@ class InventoryTests(unittest.TestCase):
             [
                 "Remote inventory (agent-server)",
                 "Remote inventory (allison@agent-server)",
+                "Remote inventory (aso)",
             ],
         )
 
@@ -428,6 +431,44 @@ class InventoryTests(unittest.TestCase):
         self.assertNotEqual(sessions[0].key, sessions[1].key)
         self.assertIn(
             ["--host", "agent-server", "--user", "allison", "list"],
+            [json.loads(line) for line in self.requests.read_text().splitlines()],
+        )
+
+    def test_collect_lists_aso_sessions_under_its_host(self):
+        self.remote_payload([self.remote_row(name="Own")])
+        (self.root / "aso-payload.json").write_text(
+            json.dumps({"sessions": [self.remote_row(name="Aso ops")]})
+        )
+        sessions, errors = inventory.collect_sessions()
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [(s.name, s.host, s.user) for s in sessions],
+            [
+                ("Aso ops", "aso", None),
+                ("Own", "agent-server", None),
+            ],
+        )
+        self.assertNotEqual(sessions[0].key, sessions[1].key)
+        self.assertIn(
+            ["--host", "aso", "list"],
+            [json.loads(line) for line in self.requests.read_text().splitlines()],
+        )
+
+    def test_collect_skips_the_remote_source_for_the_local_host(self):
+        self.remote_payload([self.remote_row(name="Own")])
+        with (
+            patch("switcher.inventory.socket.gethostname", return_value="aso"),
+            patch.object(
+                inventory, "REMOTE_SOURCES", (("aso", None), ("agent-server", None))
+            ),
+        ):
+            sessions, errors = inventory.collect_sessions()
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [(s.name, s.host) for s in sessions], [("Own", "agent-server")]
+        )
+        self.assertNotIn(
+            ["--host", "aso", "list"],
             [json.loads(line) for line in self.requests.read_text().splitlines()],
         )
 

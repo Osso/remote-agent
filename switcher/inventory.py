@@ -16,8 +16,13 @@ from typing import Literal
 
 _REMOTE_TIMEOUT = 10
 _FRESH_SECONDS = 5 * 60  # Pi SESSION_CHECK_STALE_MS.
-# Remote accounts listed besides the SSH default; None is the default account.
-REMOTE_USERS = (None, "allison")
+# Remote host/account sources besides the local laptop; None is the default
+# account.
+REMOTE_SOURCES = (
+    ("agent-server", None),
+    ("agent-server", "allison"),
+    ("aso", None),
+)
 
 
 @dataclass(frozen=True)
@@ -334,18 +339,19 @@ def pinned_session_ids() -> list[str]:
 
 def collect_sessions() -> tuple[list[Session], list[str]]:
     """Merge independent sources; return source errors for visible presentation."""
+    local_host = socket.gethostname()
     sessions: list[Session] = []
     errors: list[str] = []
     try:
-        sessions.extend(
-            load_local_sessions(local_control_db_path(), socket.gethostname())
-        )
+        sessions.extend(load_local_sessions(local_control_db_path(), local_host))
     except (OSError, sqlite3.Error, ValueError) as error:
         errors.append(f"Local inventory: {error}")
-    for user in REMOTE_USERS:
-        source = f"{user}@agent-server" if user else "agent-server"
+    for host, user in REMOTE_SOURCES:
+        if user is None and host.lower() == local_host.lower():
+            continue
+        source = f"{user}@{host}" if user else host
         try:
-            sessions.extend(load_remote_sessions(user=user))
+            sessions.extend(load_remote_sessions(host=host, user=user))
         except InventoryError as error:
             sessions.extend(error.sessions)
             errors.append(f"Remote inventory ({source}): {error}")

@@ -51,6 +51,8 @@ class SwitcherMainTests(unittest.TestCase):
         self.remote_file.write_text(json.dumps({"sessions": self.remote}))
         self.allison_file = self.home / "allison.json"
         self.allison_file.write_text(json.dumps({"sessions": []}))
+        self.aso_file = self.home / "aso.json"
+        self.aso_file.write_text(json.dumps({"sessions": []}))
         self.runtime = self.home / "wezterm"
         self.runtime.mkdir()
         self.environment = {
@@ -64,7 +66,8 @@ class SwitcherMainTests(unittest.TestCase):
             "remote-agent",
             f"""import json,pathlib,sys
 args=sys.argv[1:]
-if args[-1]=='list' and '--user' in args: print(pathlib.Path({str(self.allison_file)!r}).read_text())
+if args[-1]=='list' and '--host' in args and args[args.index('--host')+1]=='aso': print(pathlib.Path({str(self.aso_file)!r}).read_text())
+elif args[-1]=='list' and '--user' in args: print(pathlib.Path({str(self.allison_file)!r}).read_text())
 elif args[-1]=='list': print(pathlib.Path({str(self.remote_file)!r}).read_text())
 else:
  with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'remote-agent','args':args}})+'\\n')
@@ -490,6 +493,29 @@ else:
             self.recorded()[0]["args"][-7:],
             ["remote-agent", "--host", "agent-server", "--user", "allison"]
             + ["attach", "remote-work"],
+        )
+
+    def aso_entry_key(self):
+        self.aso_file.write_text(
+            json.dumps({"sessions": [{**self.remote[0], "cwd": "/home/aso/p"}]})
+        )
+        entries = [
+            e
+            for e in self.inventory()["sessions"]
+            if e["host"] == "aso"
+        ]
+        self.assertEqual(
+            [(e["host"], e["name"], e["cwd"]) for e in entries],
+            [("aso", "remote-work", "/home/aso/p")],
+        )
+        return entries[0]["key"]
+
+    def test_aso_session_with_a_shared_name_attaches_to_aso(self):
+        result = self.run_cli("--open", self.aso_entry_key())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.recorded()[0]["args"][-5:],
+            ["remote-agent", "--host", "aso", "attach", "remote-work"],
         )
 
     def test_attached_allison_tab_is_activated_without_another_attach(self):

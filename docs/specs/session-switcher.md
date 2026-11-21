@@ -1,9 +1,9 @@
 # Pi session switcher
 
 `agent-switcher` provides a searchable terminal selector for Pi sessions on the
-local laptop and managed sessions on `agent-server`. Its Python standard-library
-source lives in `switcher/`. This is a local client feature, not a replacement
-for the installed remote-agent backend or protocol.
+local laptop and managed sessions on `agent-server` and `aso`. Its Python
+standard-library source lives in `switcher/`. This is a local client feature, not
+a replacement for the installed remote-agent backend or protocol.
 
 ## What it must do
 
@@ -12,12 +12,16 @@ for the installed remote-agent backend or protocol.
 - [x] `agent-switcher --list` emits JSON inventory with selection keys, meaningful
   session names, host, and state. Local inventory reads Pi's control SQLite
   database read-only; remote inventory invokes the registered installed
-  `remote-agent --host agent-server list`, not a repository build artifact.
+  `remote-agent --host HOST list`, not a repository build artifact.
 - [x] Remote inventory also lists `allison`'s agent-server sessions through
-  `remote-agent --host agent-server --user allison list`. Her rows display host
-  `allison@agent-server`; the account is part of selection identity, so equal
-  names across accounts stay distinct. Each account's failure is reported
-  separately without discarding other sources. No other account is listed.
+  `remote-agent --host agent-server --user allison list`, and the `aso`
+  default-account sessions through `remote-agent --host aso list`. Her rows
+  display host `allison@agent-server`; aso rows display host `aso` and open with
+  `--host aso`. Accounts and hosts are part of selection identity, so equal
+  names stay distinct. A source whose host is the local machine is skipped
+  because local inventory already covers it. Each source's failure is reported
+  separately without discarding other sources. No other account or host is
+  listed.
 - [x] Initial display places named remote sessions before local sessions, preserving alphabetical ordering within each group. Render the initial list from the top; typed searches retain normal relevance ranking and selection identities.
 - [x] Session IDs listed one per line in `$XDG_CONFIG_HOME/agent-switcher/pinned`
   (default `~/.config`) appear above all other rows, in file order; a missing file
@@ -97,7 +101,8 @@ and matched by `tty_name`; titles are never used for identity.
 - [x] `./deploy.sh --switcher` installs the local switcher only. It does not
   replace backend/server/protocol components or restart existing sessions.
 - [x] Discovery and selection make no provider calls, scan no transcript
-  filesystem, and perform no account discovery beyond the fixed `allison` account.
+  filesystem, and perform no account discovery beyond the fixed
+  `agent-server`/`allison` and `aso` sources.
 
 ## How it works
 
@@ -121,7 +126,7 @@ These paths identify the implementation scope; they do not assert acceptance.
 Checked requirements have passing backing tests at `6f39ebd`. Fixture acceptance
 is not live desktop acceptance.
 
-- `tests/test_switcher_inventory.py` (27, including Allison listing and per-account errors): read-only inventory sources, process
+- `tests/test_switcher_inventory.py` (29, including Allison and aso listing, and local-host source skipping): read-only inventory sources, process
   identity, invalid data, partial failures, bounded retries, and remote-first ordering.
 - `tests/test_switcher_picker.py` (18, including action keys): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
@@ -130,8 +135,8 @@ is not live desktop acceptance.
 - `tests/test_switcher_mutations.py` (7): archive metadata changes, stopped-only
   refusal, missing transcripts, descendant deletion, trash fallback, control-row
   cleanup, and partial-failure reporting.
-- `tests/test_switcher_main.py` (29, including Allison attach with `--user` and
-  pane reselection that ignores a same-named default-account client): combined inventory without transcript changes,
+- `tests/test_switcher_main.py` (36, including Allison attach with `--user` and
+  aso attach with `--host`, plus pane reselection that ignores a same-named default-account client): combined inventory without transcript changes,
   stale selections, stopped-remote refusal, and WezTerm actions with real PTY child
   processes and executable `wezterm`/`niri` fixtures: hidden-tab activation for local
   and remote, one new tab for local resume and remote attach, new window when none

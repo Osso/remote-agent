@@ -81,7 +81,9 @@ def _pick() -> int:
     notice = ""
     while True:
         print(
-            "Loading laptop and agent-server sessions...", file=sys.stderr, flush=True
+            "Loading laptop, agent-server and aso sessions...",
+            file=sys.stderr,
+            flush=True,
         )
         sessions, errors = collect_sessions()
         try:
@@ -105,7 +107,7 @@ def _pick() -> int:
 
 def _parse_arguments(arguments: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Select a Pi session on this laptop or agent-server."
+        description="Select a Pi session on this laptop, agent-server or aso."
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
