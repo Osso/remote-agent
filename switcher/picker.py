@@ -119,6 +119,7 @@ def choose_session(
                 "fzf",
                 "--no-height",
                 "--ansi",
+                "--color=header:-1",
                 "--layout=reverse",
                 "--no-multi",
                 "--no-preview",

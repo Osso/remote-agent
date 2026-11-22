@@ -26,7 +26,7 @@ a replacement for the installed remote-agent backend or protocol.
 - [x] Session IDs listed one per line in `$XDG_CONFIG_HOME/agent-switcher/pinned`
   (default `~/.config`) appear above all other rows, in file order; a missing file
   pins nothing. This keeps the machine assistant at the top.
-- [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
+- [x] Remote rows use a distinct cyan terminal color while local rows retain the default foreground. The picker top help/header uses the default terminal foreground, distinct from remote rows. Keep host/state labels visible, sanitize user-supplied controls before coloring, and preserve selection identity through fzf's ANSI-stripped output.
 - [x] Default invocation opens a WezTerm window with an fzf selector. It reuses a
   live GUI (`wezterm cli --no-auto-start spawn --new-window`) and starts the only
   GUI with `wezterm start` when none is live. Live GUIs are found through bound
