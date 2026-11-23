@@ -177,7 +177,8 @@ report the mark. `stop NAME` disables and stops the unit, waits for the server
 to exit, then clears the mark; it keeps the conversation and runs no hook.
 `start PROJECT NAME` on an existing unmarked session marks it and resumes its
 saved conversation (a running session recorded before the mark existed is only
-marked). `restart NAME` refuses unmarked sessions. Restart and deploy sweeps
+marked). `start NAME` naming an existing session uses its recorded project, and
+`restart NAME` on an unmarked session starts it the same way. Restart and deploy sweeps
 must restart only sessions marked `started`.
 
 Other commands are `status NAME` and `cancel NAME`; cancel also clears the mark. It stops the
