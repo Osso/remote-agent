@@ -280,13 +280,21 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
             prompt,
             history_bytes,
         } => {
+            // `start NAME` without a session name starts an existing session under its recorded project.
+            let expected_project = name.is_some().then(|| project.clone());
             let name = name.unwrap_or_else(|| project.clone());
             let state = control::session_dir(home, &name)?;
             if state.exists() {
                 let has_launch_options =
                     resume.is_some() || prompt.is_some() || history_bytes.is_some();
-                return start_existing_session(home, &state, &name, &project, has_launch_options)
-                    .await;
+                return start_existing_session(
+                    home,
+                    &state,
+                    &name,
+                    expected_project.as_deref(),
+                    has_launch_options,
+                )
+                .await;
             }
             let (cwd, pi) = config.remote_project(&project)?;
             let history_bytes = history_bytes.unwrap_or(DEFAULT_HISTORY_BYTES);
@@ -347,11 +355,9 @@ async fn restart_session(home: &Path, name: &str) -> Result<Value> {
         launch.name == name,
         "launch name does not match session directory"
     );
-    ensure!(
-        launch.started,
-        "session {name} is not started; run `remote-agent start {} {name}`",
-        launch.project
-    );
+    if !launch.started {
+        return start_existing_session(home, &state, name, None, false).await;
+    }
     let previous = control::status(home, name)?;
     if let Some(pid) = previous["pid"].as_u64() {
         let pid = u32::try_from(pid).context("invalid recorded server PID")?;
@@ -500,11 +506,12 @@ async fn stop_session_server(state: &Path, mut launch: Launch) -> Result<()> {
 
 /// Start the unit of an existing session that is not marked started and mark it.
 /// A running unmarked session (recorded before the mark existed) is only marked.
+/// `expected_project` is checked only when the caller named both project and session.
 async fn start_existing_session(
     home: &Path,
     state: &Path,
     name: &str,
-    project: &str,
+    expected_project: Option<&str>,
     has_launch_options: bool,
 ) -> Result<Value> {
     let mut launch = control::read_launch(state)?;
@@ -516,11 +523,13 @@ async fn start_existing_session(
         !launch.started,
         "session {name} already exists and is started"
     );
-    ensure!(
-        launch.project == project,
-        "session {name} belongs to project {}",
-        launch.project
-    );
+    if let Some(project) = expected_project {
+        ensure!(
+            launch.project == project,
+            "session {name} belongs to project {}",
+            launch.project
+        );
+    }
     ensure!(
         !has_launch_options,
         "starting existing session {name} resumes its saved conversation; --resume, --prompt-file and --history-bytes do not apply"
@@ -659,6 +668,105 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("already exists"), "{error}");
         assert!(!config.read_projects().unwrap().contains_key("occupied"));
+    }
+
+    fn write_stopped_session(home: &Path, name: &str, project: &str) -> PathBuf {
+        let state = control::session_dir(home, name).unwrap();
+        let launch = Launch {
+            name: name.into(),
+            project: project.into(),
+            cwd: "/tmp".into(),
+            pi: "/usr/bin/pi".into(),
+            conversation: format!("{name}-conversation"),
+            resume: false,
+            environment: Default::default(),
+            prompt: Some("first prompt".into()),
+            size: Size { rows: 24, cols: 80 },
+            history_bytes: 1024,
+            started: false,
+        };
+        control::write_private_json(&state.join("launch.json"), &launch).unwrap();
+        state
+    }
+
+    /// Fake `systemctl` that records its arguments and writes the runtime record the unit would.
+    fn install_fake_systemctl(home: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = home.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("systemctl");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> {calls}\nname=${{4#remote-agent@}}; name=${{name%.service}}\n\
+                 printf '{{\"pid\":1,\"address\":\"a\",\"certificate\":[],\"token\":\"t\"}}' \
+                 > {sessions}/$name/runtime.json\n",
+                calls = home.join("systemctl.calls").display(),
+                sessions = home.join(".local/state/remote-agent/sessions").display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        // SAFETY: the only test that changes PATH; other tests resolve programs through it unchanged.
+        unsafe { std::env::set_var("PATH", std::env::join_paths(paths).unwrap()) };
+        home.join("systemctl.calls")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn start_by_session_name_and_restart_start_a_stopped_session() {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join(".config/remote-agent");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("remote-hosts.json"),
+            r#"{"agent-server":{"ssh":"agent-server","home":"/home/dev","wrap":[],"windows_shell":false,"cargo_build_jobs":"4"}}"#,
+        )
+        .unwrap();
+        let config = Config::load(home.path()).unwrap();
+        let calls = install_fake_systemctl(home.path());
+        let start = |project: &str, name: Option<&str>| ControlRequest::Start {
+            host: "agent-server".into(),
+            project: project.into(),
+            name: name.map(Into::into),
+            resume: None,
+            prompt: None,
+            history_bytes: None,
+        };
+
+        // `start pi-rust-repin` names the session; its recorded project is pi-rust.
+        let repin = write_stopped_session(home.path(), "pi-rust-repin", "pi-rust");
+        let status = dispatch(home.path(), &config, start("pi-rust-repin", None))
+            .await
+            .unwrap();
+        assert_eq!(status["started"], true);
+        assert_eq!(status["project"], "pi-rust");
+        let launch = control::read_launch(&repin).unwrap();
+        assert!(launch.started && launch.resume && launch.prompt.is_none());
+        assert_eq!(launch.conversation, "pi-rust-repin-conversation");
+
+        // An explicit project that differs from the record still fails.
+        write_stopped_session(home.path(), "other", "pi-rust");
+        let error = dispatch(home.path(), &config, start("engine", Some("other")))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("belongs to project pi-rust"), "{error}");
+
+        // `restart` of a stopped session starts it.
+        let stopped = write_stopped_session(home.path(), "stopped", "pi-rust");
+        let request = ControlRequest::Restart { name: "stopped".into() };
+        let status = dispatch(home.path(), &config, request).await.unwrap();
+        assert_eq!(status["started"], true);
+        assert!(control::read_launch(&stopped).unwrap().resume);
+
+        assert_eq!(
+            std::fs::read_to_string(calls).unwrap(),
+            "--user enable --now remote-agent@pi-rust-repin.service\n\
+             --user enable --now remote-agent@stopped.service\n"
+        );
     }
 
     #[tokio::test]
