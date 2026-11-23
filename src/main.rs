@@ -726,6 +726,7 @@ mod tests {
             r#"{"agent-server":{"ssh":"agent-server","home":"/home/dev","wrap":[],"windows_shell":false,"cargo_build_jobs":"4"}}"#,
         )
         .unwrap();
+        std::fs::write(config_dir.join("remote-projects.json"), "{}").unwrap();
         let config = Config::load(home.path()).unwrap();
         let calls = install_fake_systemctl(home.path());
         let start = |project: &str, name: Option<&str>| ControlRequest::Start {
@@ -753,11 +754,16 @@ mod tests {
         let error = dispatch(home.path(), &config, start("engine", Some("other")))
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("belongs to project pi-rust"), "{error}");
+        assert!(
+            error.to_string().contains("belongs to project pi-rust"),
+            "{error}"
+        );
 
         // `restart` of a stopped session starts it.
         let stopped = write_stopped_session(home.path(), "stopped", "pi-rust");
-        let request = ControlRequest::Restart { name: "stopped".into() };
+        let request = ControlRequest::Restart {
+            name: "stopped".into(),
+        };
         let status = dispatch(home.path(), &config, request).await.unwrap();
         assert_eq!(status["started"], true);
         assert!(control::read_launch(&stopped).unwrap().resume);
