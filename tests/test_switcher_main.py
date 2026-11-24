@@ -400,6 +400,7 @@ else:
             ({"exit_code": None}, "not eligible"),
             ({"running": True}, "not eligible"),
             ({"cwd": "/home/aso/other"}, "identity changed"),
+            ({"project": None}, "expected an object with a nonempty project"),
         )
         for updates, message in cases:
             with self.subTest(updates=updates):

@@ -156,8 +156,14 @@ def _remote_agent(session: Session, command: str, timeout: int) -> dict:
         payload = json.loads(output)
     except ValueError as error:
         raise RuntimeError(f"Invalid remote-agent {command} JSON: {error}") from error
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Invalid remote-agent {command} response: expected object")
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("project"), str)
+        or not payload["project"].strip()
+    ):
+        raise RuntimeError(
+            f"Invalid remote-agent {command} response: expected an object with a nonempty project"
+        )
     return payload
 
 
@@ -171,8 +177,6 @@ def _validate_remote_identity(payload: dict, session: Session) -> None:
         )
     ):
         raise RuntimeError("Remote session identity changed; no tab was opened.")
-    if not isinstance(payload.get("project"), str) or not payload["project"].strip():
-        raise RuntimeError("Invalid remote-agent response: expected nonempty project")
 
 
 def _restart_remote(session: Session) -> None:
