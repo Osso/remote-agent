@@ -90,9 +90,13 @@ and matched by `tty_name`; titles are never used for identity.
   spawn instead of guessing; WezTerm X11 windows expose no window ID that Niri reports.
   When the target is the picker's own window (`--pick` run inside a session window),
   it is already focused and Niri is not consulted.
-- [ ] For a stopped remote saved name, report explicit manual resume/new-name
-  instructions. Do not start under the same existing session directory, invent
-  UUID handling, or automatically rename the session.
+- [x] If a started remote session's Pi has exited while its server remains up,
+  revalidate the selected host/account, name, cwd, and saved conversation. If no
+  existing or conflicting client is present, run installed `remote-agent --host
+  HOST [--user USER] restart NAME` on that host/account, verify that the same
+  saved identity is running, and attach normally. Refuse other non-running states
+  and ambiguous identities or clients. These checks do not guarantee atomicity;
+  backend restart behavior is unchanged.
 
 ### Desktop integration and deployment
 
@@ -147,6 +151,9 @@ is not live desktop acceptance.
   an unreadable socket table that reports and starts nothing.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
   the error, live dismissal wait, Enter, and exit 1.
+- `test_exited_aso_pi_*` in `tests/test_switcher_main.py`: same-name restart and
+  attach on `aso`, refusal of ineligible status or a changed identity, no attach
+  after a conversation mismatch, and no restart with an existing PTY client.
 - `tests/test_switcher_deploy.py` (3): repeatable local-only installation, unchanged
   maps/backend executable, and unmanaged-file/foreign-symlink refusal.
 
@@ -262,17 +269,12 @@ allowed a duplicate tab, and a wrapper with its child on one PTY reported ambigu
   source binding review and Niri validation do not test physical shortcuts.
 - [ ] Multiple-window refusal has fixtures only. Physical Super+A keypresses were not
   injected; live runs executed the same installed `agent-switcher` command.
-- [ ] Stopped-remote refusal is tested, but its fixture asserts only nonzero exit,
-  a stopped message, and no replacement launch. Exact manual resume/new-name
-  instructions lack a backing assertion, so that full requirement stays unchecked.
 
 ## Out of scope
 
 - Ghostty tab selection: Ghostty 1.3.1 exposes no tab list or focus API. Sessions
   open in Ghostty are refused, not switched; detach them there and select them again
   to move them into WezTerm.
-- Automatic stopped-remote restart: an existing saved-name directory cannot be
-  reused by start; manual resume with a new name remains explicit.
 - Cross-account discovery, transcript scanning, and provider requests: inventory
   is restricted to the local control database and configured remote account.
 - Backend, server, and protocol replacement: deployment is local-only and must

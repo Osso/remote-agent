@@ -12,10 +12,10 @@ PICKER_TITLE = "Agent sessions"
 DEFAULT_HOST = "agent-server"  # remote-agent's implicit --host.
 
 
-def _run(arguments: list[str]) -> str:
+def _run(arguments: list[str], *, timeout: int = 5) -> str:
     try:
         result = subprocess.run(
-            arguments, capture_output=True, text=True, timeout=5, check=False
+            arguments, capture_output=True, text=True, timeout=timeout, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise RuntimeError(f"Cannot run {arguments[0]}: {error}") from error
@@ -145,24 +145,66 @@ def _title_tab(pane_id: int | str, session: Session) -> None:
     _wezterm("set-tab-title", "--pane-id", str(pane_id).strip(), session.name)
 
 
+def _remote_arguments(session: Session, command: str) -> list[str]:
+    account = ["--user", session.user] if session.user else []
+    return ["remote-agent", "--host", session.host, *account, command, session.handle]
+
+
+def _remote_agent(session: Session, command: str, timeout: int) -> dict:
+    output = _run(_remote_arguments(session, command), timeout=timeout)
+    try:
+        payload = json.loads(output)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid remote-agent {command} JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Invalid remote-agent {command} response: expected object")
+    return payload
+
+
+def _validate_remote_identity(payload: dict, session: Session) -> None:
+    if any(
+        payload.get(field) != expected
+        for field, expected in (
+            ("name", session.name),
+            ("cwd", session.cwd),
+            ("conversation", session.session_id),
+        )
+    ):
+        raise RuntimeError("Remote session identity changed; no tab was opened.")
+    if not isinstance(payload.get("project"), str) or not payload["project"].strip():
+        raise RuntimeError("Invalid remote-agent response: expected nonempty project")
+
+
+def _restart_remote(session: Session) -> None:
+    before = _remote_agent(session, "status", timeout=10)
+    _validate_remote_identity(before, session)
+    if (
+        before.get("started") is not True
+        or before.get("running") is not False
+        or before.get("server_running") is not True
+        or type(before.get("exit_code")) is not int
+    ):
+        raise RuntimeError("Remote session state is not eligible for recovery.")
+
+    after = _remote_agent(session, "restart", timeout=30)
+    _validate_remote_identity(after, session)
+    if after["project"] != before["project"] or any(
+        after.get(field) is not True
+        for field in ("started", "running", "server_running")
+    ):
+        raise RuntimeError("Remote session did not restart in the expected state.")
+
+
 def _spawn_arguments(session: Session) -> list[str]:
     if session.backend == "remote":
-        account = ["--user", session.user] if session.user else []
-        return [
-            "--",
-            "remote-agent",
-            "--host",
-            session.host,
-            *account,
-            "attach",
-            session.handle,
-        ]
+        return ["--", *_remote_arguments(session, "attach")]
     return ["--cwd", session.cwd, "--", "pi", "--session", session.handle]
 
 
 def open_session(session: Session) -> None:
     """Activate the session's existing WezTerm pane, or open it in one new tab."""
-    if session.backend == "remote" and session.status != "running":
+    recover_remote = session.backend == "remote" and session.status == "unknown"
+    if session.backend == "remote" and session.status not in {"running", "unknown"}:
         raise RuntimeError(
             f"Remote session is {session.status}. Resume it explicitly with remote-agent start PROJECT NEW-NAME --resume {session.session_id}; no replacement was created."
         )
@@ -179,6 +221,10 @@ def open_session(session: Session) -> None:
             f"Session attachment is ambiguous: {len(terminals)} terminals ({', '.join(terminals)}). No tab was selected."
         )
     if terminals:
+        if recover_remote:
+            raise RuntimeError(
+                "A remote client is still attached; no restart was attempted."
+            )
         pane = next((p for p in panes if p.get("tty_name") == terminals[0]), None)
         if pane is None:
             raise RuntimeError(
@@ -190,14 +236,14 @@ def open_session(session: Session) -> None:
         _focus(niri_window)
         return
     windows = sorted({pane["window_id"] for pane in panes} - {picker_window})
-    if not windows:
-        _title_tab(
-            _wezterm("spawn", "--new-window", *_spawn_arguments(session)), session
-        )
-        return
-    niri_window = _niri_window(windows[0], picker_window)
-    spawned = _wezterm(
-        "spawn", "--window-id", str(windows[0]), *_spawn_arguments(session)
-    )
+    if windows:
+        niri_window = _niri_window(windows[0], picker_window)
+        placement = ["--window-id", str(windows[0])]
+    else:
+        niri_window = None
+        placement = ["--new-window"]
+    if recover_remote:
+        _restart_remote(session)
+    spawned = _wezterm("spawn", *placement, *_spawn_arguments(session))
     _title_tab(spawned, session)
     _focus(niri_window)

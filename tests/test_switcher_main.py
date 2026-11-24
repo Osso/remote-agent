@@ -53,6 +53,10 @@ class SwitcherMainTests(unittest.TestCase):
         self.allison_file.write_text(json.dumps({"sessions": []}))
         self.aso_file = self.home / "aso.json"
         self.aso_file.write_text(json.dumps({"sessions": []}))
+        self.remote_status_file = self.home / "remote-status.json"
+        self.remote_status_file.write_text("{}")
+        self.remote_restart_file = self.home / "remote-restart.json"
+        self.remote_restart_file.write_text("{}")
         self.runtime = self.home / "wezterm"
         self.runtime.mkdir()
         self.environment = {
@@ -62,6 +66,8 @@ class SwitcherMainTests(unittest.TestCase):
             "XDG_RUNTIME_DIR": str(self.home),
             "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
         }
+        for variable in ("WEZTERM_UNIX_SOCKET", "WEZTERM_PANE"):
+            self.environment.pop(variable, None)
         self.write_command(
             "remote-agent",
             f"""import json,pathlib,sys
@@ -71,6 +77,8 @@ elif args[-1]=='list' and '--user' in args: print(pathlib.Path({str(self.allison
 elif args[-1]=='list': print(pathlib.Path({str(self.remote_file)!r}).read_text())
 else:
  with pathlib.Path({str(self.events)!r}).open('a') as out: out.write(json.dumps({{'program':'remote-agent','args':args}})+'\\n')
+ if args[-2]=='status': print(pathlib.Path({str(self.remote_status_file)!r}).read_text())
+ elif args[-2]=='restart': print(pathlib.Path({str(self.remote_restart_file)!r}).read_text())
 """,
         )
         self.write_command(
@@ -337,6 +345,106 @@ else:
             ],
         )
 
+    def exited_aso_session(self):
+        session = {
+            "name": "switcher-fixture-exited-pi",
+            "project": "gc",
+            "cwd": "/home/aso/Projects/gc",
+            "conversation": "0190abcd-1234-7abc-8def-0123456789ab",
+            "started": True,
+            "running": False,
+            "server_running": True,
+            "exit_code": 0,
+        }
+        key = self.aso_session_key(session)
+        self.remote_status_file.write_text(json.dumps(session))
+        self.remote_restart_file.write_text(
+            json.dumps({**session, "running": True, "exit_code": None})
+        )
+        return key, session
+
+    def test_exited_aso_pi_restarts_same_session_and_attaches(self):
+        key, session = self.exited_aso_session()
+        result = self.run_cli("--open", key)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        name = session["name"]
+        self.assertEqual(
+            [(event["program"], event["args"]) for event in self.recorded()],
+            [
+                ("remote-agent", ["--host", "aso", "status", name]),
+                ("remote-agent", ["--host", "aso", "restart", name]),
+                (
+                    "wezterm",
+                    ["cli", "--no-auto-start", "spawn", "--window-id", "3", "--"]
+                    + ["remote-agent", "--host", "aso", "attach", name],
+                ),
+                (
+                    "wezterm",
+                    [
+                        "cli",
+                        "--no-auto-start",
+                        "set-tab-title",
+                        "--pane-id",
+                        "77",
+                        name,
+                    ],
+                ),
+                ("niri", ["msg", "action", "focus-window", "--id", "92"]),
+            ],
+        )
+
+    def test_exited_aso_pi_refuses_ineligible_or_changed_status(self):
+        key, session = self.exited_aso_session()
+        cases = (
+            ({"started": False}, "not eligible"),
+            ({"exit_code": None}, "not eligible"),
+            ({"running": True}, "not eligible"),
+            ({"cwd": "/home/aso/other"}, "identity changed"),
+        )
+        for updates, message in cases:
+            with self.subTest(updates=updates):
+                self.events.unlink(missing_ok=True)
+                self.remote_status_file.write_text(json.dumps({**session, **updates}))
+                result = self.run_cli("--open", key)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(
+                    [event["args"] for event in self.recorded()],
+                    [["--host", "aso", "status", session["name"]]],
+                )
+
+    def test_exited_aso_pi_does_not_attach_after_restart_changes_conversation(self):
+        key, session = self.exited_aso_session()
+        self.remote_restart_file.write_text(
+            json.dumps(
+                {
+                    **session,
+                    "running": True,
+                    "exit_code": None,
+                    "conversation": "0190ffff-1234-7abc-8def-0123456789ab",
+                }
+            )
+        )
+        result = self.run_cli("--open", key)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identity changed", result.stderr)
+        self.assertEqual(
+            [event["args"] for event in self.recorded()],
+            [
+                ["--host", "aso", action, session["name"]]
+                for action in ("status", "restart")
+            ],
+        )
+
+    def test_exited_aso_pi_does_not_restart_with_existing_client(self):
+        key, session = self.exited_aso_session()
+        _, terminal = self.attach_process("--host", "aso", "attach", session["name"])
+        self.set_panes([self.pane(32, window=3, tty=terminal)])
+        result = self.run_cli("--open", key)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("client is still attached", result.stderr)
+        self.assertEqual(self.recorded(), [])
+
     def test_remote_stopped_record_never_invents_a_replacement(self):
         key = self.entry_key("remote")
         self.remote[0].update(running=False, server_running=False)
@@ -495,15 +603,22 @@ else:
             + ["attach", "remote-work"],
         )
 
+    def aso_session_key(self, session):
+        self.aso_file.write_text(json.dumps({"sessions": [session]}))
+        entry = next(
+            entry
+            for entry in self.inventory()["sessions"]
+            if entry["host"] == "aso"
+            and entry["name"] == session["name"]
+            and entry["cwd"] == session["cwd"]
+        )
+        return entry["key"]
+
     def aso_entry_key(self):
         self.aso_file.write_text(
             json.dumps({"sessions": [{**self.remote[0], "cwd": "/home/aso/p"}]})
         )
-        entries = [
-            e
-            for e in self.inventory()["sessions"]
-            if e["host"] == "aso"
-        ]
+        entries = [e for e in self.inventory()["sessions"] if e["host"] == "aso"]
         self.assertEqual(
             [(e["host"], e["name"], e["cwd"]) for e in entries],
             [("aso", "remote-work", "/home/aso/p")],

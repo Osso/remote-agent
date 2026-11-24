@@ -280,10 +280,11 @@ WezTerm (for example Ghostty), ambiguous attachments and multiple WezTerm window
 fail explicitly without starting anything. When the target tab is in the picker's
 own window, that window is already focused and Niri is not consulted. `--open` outside WezTerm needs
 `WEZTERM_UNIX_SOCKET` set to the GUI socket.
-Stopped remote saved names require manual resume with a new name; automatic
-rename and UUID handling are not provided. Unknown or stale selections fail
-without fallback. Discovery makes no provider calls, scans no transcripts, and
-does not discover other accounts.
+If Pi exited but a started remote session's server is still running, selecting
+it resumes the same saved conversation before attaching. Other non-running remote
+sessions require manual action. Unknown or stale selections fail without fallback.
+Discovery makes no provider calls, scans no transcripts, and does not discover
+other accounts.
 
 See the [session-switcher contract](docs/specs/session-switcher.md) for verified
 behavior, test evidence, and remaining desktop acceptance limits.
