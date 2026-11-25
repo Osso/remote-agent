@@ -446,14 +446,101 @@ else:
         self.assertIn("client is still attached", result.stderr)
         self.assertEqual(self.recorded(), [])
 
-    def test_remote_stopped_record_never_invents_a_replacement(self):
-        key = self.entry_key("remote")
-        self.remote[0].update(running=False, server_running=False)
+    def stopped_remote_session(self, *, started):
+        session = {
+            "name": "switcher-regression-pi-bughunt2-7f5c",
+            "project": "sample",
+            "cwd": "/remote/project",
+            "conversation": "0190abcd-1234-7abc-8def-0123456789ab",
+            "started": started,
+            "running": False,
+            "server_running": False,
+            "exit_code": None,
+        }
+        self.remote = [row for row in self.remote if row["name"] != session["name"]] + [
+            session
+        ]
         self.remote_file.write_text(json.dumps({"sessions": self.remote}))
+        self.remote_status_file.write_text(json.dumps(session))
+        self.remote_restart_file.write_text(
+            json.dumps(
+                {
+                    **session,
+                    "started": True,
+                    "running": True,
+                    "server_running": True,
+                }
+            )
+        )
+        key = next(
+            entry["key"]
+            for entry in self.inventory()["sessions"]
+            if entry["name"] == session["name"] and entry["host"] == "agent-server"
+        )
+        return key, session
+
+    def assert_stopped_remote_restarts_and_attaches(self, *, started):
+        key, session = self.stopped_remote_session(started=started)
+        result = self.run_cli("--open", key)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        name = session["name"]
+        events = self.recorded()
+        self.assertEqual(
+            [event["args"] for event in events if event["program"] == "remote-agent"],
+            [
+                ["--host", "agent-server", "status", name],
+                ["--host", "agent-server", "restart", name],
+            ],
+        )
+        spawn = next(
+            event
+            for event in events
+            if event["program"] == "wezterm" and "spawn" in event["args"]
+        )
+        attach = spawn["args"][spawn["args"].index("--") + 1 :]
+        self.assertEqual(
+            attach,
+            ["remote-agent", "--host", "agent-server", "attach", name],
+        )
+
+    def test_selected_marked_stopped_remote_restarts_and_attaches_same_session(self):
+        self.assert_stopped_remote_restarts_and_attaches(started=True)
+
+    def test_selected_unmarked_stopped_remote_restarts_and_attaches_same_session(self):
+        self.assert_stopped_remote_restarts_and_attaches(started=False)
+
+    def test_stopped_remote_does_not_restart_for_conflicting_client(self):
+        key, session = self.stopped_remote_session(started=False)
+        _, terminal = self.attach_process(
+            "--host", "agent-server", "attach", session["name"]
+        )
+        self.set_panes([self.pane(32, window=3, tty=terminal)])
         result = self.run_cli("--open", key)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("stopped", result.stderr.lower())
+        self.assertIn("client is still attached", result.stderr)
         self.assertEqual(self.recorded(), [])
+
+    def test_stopped_remote_refuses_invalid_status_flags_before_restart(self):
+        key, session = self.stopped_remote_session(started=False)
+        for updates in (
+            {"started": "false"},
+            {"running": True},
+            {"server_running": True},
+        ):
+            with self.subTest(updates=updates):
+                self.events.unlink(missing_ok=True)
+                self.remote_status_file.write_text(json.dumps({**session, **updates}))
+                result = self.run_cli("--open", key)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("not eligible", result.stderr)
+                self.assertEqual(
+                    [
+                        event["args"]
+                        for event in self.recorded()
+                        if event["program"] == "remote-agent"
+                    ],
+                    [["--host", "agent-server", "status", session["name"]]],
+                )
 
     def test_unknown_or_stale_selection_never_launches(self):
         result = self.run_cli("--open", "unrecognized selection")

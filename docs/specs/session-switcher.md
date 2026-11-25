@@ -99,7 +99,7 @@ and matched by `tty_name`; titles are never used for identity.
   HOST [--user USER] restart NAME` on that host/account, verify that the same
   saved identity is running, and attach normally. These checks do not guarantee
   atomicity; backend restart behavior is unchanged.
-- [ ] When an explicitly selected named saved remote session's backend server is
+- [x] When an explicitly selected named saved remote session's backend server is
   absent, resume that same session whether it is marked started or stopped and
   unmarked. Revalidate its host, account, name, cwd and saved conversation; refuse
   invalid or conflicting states and ambiguous identities or clients. With no

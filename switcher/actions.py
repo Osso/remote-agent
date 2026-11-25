@@ -182,12 +182,18 @@ def _validate_remote_identity(payload: dict, session: Session) -> None:
 def _restart_remote(session: Session) -> None:
     before = _remote_agent(session, "status", timeout=10)
     _validate_remote_identity(before, session)
-    if (
-        before.get("started") is not True
-        or before.get("running") is not False
-        or before.get("server_running") is not True
-        or type(before.get("exit_code")) is not int
-    ):
+    pi_exited = (
+        before.get("started") is True
+        and before.get("running") is False
+        and before.get("server_running") is True
+        and type(before.get("exit_code")) is int
+    )
+    server_stopped = (
+        type(before.get("started")) is bool
+        and before.get("running") is False
+        and before.get("server_running") is False
+    )
+    if not (pi_exited or server_stopped):
         raise RuntimeError("Remote session state is not eligible for recovery.")
 
     after = _remote_agent(session, "restart", timeout=30)
@@ -207,11 +213,10 @@ def _spawn_arguments(session: Session) -> list[str]:
 
 def open_session(session: Session) -> None:
     """Activate the session's existing WezTerm pane, or open it in one new tab."""
-    recover_remote = session.backend == "remote" and session.status == "unknown"
-    if session.backend == "remote" and session.status not in {"running", "unknown"}:
-        raise RuntimeError(
-            f"Remote session is {session.status}. Resume it explicitly with remote-agent start PROJECT NEW-NAME --resume {session.session_id}; no replacement was created."
-        )
+    recover_remote = session.backend == "remote" and session.status in {
+        "stopped",
+        "unknown",
+    }
     panes = _list_panes()
     own_pane = os.environ.get("WEZTERM_PANE")
     picker_window = next(
