@@ -198,11 +198,14 @@ impl Drop for InputReader {
 /// Send QUIC CONNECTION_CLOSE before the process exits; otherwise the server keeps
 /// the peer, and its terminal size, until the idle timeout. Bounded for offline exits.
 async fn close_endpoint(endpoint: Endpoint, reason: &[u8]) {
+    const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     endpoint.close(0u32.into(), reason);
-    let drained =
-        tokio::time::timeout(std::time::Duration::from_millis(500), endpoint.wait_idle()).await;
+    let drained = tokio::time::timeout(CLOSE_TIMEOUT, endpoint.wait_idle()).await;
     if drained.is_err() {
-        eprintln!("remote-agent: server did not acknowledge close within 500 ms");
+        eprintln!(
+            "remote-agent: server did not acknowledge close within {} s",
+            CLOSE_TIMEOUT.as_secs()
+        );
     }
 }
 
@@ -597,6 +600,28 @@ fn write_terminal(bytes: &[u8]) -> Result<()> {
 mod resize_tests {
     use super::*;
     use crate::terminal::TerminalState;
+
+    #[tokio::test]
+    async fn close_waits_for_quic_drain_beyond_half_a_second() -> Result<()> {
+        use std::time::Duration;
+
+        // A peer that does not respond leaves QUIC using its initial RTT for drain.
+        let peer = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let mut endpoint = Endpoint::client("127.0.0.1:0".parse()?)?;
+        let certificate = rcgen::generate_simple_self_signed(vec!["remote-agent".into()])?;
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate.cert.der().clone())?;
+        let mut config = quinn::ClientConfig::with_root_certificates(Arc::new(roots))?;
+        let mut transport = quinn::TransportConfig::default();
+        transport.initial_rtt(Duration::from_millis(300));
+        config.transport_config(Arc::new(transport));
+        endpoint.set_default_client_config(config);
+        let _connecting = endpoint.connect(peer.local_addr()?, "remote-agent")?;
+        close_endpoint(endpoint.clone(), b"test drain").await;
+        // The former 500 ms timer returned while the connection was still draining.
+        assert_eq!(endpoint.open_connections(), 0);
+        Ok(())
+    }
 
     fn update(sequence: u64, cols: u16, row: &str) -> DisplayUpdate {
         DisplayUpdate {

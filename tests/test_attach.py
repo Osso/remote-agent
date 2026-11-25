@@ -405,7 +405,7 @@ class NativeRustAttachTests(unittest.TestCase):
 
     def detach(self):
         os.write(self.master, b"\x1c")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
             pid, status = os.waitpid(self.client, os.WNOHANG)
             if pid:
