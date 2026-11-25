@@ -527,6 +527,38 @@ class NativeRustAttachTests(unittest.TestCase):
             "behavior", result="passed", phases=[stage["name"] for stage in self.stages]
         )
 
+    def test_hyperlinks_and_unknown_osc_preserve_live_session(self):
+        wrapper = self.root / ".local/bin/pi-fixture"
+        output = (
+            b"\x1b]8;;https://github.com/Globalcomix/gc/pull/4028\x1b\\"
+            b"pull request 4028\x1b]8;;\x1b\\\r\n"
+            b"\x1b]9;unknown\x07\x1b]999;metadata\x1b\\after OSC\r\n"
+        )
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os, time\n"
+            f"os.write(1, {output!r})\n"
+            "while True: time.sleep(1)\n"
+        )
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            logs = self.cli("logs", "bulk-proof", check=False)
+            if logs.returncode == 0 and "after OSC" in logs.stdout:
+                break
+            time.sleep(0.05)
+        self.assertEqual(logs.returncode, 0, self.server_log())
+        self.assertIn("pull request 4028", logs.stdout)
+        self.assertIn("after OSC", logs.stdout)
+        self.assertNotIn("https://github.com", logs.stdout)
+        self.assertEqual(
+            self.server_log().count("ignored unsupported terminal OSC"), 1
+        )
+        status = self.cli("status", "bulk-proof")
+        self.assertTrue(status["running"])
+        for field in ("pid", "child_pid", "conversation"):
+            self.assertEqual(status[field], started[field])
+
     def test_unavailable_ssh_bootstrap_preserves_terminal_and_server(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
