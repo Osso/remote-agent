@@ -23,6 +23,7 @@ impl Fixture {
             project: "fixture".into(),
             cwd: root.path().into(),
             pi,
+            pi_args: None,
             conversation: uuid::Uuid::new_v4().to_string(),
             resume: false,
             environment: std::collections::BTreeMap::new(),

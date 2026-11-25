@@ -80,7 +80,10 @@ and matched by `tty_name`; titles are never used for identity.
   saved directory.
 - [x] Each activated or spawned tab is titled with the session name the picker
   shows (`wezterm cli set-tab-title`), for example `Assistant` or `wow-ui-sim`;
-  the WezTerm config shows an explicit tab title as-is.
+  the WezTerm config shows an explicit tab title as-is. A project configured with
+  `pi_args` may launch a non-agent Pi terminal command; the managed session stays
+  listed, pinned, and attached by its configured name, independent of its Pi
+  conversation ID.
 - [x] A session open outside WezTerm (for example a Ghostty tab) reports its
   terminal and starts nothing. A running local Pi or remote client without a live
   terminal reports already-open. Clients on two terminals report ambiguity.

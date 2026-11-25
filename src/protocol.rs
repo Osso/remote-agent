@@ -100,6 +100,8 @@ pub struct Launch {
     pub project: String,
     pub cwd: std::path::PathBuf,
     pub pi: std::path::PathBuf,
+    #[serde(default)]
+    pub pi_args: Option<Vec<String>>,
     pub conversation: String,
     pub resume: bool,
     pub environment: std::collections::BTreeMap<String, String>,

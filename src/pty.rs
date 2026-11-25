@@ -58,14 +58,18 @@ impl Pty {
 
 fn build_pi_command(launch: &Launch) -> Command {
     let mut command = Command::new(&launch.pi);
-    let session_flag = if launch.resume {
-        "--session"
+    if let Some(args) = &launch.pi_args {
+        command.args(args);
     } else {
-        "--session-id"
-    };
-    command.arg(session_flag).arg(&launch.conversation);
-    if let Some(prompt) = &launch.prompt {
-        command.arg(prompt);
+        let session_flag = if launch.resume {
+            "--session"
+        } else {
+            "--session-id"
+        };
+        command.arg(session_flag).arg(&launch.conversation);
+        if let Some(prompt) = &launch.prompt {
+            command.arg(prompt);
+        }
     }
     command.envs(&launch.environment);
     command
@@ -200,6 +204,30 @@ fn spawn_reader(mut master: File, events: mpsc::Sender<PtyEvent>) {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn configured_pi_args_replace_session_identity_and_prompt_arguments() {
+        let launch = Launch {
+            name: "questions".into(),
+            project: "questions".into(),
+            cwd: "/tmp".into(),
+            pi: "/usr/bin/pi".into(),
+            pi_args: Some(vec!["questions".into()]),
+            conversation: "conversation-id".into(),
+            resume: true,
+            environment: Default::default(),
+            prompt: Some("ignored prompt".into()),
+            size: Size { rows: 24, cols: 80 },
+            history_bytes: 1024,
+            started: true,
+        };
+        let command = build_pi_command(&launch);
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(args, ["questions"]);
+    }
 
     #[test]
     fn native_pty_retains_bulk_output_and_applies_dimensions() {

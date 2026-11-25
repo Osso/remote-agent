@@ -441,6 +441,7 @@ mod tests {
             project: "demo".into(),
             cwd: "/tmp".into(),
             pi: "/usr/bin/pi".into(),
+            pi_args: None,
             conversation: "abc".into(),
             resume: false,
             environment: std::collections::BTreeMap::new(),

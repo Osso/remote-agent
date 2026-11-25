@@ -296,7 +296,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 )
                 .await;
             }
-            let (cwd, pi) = config.remote_project(&project)?;
+            let (cwd, pi, pi_args) = config.remote_project(&project)?;
             let history_bytes = history_bytes.unwrap_or(DEFAULT_HISTORY_BYTES);
             ensure!(
                 history_bytes > 0 && history_bytes <= DEFAULT_HISTORY_BYTES,
@@ -313,6 +313,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
                 project,
                 cwd,
                 pi,
+                pi_args,
                 conversation,
                 resume: resuming,
                 environment: config.launch_environment(&host)?,
@@ -677,6 +678,7 @@ mod tests {
             project: project.into(),
             cwd: "/tmp".into(),
             pi: "/usr/bin/pi".into(),
+            pi_args: None,
             conversation: format!("{name}-conversation"),
             resume: false,
             environment: Default::default(),

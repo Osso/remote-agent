@@ -62,6 +62,13 @@ explicit resumes and restarts use the project's current setting. A host wrapper
 may forward argv to `docker exec`; this setting does not provision containers
 or provide isolation.
 
+Optional project `pi_args` replaces the default Pi session arguments. Values
+must be a non-empty array of non-empty strings. For example,
+`"pi_args": ["questions"]` runs `pi questions` without `--session-id`,
+conversation ID, or a start prompt. The remote-agent session still has its
+configured name and remains available to `attach NAME` and the session switcher;
+the conversation ID remains management metadata.
+
 Optional project `pi_cancel_executable`, for example
 `"pi_cancel_executable": "/home/developer/bin/sample-pi-cancel"`, uses the same
 absolute existing executable regular-file validation. `cancel NAME` invokes

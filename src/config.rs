@@ -60,7 +60,7 @@ impl Config {
         load(home)
     }
 
-    pub fn remote_project(&self, project: &str) -> Result<(PathBuf, PathBuf)> {
+    pub fn remote_project(&self, project: &str) -> Result<(PathBuf, PathBuf, Option<Vec<String>>)> {
         let entry = self
             .projects
             .get(project)
@@ -82,7 +82,33 @@ impl Config {
         } else {
             self.find_pi()?
         };
-        Ok((cwd, pi))
+        let pi_args = match entry.get("pi_args") {
+            None => None,
+            Some(value) => {
+                let args = value
+                    .as_array()
+                    .context("pi_args must be a non-empty array of non-empty strings")?;
+                ensure!(
+                    !args.is_empty(),
+                    "pi_args must be a non-empty array of non-empty strings"
+                );
+                let args = args
+                    .iter()
+                    .map(|arg| {
+                        let arg = arg
+                            .as_str()
+                            .context("pi_args must contain only non-empty strings")?;
+                        ensure!(
+                            !arg.is_empty() && !arg.contains('\0'),
+                            "pi_args must contain only non-empty strings without NUL"
+                        );
+                        Ok(arg.to_owned())
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Some(args)
+            }
+        };
+        Ok((cwd, pi, pi_args))
     }
 
     pub fn cancel_hook(&self, project: &str) -> Result<Option<PathBuf>> {
@@ -438,7 +464,8 @@ mod tests {
             config.remote_project("demo").unwrap(),
             (
                 home.path().join("Projects/demo"),
-                home.path().join(".local/bin/pi")
+                home.path().join(".local/bin/pi"),
+                None
             )
         );
         assert_eq!(config.list_projects()["demo"]["extra"], true);
@@ -449,6 +476,42 @@ mod tests {
         assert_eq!(config.default_host().unwrap(), "agent-server");
         assert_eq!(fs::read(map).unwrap(), bytes);
         assert!(config.remote_project("missing").is_err());
+    }
+
+    #[test]
+    fn project_pi_args_are_optional_and_require_non_empty_strings() {
+        let home = fixture();
+        for value in [
+            serde_json::json!([]),
+            serde_json::json!("questions"),
+            serde_json::json!([""]),
+            serde_json::json!(["questions", 1]),
+            serde_json::json!(["bad\0arg"]),
+        ] {
+            write_fixture_map(
+                home.path(),
+                "remote-projects.json",
+                serde_json::json!({"demo": {"remote": "Projects/demo", "pi_args": value}}),
+            );
+            let error = load(home.path())
+                .unwrap()
+                .remote_project("demo")
+                .unwrap_err();
+            assert!(error.to_string().contains("pi_args"), "{error}");
+        }
+        write_fixture_map(
+            home.path(),
+            "remote-projects.json",
+            serde_json::json!({"questions": {"remote": "Projects/demo", "pi_args": ["questions"]}}),
+        );
+        assert_eq!(
+            load(home.path())
+                .unwrap()
+                .remote_project("questions")
+                .unwrap()
+                .2,
+            Some(vec!["questions".into()])
+        );
     }
 
     #[test]
