@@ -97,9 +97,17 @@ and matched by `tty_name`; titles are never used for identity.
   revalidate the selected host/account, name, cwd, and saved conversation. If no
   existing or conflicting client is present, run installed `remote-agent --host
   HOST [--user USER] restart NAME` on that host/account, verify that the same
-  saved identity is running, and attach normally. Refuse other non-running states
-  and ambiguous identities or clients. These checks do not guarantee atomicity;
-  backend restart behavior is unchanged.
+  saved identity is running, and attach normally. These checks do not guarantee
+  atomicity; backend restart behavior is unchanged.
+- [ ] When an explicitly selected named saved remote session's backend server is
+  absent, resume that same session whether it is marked started or stopped and
+  unmarked. Revalidate its host, account, name, cwd and saved conversation; refuse
+  invalid or conflicting states and ambiguous identities or clients. With no
+  existing or conflicting client, use the existing installed `remote-agent --host
+  HOST [--user USER] restart NAME`, verify that the same saved identity is running,
+  and attach normally. This is an explicit selection, not a sweep of stopped
+  services; restart and deploy sweeps remain limited to sessions marked started.
+  Refuse other non-running states. These checks do not guarantee atomicity.
 
 ### Desktop integration and deployment
 
