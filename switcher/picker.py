@@ -13,8 +13,13 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from .inventory import Session
 
-PickAction = Literal["open", "archive", "delete"]
-_EXPECTED_KEYS: dict[str, PickAction] = {"ctrl-a": "archive", "ctrl-d": "delete"}
+PickAction = Literal["open", "archive", "delete", "rename", "stop"]
+_EXPECTED_KEYS: dict[str, PickAction] = {
+    "ctrl-a": "archive",
+    "ctrl-d": "delete",
+    "ctrl-r": "rename",
+    "ctrl-s": "stop",
+}
 
 
 @dataclass(frozen=True)
@@ -100,7 +105,10 @@ def choose_session(
         selector = hashlib.sha256(repr(session.key).encode("utf-8")).hexdigest()
         rows[selector + "\t" + label] = session
 
-    header = "Enter select / Ctrl+A archive / Ctrl+D delete / Esc cancel"
+    header = (
+        "Enter select / Ctrl+R rename / Ctrl+S stop / Ctrl+A archive"
+        " / Ctrl+D delete / Esc cancel"
+    )
     if notice:
         header = _safe(notice) + "\n" + header
     if safe_errors:
@@ -125,7 +133,7 @@ def choose_session(
                 "--no-preview",
                 "--delimiter=\t",
                 "--with-nth=2..",
-                "--expect=ctrl-a,ctrl-d",
+                "--expect=" + ",".join(_EXPECTED_KEYS),
                 "--header",
                 header,
                 "--prompt=Session> ",

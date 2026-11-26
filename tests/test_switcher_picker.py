@@ -152,13 +152,18 @@ class PickerTests(unittest.TestCase):
         pick = self.choose([archive, delete])
         self.assertEqual((pick.action, pick.session), ("archive", archive))
         arguments = self.recorded()["argv"]
-        self.assertIn("--expect=ctrl-a,ctrl-d", arguments)
+        self.assertIn("--expect=ctrl-a,ctrl-d,ctrl-r,ctrl-s", arguments)
         header = arguments[arguments.index("--header") + 1]
-        self.assertIn("Ctrl+A archive", header)
-        self.assertIn("Ctrl+D delete", header)
+        for label in ("archive", "delete", "rename", "stop"):
+            self.assertIn(f"Ctrl+{label[0].upper()} {label}", header)
         self.write_fzf("print('ctrl-d'); print(rows[1])")
         pick = self.choose([archive, delete])
         self.assertEqual((pick.action, pick.session), ("delete", delete))
+        self.write_fzf("print('ctrl-r'); print(rows[0])")
+        self.assertEqual(self.choose([archive, delete]).action, "rename")
+        self.write_fzf("print('ctrl-s'); print(rows[1])")
+        pick = self.choose([archive, delete])
+        self.assertEqual((pick.action, pick.session), ("stop", delete))
 
     def test_enter_returns_open_action(self):
         session = self.session("one")

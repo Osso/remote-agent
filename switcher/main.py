@@ -10,7 +10,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .actions import PICKER_TITLE, open_session
+from .actions import PICKER_TITLE, open_session, stop_remote_session
 from .inventory import (
     Session,
     collect_sessions,
@@ -18,7 +18,12 @@ from .inventory import (
     load_remote_sessions,
     local_control_db_path,
 )
-from .mutations import archive_local_session, delete_local_session
+from .mutations import (
+    archive_local_session,
+    delete_local_session,
+    rename_local_session,
+    stop_local_session,
+)
 from .picker import Pick, choose_session
 
 
@@ -39,24 +44,58 @@ def _open(selected: Session) -> None:
     open_session(_refresh_selection(selected))
 
 
-def _confirm_delete(session: Session) -> bool:
+def _confirm(question: str) -> bool:
     try:
-        answer = input(f"Delete '{session.name}' at {session.cwd}? [Y/n] ")
+        answer = input(f"{question} [Y/n] ")
     except EOFError:
         return False
     return answer.strip().casefold() in {"", "y", "yes"}
 
 
+def _ask_name(session: Session) -> str:
+    try:
+        return input(f"New name for '{session.name}' (empty cancels): ").strip()
+    except EOFError:
+        return ""
+
+
+def _rename(session: Session) -> str | None:
+    if session.backend != "local":
+        raise RuntimeError("Remote sessions cannot be renamed from this switcher.")
+    name = _ask_name(session)
+    if not name:
+        return None
+    rename_local_session(local_control_db_path(), _refresh_selection(session), name)
+    return f"Renamed '{session.name}' to '{name}'."
+
+
+def _stop(session: Session) -> str | None:
+    if session.status == "stopped":
+        raise RuntimeError(f"'{session.name}' is already stopped.")
+    if not _confirm(f"Stop '{session.name}' on {session.host}?"):
+        return None
+    session = _refresh_selection(session)
+    if session.backend == "local":
+        stop_local_session(session)
+    else:
+        stop_remote_session(session)
+    return f"Stopped '{session.name}'."
+
+
 def _perform(pick: Pick) -> str | None:
-    """Archive or delete a refreshed local session; None means delete was declined."""
+    """Apply a picker action to a refreshed session; None means it was declined."""
     session = _refresh_selection(pick.session)
+    if pick.action == "rename":
+        return _rename(session)
+    if pick.action == "stop":
+        return _stop(session)
     if session.backend != "local":
         verb = "archived" if pick.action == "archive" else "deleted"
         raise RuntimeError(f"Remote sessions cannot be {verb} from this switcher.")
     if pick.action == "archive":
         archive_local_session(local_control_db_path(), session)
         return f"Archived '{session.name}'."
-    if not _confirm_delete(session):
+    if not _confirm(f"Delete '{session.name}' at {session.cwd}?"):
         return None
     session = _refresh_selection(session)
     delete_local_session(local_control_db_path(), session)

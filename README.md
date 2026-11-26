@@ -273,6 +273,9 @@ Esc cancels. Errors must remain visible. Ctrl+A archives the highlighted stopped
 local session; Ctrl+D deletes it after a `[Y/n]` confirmation. Archive sets Pi's
 archive flag in place, and delete removes the transcript tree and control rows.
 Both revalidate the selection and refuse running, unknown, and remote sessions.
+Ctrl+R renames the highlighted local session (remote names are fixed keys and
+are refused). Ctrl+S stops the highlighted session after a `[Y/n]` confirmation:
+local Pi gets SIGTERM; remote sessions run `remote-agent stop NAME`.
 The desktop binding contract is Super+A
 for this selector, Super+S unchanged for Noctalia Session Menu, and removal of
 the Settings shortcut.

@@ -1,7 +1,10 @@
-"""Archive and delete stopped local Pi sessions through Pi's control database."""
+"""Rename, stop, archive and delete local Pi sessions."""
 
+import os
+import signal
 import sqlite3
 import subprocess
+import time
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,12 +57,58 @@ def _open_control_db(control_db: Path) -> sqlite3.Connection:
 
 
 def _require_stopped_local(session: Session, verb: str) -> None:
-    if session.backend != "local":
-        raise RuntimeError(f"Only local sessions can be {verb} from this switcher.")
+    _require_local(session, verb)
     if session.status != "stopped":
         raise RuntimeError(
             f"Session is {session.status}; stop it in Pi before you {verb} it."
         )
+
+
+def _require_local(session: Session, verb: str) -> None:
+    if session.backend != "local":
+        raise RuntimeError(f"Only local sessions can be {verb} from this switcher.")
+
+
+def rename_local_session(control_db: Path, session: Session, name: str) -> None:
+    """Set a local session's display name the way Pi's /name does."""
+    _require_local(session, "renamed")
+    name = name.strip()
+    if not name:
+        raise RuntimeError("Session name must not be empty.")
+    with closing(_open_control_db(control_db)) as db:
+        changed = db.execute(
+            "UPDATE session_metadata"
+            " SET name = ?, name_revision = name_revision + 1, updated_at = ?"
+            " WHERE session_path = ? AND id = ?",
+            (name, _now(), session.handle, session.session_id),
+        ).rowcount
+        if changed != 1:
+            raise RuntimeError("Session metadata changed; refresh and retry.")
+        db.commit()
+
+
+def stop_local_session(session: Session, timeout: float = 10) -> None:
+    """Send SIGTERM to the session's bound Pi process and wait for it to exit."""
+    _require_local(session, "stopped")
+    if session.status != "running" or session.pid is None:
+        raise RuntimeError(
+            f"Session is {session.status}; only running sessions can be stopped."
+        )
+    os.kill(session.pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _process_alive(session.pid):
+            return
+        time.sleep(0.1)
+    raise RuntimeError(f"Pi process {session.pid} did not exit within {timeout:g}s.")
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (FileNotFoundError, ProcessLookupError, IndexError):
+        return False
+    return state not in {"Z", "X"}
 
 
 def archive_local_session(control_db: Path, session: Session) -> None:

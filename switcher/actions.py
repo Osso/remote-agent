@@ -205,6 +205,11 @@ def _restart_remote(session: Session) -> None:
         raise RuntimeError("Remote session did not restart in the expected state.")
 
 
+def stop_remote_session(session: Session) -> None:
+    """Stop the remote session service; opening the session resumes it."""
+    _run(_remote_arguments(session, "stop"), timeout=30)
+
+
 def _spawn_arguments(session: Session) -> list[str]:
     if session.backend == "remote":
         return ["--", *_remote_arguments(session, "attach")]

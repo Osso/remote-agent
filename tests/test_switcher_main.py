@@ -167,7 +167,7 @@ else:
     def create_database(self):
         with sqlite3.connect(self.state / "control.sqlite") as db:
             db.executescript("""
-                CREATE TABLE session_metadata (session_path TEXT PRIMARY KEY,id TEXT,cwd TEXT,name TEXT,parent_session_path TEXT,archived_at TEXT,goal_json TEXT,is_subagent INTEGER,subagent_name TEXT,model_provider TEXT,model_id TEXT,thinking_level TEXT,created_at TEXT,modified_at TEXT,message_count INTEGER,first_message TEXT,updated_at TEXT);
+                CREATE TABLE session_metadata (session_path TEXT PRIMARY KEY,id TEXT,cwd TEXT,name TEXT,name_revision INTEGER NOT NULL DEFAULT 0,parent_session_path TEXT,archived_at TEXT,goal_json TEXT,is_subagent INTEGER,subagent_name TEXT,model_provider TEXT,model_id TEXT,thinking_level TEXT,created_at TEXT,modified_at TEXT,message_count INTEGER,first_message TEXT,updated_at TEXT);
                 CREATE TABLE session_health (session_id TEXT PRIMARY KEY,agent_generation INTEGER,pid INTEGER,last_active_at TEXT,last_checked_at TEXT,check_status TEXT,checked_generation INTEGER,check_latency_ms INTEGER,updated_at TEXT);
                 CREATE TABLE runtime_mailbox_listeners (recipient_session_id TEXT,recipient_agent_id_key TEXT,pid INTEGER,runtime_instance_id TEXT,session_path TEXT,session_path_asserted_at TEXT,updated_at TEXT);
             """)
@@ -1058,6 +1058,63 @@ else:
         self.write_picker_fixture([{"key": "ctrl-d", "row": 1}, {"cancel": True}])
         self.assertEqual(self.run_picker(answers=b"n\n"), 0)
         self.assertTrue(self.session_file.is_file())
+
+    def local_name(self):
+        with sqlite3.connect(self.state / "control.sqlite") as db:
+            return db.execute(
+                "SELECT name, name_revision FROM session_metadata"
+                " WHERE session_path = ?",
+                (str(self.session_file),),
+            ).fetchone()
+
+    def test_picker_ctrl_r_renames_local_session_and_lists_new_name(self):
+        self.write_picker_fixture([{"key": "ctrl-r", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"Renamed work\n"), 0)
+        self.assertEqual(self.local_name(), ("Renamed work", 1))
+        names = {entry["name"] for entry in self.inventory()["sessions"]}
+        self.assertEqual(names, {"Renamed work", "remote-work"})
+        self.assertTrue(self.session_file.is_file())
+        self.assertEqual(self.recorded(), [])
+
+    def test_picker_ctrl_r_empty_name_cancels(self):
+        self.write_picker_fixture([{"key": "ctrl-r", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"\n"), 0)
+        self.assertEqual(self.local_name(), ("Local research", 0))
+
+    def test_picker_ctrl_r_refuses_remote_session(self):
+        self.write_picker_fixture([{"key": "ctrl-r", "row": 0}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"New\n"), 0)
+        self.assertEqual(self.local_name(), ("Local research", 0))
+        self.assertEqual(self.recorded(), [])
+
+    def test_picker_ctrl_s_stops_running_local_pi_after_confirmation(self):
+        child, _ = self.terminal_process()
+        self.bind_process(child)
+        self.write_picker_fixture([{"key": "ctrl-s", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"y\n"), 0)
+        self.assertEqual(child.wait(timeout=5), -15)
+        self.assertTrue(self.session_file.is_file())
+        self.assertEqual(self.recorded(), [])
+
+    def test_picker_ctrl_s_declined_keeps_local_pi_running(self):
+        child, _ = self.terminal_process()
+        self.bind_process(child)
+        self.write_picker_fixture([{"key": "ctrl-s", "row": 1}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"n\n"), 0)
+        self.assertIsNone(child.poll())
+
+    def test_picker_ctrl_s_stops_remote_session_on_its_host(self):
+        self.write_picker_fixture([{"key": "ctrl-s", "row": 0}, {"cancel": True}])
+        self.assertEqual(self.run_picker(answers=b"\n"), 0)
+        self.assertEqual(
+            self.recorded(),
+            [
+                {
+                    "program": "remote-agent",
+                    "args": ["--host", "agent-server", "stop", "remote-work"],
+                }
+            ],
+        )
 
     def write_picker_fixture(self, plan):
         counter = self.home / "picker-calls"

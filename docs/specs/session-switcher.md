@@ -60,6 +60,21 @@ a replacement for the installed remote-agent backend or protocol.
   requested action writes.
 - [ ] Ambiguous selections fail explicitly without fallback.
 
+### Rename and stop
+
+- [x] Ctrl+R prompts for a new name for the highlighted local session and writes
+  it as Pi's `/name` does: `session_metadata.name` is set and `name_revision`
+  incremented, for running or stopped sessions. An empty name cancels. Remote
+  sessions are refused: their name is the remote-agent session key, and
+  remote-agent has no rename command.
+- [x] Ctrl+S stops the highlighted session after a `[Y/n]` confirmation. A running
+  local session's bound Pi PID gets SIGTERM (Pi's graceful shutdown) and the
+  switcher waits up to 10 s for it to exit. A remote session runs installed
+  `remote-agent --host HOST [--user USER] stop NAME`; opening it later resumes it.
+  Already-stopped sessions and local sessions without a bound running PID are
+  refused. The transcript is never changed.
+- [x] Both actions re-read the selection and return to the picker with a notice.
+
 ### Open and resume
 
 Each session lives in one WezTerm tab. A session's terminal is the `/dev/pts`
@@ -145,7 +160,7 @@ is not live desktop acceptance.
   identity, invalid data, partial failures, bounded retries, and remote-first ordering.
 - `tests/test_switcher_picker.py` (18, including action keys): names/host/state display, selection identity,
   cancellation, missing/broken fzf, invalid selections, inventory errors, top-down
-  layout, remote color, Ctrl+A/Ctrl+D actions, and selection through native fzf's
+  layout, remote color, Ctrl+A/Ctrl+D/Ctrl+R/Ctrl+S actions, and selection through native fzf's
   ANSI-stripped output.
 - `tests/test_switcher_mutations.py` (7): archive metadata changes, stopped-only
   refusal, missing transcripts, descendant deletion, trash fallback, control-row
@@ -162,6 +177,9 @@ is not live desktop acceptance.
   an unreadable socket table that reports and starts nothing.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
   the error, live dismissal wait, Enter, and exit 1.
+  `test_picker_ctrl_r_*` and `test_picker_ctrl_s_*` drive the real picker loop in a
+  PTY: local rename visible in the next inventory, empty-name cancel, remote rename
+  refusal, SIGTERM of a bound local process, declined stop, and remote `stop NAME`.
 - `test_exited_aso_pi_*` in `tests/test_switcher_main.py`: same-name restart and
   attach on `aso`, refusal of ineligible status or a changed identity, no attach
   after a conversation mismatch, and no restart with an existing PTY client.
