@@ -30,7 +30,8 @@ One Rust project provides Pi session management, detached PTY ownership and remo
 - [x] Limit login frames to 8192 bytes before authentication; retain this limit by user decision.
 - [x] Preserve typed input, PTY dimensions, clean detach and local terminal restoration within the tested native attachment boundaries. Allow up to 10 seconds for QUIC endpoint drain on close.
 - [x] When a reconnect ticket has a changed token after server restart, reset attachment input and display replay state, preserve PTY dimensions and retry failures, reconnect to the same conversation, and accept new input. Do not replay pending pre-restart input whose delivery is ambiguous. With the same token, preserve pending input replay across transient outages. Restart and pending-frame fixtures plus live input recovery are proven below; this does not upgrade an already-running client.
-- [ ] Establish complete Pi VT capability coverage and per-display geometry. Alternate-screen applications and unknown VT callbacks remain unsupported.
+- [x] Preserve visible text and process lifetime when Pi emits OSC 8 hyperlink metadata or unrecognized OSC sequences. Drop this metadata without forwarding it and log unrecognized OSC once per session server.
+- [ ] Establish complete Pi VT capability coverage and per-display geometry. Alternate-screen applications and other unknown VT callbacks remain unsupported.
 - [ ] Prove simultaneous real Pi clients with shared PTY dimensions set to the smallest attached dimensions; fixtures alone are not full acceptance.
 - [x] Grey (256-color 240 background, distinct from dark terminal backgrounds such as `#1f2430`) the physical cells outside a smaller shared PTY, and keep them grey after native history scrolls the viewport.
 

@@ -32,6 +32,7 @@ struct Capture {
     keyboard: Vec<u8>,
     responses: Vec<u8>,
     failure: Option<String>,
+    warned_unknown_osc: bool,
 }
 
 impl Capture {
@@ -150,8 +151,8 @@ impl vt100::Callbacks for Capture {
                 self.cwd = cwd.to_vec();
                 self.osc(b"7", cwd);
             }
-            // Pi appends a hyperlink close to every row, including plain text.
-            [b"8", b"", b""] => {}
+            // Hyperlink metadata is not represented in reframed cells.
+            [b"8", ..] => {}
             // These advisory shell zones carry no cell data. Reframed clients
             // must not receive markers at an unrelated physical cursor position.
             [b"133", b"A" | b"B" | b"C"] => {}
@@ -159,7 +160,11 @@ impl vt100::Callbacks for Capture {
             // Pi emits the clear with and without a trailing separator.
             [b"9", b"4", b"0"] => self.osc(b"9", b"4;0"),
             [b"9", b"4", b"0", b""] => self.osc(b"9", b"4;0;"),
-            _ => self.failure = Some(format!("unsupported terminal OSC: {params:?}")),
+            _ if !self.warned_unknown_osc => {
+                eprintln!("remote-agent: ignored unsupported terminal OSC");
+                self.warned_unknown_osc = true;
+            }
+            _ => {}
         }
     }
     fn unhandled_char(&mut self, _: &mut vt100::Screen, c: char) {
@@ -197,8 +202,9 @@ impl vte::Perform for ScrollbackClear {
 /// `history_bytes` independently caps retained rows and replay updates. A live
 /// feed still returns EVERY row, even when that one update exceeds the budget.
 ///
-/// Unsupported callback operations poison this state and return an error.
-/// Snapshots remain at the last successful display. This is not a terminal
+/// Unknown OSC metadata is dropped; other unsupported callback operations
+/// poison this state and return an error. Snapshots remain at the last
+/// successful display. This is not a terminal
 /// sanitizer: vt100 itself ignores some unsupported modes and escape strings.
 pub struct TerminalState {
     parser: vt100::Parser<Capture>,
@@ -1391,8 +1397,14 @@ mod tests {
             assert_eq!(control, expected);
             assert!(state.drain_responses().is_empty());
         }
-        // Unknown OSC 9 commands are still unsupported, not blanket-ignored.
-        assert!(state.feed(b"\x1b]9;unknown\x07").is_err());
+        // Unknown progress metadata is dropped without poisoning the display.
+        assert!(
+            state
+                .feed(b"\x1b]9;unknown\x07")
+                .unwrap()
+                .control
+                .is_empty()
+        );
     }
 
     #[test]
