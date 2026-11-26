@@ -37,6 +37,16 @@ fn read_map(path: &Path) -> Result<Value> {
     Ok(value)
 }
 
+/// `%C` hashes the local user, destination, port and remote user, so accounts never share a master.
+const SSH_MULTIPLEX_OPTIONS: [&str; 6] = [
+    "-o",
+    "ControlMaster=auto",
+    "-o",
+    "ControlPath=~/.ssh/remote-agent-%C",
+    "-o",
+    "ControlPersist=10m",
+];
+
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     let text = value[key]
         .as_str()
@@ -225,6 +235,7 @@ impl Config {
         Ok(target)
     }
 
+    /// SSH command running the remote account's remote-agent; idle masters persist ten minutes.
     pub fn build_ssh_command(
         &self,
         host: &str,
@@ -260,7 +271,8 @@ impl Config {
             .collect::<Result<Vec<_>>>()?
             .join(" ");
         let mut command = Command::new("ssh");
-        command.arg(target).arg(remote);
+        // A ~140 ms link makes each handshake cost ~1.6 s; reuse one connection per destination.
+        command.args(SSH_MULTIPLEX_OPTIONS).arg(target).arg(remote);
         Ok(command)
     }
 }
@@ -557,9 +569,10 @@ mod tests {
             .unwrap();
         assert_eq!(command.get_program(), "ssh");
         let argv: Vec<_> = command.get_args().map(|s| s.to_str().unwrap()).collect();
-        assert_eq!(argv[0], "operator@example");
+        assert_eq!(argv[..6], SSH_MULTIPLEX_OPTIONS);
+        assert_eq!(argv[6], "operator@example");
         let output = Command::new("/bin/sh")
-            .args(["-c", &format!("set -- {}; printf '%s\\n' \"$@\"", argv[1])])
+            .args(["-c", &format!("set -- {}; printf '%s\\n' \"$@\"", argv[7])])
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -569,7 +582,7 @@ mod tests {
         );
         let normal = config.build_ssh_command("agent-server", None, &[]).unwrap();
         assert_eq!(
-            normal.get_args().nth(1).unwrap(),
+            normal.get_args().last().unwrap(),
             "'/srv/operator/.local/bin/remote-agent'"
         );
         assert!(config.build_ssh_command("desktop", None, &args).is_err());
