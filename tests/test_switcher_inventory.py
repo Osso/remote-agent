@@ -414,6 +414,17 @@ class InventoryTests(unittest.TestCase):
             ],
         )
 
+    def test_collect_queries_remote_sources_concurrently(self):
+        # Each fixture source takes one second; sequential queries would take three.
+        os.environ["INVENTORY_MODE"] = "timeout"
+        self.remote_payload([self.remote_row(name="Own")])
+        started = time.monotonic()
+        sessions, errors = inventory.collect_sessions()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(errors, [])
+        self.assertEqual([s.name for s in sessions], ["Own"])
+        self.assertEqual(len(self.requests.read_text().splitlines()), 3)
+
     def test_collect_lists_allison_sessions_under_her_account(self):
         self.remote_payload([self.remote_row(name="Own")])
         (self.root / "allison-payload.json").write_text(

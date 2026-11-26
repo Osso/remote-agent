@@ -8,6 +8,7 @@ import socket
 import sqlite3
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -342,21 +343,31 @@ def collect_sessions() -> tuple[list[Session], list[str]]:
     local_host = socket.gethostname()
     sessions: list[Session] = []
     errors: list[str] = []
-    try:
-        sessions.extend(load_local_sessions(local_control_db_path(), local_host))
-    except (OSError, sqlite3.Error, ValueError) as error:
-        errors.append(f"Local inventory: {error}")
-    for host, user in REMOTE_SOURCES:
-        if user is None and host.lower() == local_host.lower():
-            continue
-        source = f"{user}@{host}" if user else host
+    sources = [
+        (host, user)
+        for host, user in REMOTE_SOURCES
+        if user is not None or host.lower() != local_host.lower()
+    ]
+    # Each remote source is one SSH round trip dominated by handshake latency; query them
+    # concurrently so the picker waits for the slowest source, not their sum.
+    with ThreadPoolExecutor(max_workers=len(sources) or 1) as pool:
+        remote = [
+            pool.submit(load_remote_sessions, host=host, user=user)
+            for host, user in sources
+        ]
         try:
-            sessions.extend(load_remote_sessions(host=host, user=user))
-        except InventoryError as error:
-            sessions.extend(error.sessions)
-            errors.append(f"Remote inventory ({source}): {error}")
-        except OSError as error:
-            errors.append(f"Remote inventory ({source}): {error}")
+            sessions.extend(load_local_sessions(local_control_db_path(), local_host))
+        except (OSError, sqlite3.Error, ValueError) as error:
+            errors.append(f"Local inventory: {error}")
+        for (host, user), future in zip(sources, remote):
+            source = f"{user}@{host}" if user else host
+            try:
+                sessions.extend(future.result())
+            except InventoryError as error:
+                sessions.extend(error.sessions)
+                errors.append(f"Remote inventory ({source}): {error}")
+            except OSError as error:
+                errors.append(f"Remote inventory ({source}): {error}")
     pinned = pinned_session_ids()
     return sorted(
         sessions,
