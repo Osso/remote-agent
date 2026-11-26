@@ -10,7 +10,12 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .actions import PICKER_TITLE, open_session, stop_remote_session
+from .actions import (
+    PICKER_TITLE,
+    open_session,
+    rename_remote_session,
+    stop_remote_session,
+)
 from .inventory import (
     Session,
     collect_sessions,
@@ -53,19 +58,22 @@ def _confirm(question: str) -> bool:
 
 
 def _ask_name(session: Session) -> str:
+    note = " (a running session restarts)" if session.backend == "remote" else ""
     try:
-        return input(f"New name for '{session.name}' (empty cancels): ").strip()
+        return input(f"New name for '{session.name}'{note}, empty cancels: ").strip()
     except EOFError:
         return ""
 
 
 def _rename(session: Session) -> str | None:
-    if session.backend != "local":
-        raise RuntimeError("Remote sessions cannot be renamed from this switcher.")
     name = _ask_name(session)
     if not name:
         return None
-    rename_local_session(local_control_db_path(), _refresh_selection(session), name)
+    session = _refresh_selection(session)
+    if session.backend == "local":
+        rename_local_session(local_control_db_path(), session, name)
+    else:
+        rename_remote_session(session, name)
     return f"Renamed '{session.name}' to '{name}'."
 
 

@@ -1081,11 +1081,25 @@ else:
         self.assertEqual(self.run_picker(answers=b"\n"), 0)
         self.assertEqual(self.local_name(), ("Local research", 0))
 
-    def test_picker_ctrl_r_refuses_remote_session(self):
+    def test_picker_ctrl_r_renames_remote_session_on_its_host(self):
         self.write_picker_fixture([{"key": "ctrl-r", "row": 0}, {"cancel": True}])
-        self.assertEqual(self.run_picker(answers=b"New\n"), 0)
+        self.assertEqual(self.run_picker(answers=b"new-work\n"), 0)
         self.assertEqual(self.local_name(), ("Local research", 0))
-        self.assertEqual(self.recorded(), [])
+        self.assertEqual(
+            self.recorded(),
+            [
+                {
+                    "program": "remote-agent",
+                    "args": [
+                        "--host",
+                        "agent-server",
+                        "rename",
+                        "remote-work",
+                        "new-work",
+                    ],
+                }
+            ],
+        )
 
     def test_picker_ctrl_s_stops_running_local_pi_after_confirmation(self):
         child, _ = self.terminal_process()

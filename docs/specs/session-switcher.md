@@ -64,9 +64,12 @@ a replacement for the installed remote-agent backend or protocol.
 
 - [x] Ctrl+R prompts for a new name for the highlighted local session and writes
   it as Pi's `/name` does: `session_metadata.name` is set and `name_revision`
-  incremented, for running or stopped sessions. An empty name cancels. Remote
-  sessions are refused: their name is the remote-agent session key, and
-  remote-agent has no rename command.
+  incremented, for running or stopped sessions. An empty name cancels. A remote
+  session runs installed `remote-agent --host HOST [--user USER] rename NAME
+  NEW_NAME`: the name keys the state directory and `remote-agent@NAME` unit, so
+  the backend stops the session, moves its record, and, if it was started,
+  starts it again under the new name with the same saved conversation. An
+  existing target name is refused before any change.
 - [x] Ctrl+S stops the highlighted session after a `[Y/n]` confirmation. A running
   local session's bound Pi PID gets SIGTERM (Pi's graceful shutdown) and the
   switcher waits up to 10 s for it to exit. A remote session runs installed
@@ -178,8 +181,8 @@ is not live desktop acceptance.
   `test_fatal_inventory_error_stays_visible_until_enter` uses a real PTY to assert
   the error, live dismissal wait, Enter, and exit 1.
   `test_picker_ctrl_r_*` and `test_picker_ctrl_s_*` drive the real picker loop in a
-  PTY: local rename visible in the next inventory, empty-name cancel, remote rename
-  refusal, SIGTERM of a bound local process, declined stop, and remote `stop NAME`.
+  PTY: local rename visible in the next inventory, empty-name cancel, remote
+  `rename NAME NEW_NAME`, SIGTERM of a bound local process, declined stop, and remote `stop NAME`.
 - `test_exited_aso_pi_*` in `tests/test_switcher_main.py`: same-name restart and
   attach on `aso`, refusal of ineligible status or a changed identity, no attach
   after a conversation mismatch, and no restart with an existing PTY client.

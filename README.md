@@ -188,6 +188,11 @@ marked). `start NAME` naming an existing session uses its recorded project, and
 `restart NAME` on an unmarked session starts it the same way. Restart and deploy sweeps
 must restart only sessions marked `started`.
 
+`rename NAME NEW_NAME` stops the session, moves its state directory to the new
+name, and starts the `remote-agent@NEW_NAME` unit again only if it was marked
+`started`, resuming the same saved conversation. An existing `NEW_NAME` is refused
+before any change. Attached clients disconnect; attach again with the new name.
+
 Other commands are `status NAME` and `cancel NAME`; cancel also clears the mark. It stops the
 enabled user unit with `systemctl --user disable --now`, waits for the server PID
 to exit, then runs the project's `pi_cancel_executable` hook with the conversation
@@ -273,8 +278,9 @@ Esc cancels. Errors must remain visible. Ctrl+A archives the highlighted stopped
 local session; Ctrl+D deletes it after a `[Y/n]` confirmation. Archive sets Pi's
 archive flag in place, and delete removes the transcript tree and control rows.
 Both revalidate the selection and refuse running, unknown, and remote sessions.
-Ctrl+R renames the highlighted local session (remote names are fixed keys and
-are refused). Ctrl+S stops the highlighted session after a `[Y/n]` confirmation:
+Ctrl+R renames the highlighted session; a remote one runs `remote-agent rename
+NAME NEW_NAME`, which restarts a started session under the new name with the
+same conversation. Ctrl+S stops the highlighted session after a `[Y/n]` confirmation:
 local Pi gets SIGTERM; remote sessions run `remote-agent stop NAME`.
 The desktop binding contract is Super+A
 for this selector, Super+S unchanged for Noctalia Session Menu, and removal of

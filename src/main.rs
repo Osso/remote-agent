@@ -55,6 +55,11 @@ enum Action {
     Restart {
         name: String,
     },
+    /// Rename a session; a started session restarts under the new name, resuming its conversation.
+    Rename {
+        name: String,
+        new_name: String,
+    },
     Projects,
     /// Create a project checkout locally and on the remote account, then map it.
     Create {
@@ -225,6 +230,7 @@ async fn run_client_command(
         Action::Cancel { name } => ControlRequest::Cancel { name },
         Action::Stop { name } => ControlRequest::Stop { name },
         Action::Restart { name } => ControlRequest::Restart { name },
+        Action::Rename { name, new_name } => ControlRequest::Rename { name, new_name },
         _ => bail!("command is not a client action"),
     };
     let response = client::query_remote(config, host, user, &request).await?;
@@ -346,6 +352,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
         ControlRequest::Stop { name } => stop_session(home, &name).await,
         ControlRequest::Restart { name } => restart_session(home, &name).await,
+        ControlRequest::Rename { name, new_name } => rename_session(home, &name, &new_name).await,
         ControlRequest::PiLogin { .. } => bail!("provider login needs a TTY; use login PROVIDER"),
     }
 }
@@ -493,6 +500,31 @@ async fn stop_session(home: &Path, name: &str) -> Result<Value> {
     );
     stop_session_server(&state, launch).await?;
     control::status(home, name)
+}
+
+/// Stop the session, move its record to the new name, then start it again if it was started.
+/// The server's state path and unit instance are both the name, so a live server cannot be renamed.
+async fn rename_session(home: &Path, name: &str, new_name: &str) -> Result<Value> {
+    let state = control::session_dir(home, name)?;
+    let target = control::session_dir(home, new_name)?;
+    ensure!(name != new_name, "session is already named {name}");
+    ensure!(!target.exists(), "session {new_name} already exists");
+    let launch = control::read_launch(&state)?;
+    ensure!(
+        launch.name == name,
+        "session name does not match launch record"
+    );
+    let started = launch.started;
+    stop_session_server(&state, launch).await?;
+    std::fs::rename(&state, &target)
+        .with_context(|| format!("move session {name} to {new_name}; it is stopped"))?;
+    let mut launch = control::read_launch(&target)?;
+    launch.name = new_name.to_owned();
+    control::write_private_json(&target.join("launch.json"), &launch)?;
+    if started {
+        return start_existing_session(home, &target, new_name, None, false).await;
+    }
+    control::status(home, new_name)
 }
 
 /// Disable and stop the unit, wait for the recorded server to exit, then clear the started mark.
@@ -785,10 +817,57 @@ mod tests {
         assert_eq!(status["started"], true);
         assert!(control::read_launch(&stopped).unwrap().resume);
 
+        let rename = |name: &str, new_name: &str| ControlRequest::Rename {
+            name: name.into(),
+            new_name: new_name.into(),
+        };
+        // Renaming onto an existing session changes nothing.
+        let error = dispatch(home.path(), &config, rename("stopped", "other"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert!(stopped.is_dir());
+
+        // A started session stops, moves, and resumes its conversation under the new name.
+        // Its recorded server has exited, so only the unit is stopped.
+        std::fs::write(
+            stopped.join("runtime.json"),
+            r#"{"pid":2147483646,"address":"a","certificate":[],"token":"t"}"#,
+        )
+        .unwrap();
+        let status = dispatch(home.path(), &config, rename("stopped", "renamed"))
+            .await
+            .unwrap();
+        assert_eq!(
+            (&status["name"], &status["started"], &status["conversation"]),
+            (
+                &json!("renamed"),
+                &json!(true),
+                &json!("stopped-conversation")
+            )
+        );
+        assert!(!stopped.exists());
+        let renamed = control::session_dir(home.path(), "renamed").unwrap();
+        let launch = control::read_launch(&renamed).unwrap();
+        assert!(launch.name == "renamed" && launch.started && launch.resume);
+
+        // An unstarted session is only moved.
+        let status = dispatch(home.path(), &config, rename("other", "other-two"))
+            .await
+            .unwrap();
+        assert_eq!(
+            (&status["name"], &status["started"]),
+            (&json!("other-two"), &json!(false))
+        );
+        assert!(!control::session_dir(home.path(), "other").unwrap().exists());
+
         assert_eq!(
             std::fs::read_to_string(calls).unwrap(),
             "--user enable --now remote-agent@pi-rust-repin.service\n\
-             --user enable --now remote-agent@stopped.service\n"
+             --user enable --now remote-agent@stopped.service\n\
+             --user disable --now remote-agent@stopped.service\n\
+             --user enable --now remote-agent@renamed.service\n\
+             --user disable --now remote-agent@other.service\n"
         );
     }
 

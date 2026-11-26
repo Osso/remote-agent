@@ -210,6 +210,11 @@ def stop_remote_session(session: Session) -> None:
     _run(_remote_arguments(session, "stop"), timeout=30)
 
 
+def rename_remote_session(session: Session, name: str) -> None:
+    """Rename the remote session; a started session restarts under the new name."""
+    _run([*_remote_arguments(session, "rename"), name], timeout=90)
+
+
 def _spawn_arguments(session: Session) -> list[str]:
     if session.backend == "remote":
         return ["--", *_remote_arguments(session, "attach")]

@@ -144,6 +144,10 @@ pub enum ControlRequest {
     Restart {
         name: String,
     },
+    Rename {
+        name: String,
+        new_name: String,
+    },
     Projects,
     Create {
         project: String,
