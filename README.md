@@ -188,6 +188,10 @@ marked). `start NAME` naming an existing session uses its recorded project, and
 `restart NAME` on an unmarked session starts it the same way. Restart and deploy sweeps
 must restart only sessions marked `started`.
 
+Every remote-agent SSH call shares one master connection per destination
+(`ControlMaster=auto`, socket `~/.ssh/remote-agent-%C`, `ControlPersist=10m`), so
+only the first call after ten idle minutes pays the SSH handshake.
+
 `rename NAME NEW_NAME` stops the session, moves its state directory to the new
 name, and starts the `remote-agent@NEW_NAME` unit again only if it was marked
 `started`, resuming the same saved conversation. An existing `NEW_NAME` is refused

@@ -18,7 +18,8 @@ a replacement for the installed remote-agent backend or protocol.
   default-account sessions through `remote-agent --host aso list`. Her rows
   display host `allison@agent-server`; aso rows display host `aso` and open with
   `--host aso`. Accounts and hosts are part of selection identity, so equal
-  names stay distinct. A source whose host is the local machine is skipped
+  names stay distinct. Remote sources are queried concurrently, so listing waits
+  for the slowest source rather than their sum. A source whose host is the local machine is skipped
   because local inventory already covers it. Each source's failure is reported
   separately without discarding other sources. No other account or host is
   listed.
