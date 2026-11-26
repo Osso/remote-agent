@@ -340,6 +340,7 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         }
         ControlRequest::Logs { name } => read_logs(&read_running_ticket(home, &name)?).await,
         ControlRequest::Attach { name } => {
+            restart_exited_command_session(home, &name).await?;
             Ok(serde_json::to_value(read_running_ticket(home, &name)?)?)
         }
         ControlRequest::Cancel { name } => cancel_session(home, config, &name).await,
@@ -347,6 +348,20 @@ async fn dispatch(home: &Path, config: &Config, request: ControlRequest) -> Resu
         ControlRequest::Restart { name } => restart_session(home, &name).await,
         ControlRequest::PiLogin { .. } => bail!("provider login needs a TTY; use login PROVIDER"),
     }
+}
+
+/// A configured command (`pi_args`) that quit is started again by the next attach;
+/// Pi conversations keep reporting their exit.
+async fn restart_exited_command_session(home: &Path, name: &str) -> Result<()> {
+    let status = control::status(home, name)?;
+    if status["server_running"] != true || status["running"] == true {
+        return Ok(());
+    }
+    let launch = control::read_launch(&control::session_dir(home, name)?)?;
+    if launch.pi_args.is_some() {
+        restart_session(home, name).await?;
+    }
+    Ok(())
 }
 
 async fn restart_session(home: &Path, name: &str) -> Result<Value> {

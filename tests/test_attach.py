@@ -559,6 +559,50 @@ class NativeRustAttachTests(unittest.TestCase):
         for field in ("pid", "child_pid", "conversation"):
             self.assertEqual(status[field], started[field])
 
+    def test_attach_restarts_configured_command_that_quit(self):
+        wrapper = self.root / ".local/bin/pi-fixture"
+        launches = self.root / "launches"
+        # The first launch quits like `pi questions` after Escape; later ones stay up.
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os, time\n"
+            f"path = {str(launches)!r}\n"
+            "first = not os.path.exists(path)\n"
+            "open(path, 'a').write(str(os.getpid()) + '\\n')\n"
+            "if first: raise SystemExit(0)\n"
+            "while True: time.sleep(1)\n"
+        )
+        path = self.root / ".config/remote-agent/remote-projects.json"
+        projects = json.loads(path.read_text())
+        projects["demo"]["pi_args"] = ["questions"]
+        path.write_text(json.dumps(projects))
+        started = self.cli("start", "demo", "bulk-proof")
+        self.owned.update((started["pid"], started["child_pid"]))
+        deadline = time.monotonic() + 5
+        while self.cli("status", "bulk-proof")["exit_code"] != 0:
+            self.assertLess(time.monotonic(), deadline, self.server_log())
+            time.sleep(0.05)
+
+        self.attach()
+        output = bytearray()
+        deadline = time.monotonic() + 12
+        while len(launches.read_text().splitlines()) < 2:
+            self.assertLess(time.monotonic(), deadline, self.server_log())
+            output.extend(self.drain(0.1))
+        # Before the fix the client received the old exit and quit at once.
+        output.extend(self.drain(2))
+        pid, status = os.waitpid(self.client, os.WNOHANG)
+        if pid:
+            self.reaped.add(pid)
+            self.client = None
+            self.fail(f"attach exited {os.waitstatus_to_exitcode(status)}: {output!r}")
+        restarted = self.cli("status", "bulk-proof")
+        self.owned.update((restarted["pid"], restarted["child_pid"]))
+        self.assertTrue(restarted["running"])
+        self.assertNotEqual(restarted["child_pid"], started["child_pid"])
+        self.assertEqual(restarted["conversation"], started["conversation"])
+        self.assertEqual(len(launches.read_text().splitlines()), 2)
+        self.detach()
+
     def test_unavailable_ssh_bootstrap_preserves_terminal_and_server(self):
         started = self.cli("start", "demo", "bulk-proof")
         self.owned.update((started["pid"], started["child_pid"]))
