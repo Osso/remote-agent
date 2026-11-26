@@ -391,7 +391,8 @@ async fn restart_session(home: &Path, name: &str) -> Result<Value> {
             );
         }
     }
-    launch.resume = true;
+    // `resume` stays as launched: `--session-id` reopens a saved conversation or recreates an
+    // unsaved one; only an explicit `start --resume` needs `--session`.
     launch.prompt = None;
     control::write_private_json(&state.join("launch.json"), &launch)?;
     control::restart_session_unit(name)?;
@@ -592,7 +593,6 @@ async fn start_existing_session(
         }
     }
     launch.started = true;
-    launch.resume = true;
     launch.prompt = None;
     control::write_private_json(&state.join("launch.json"), &launch)?;
     let child = control::resume_session_unit(name, state)?;
@@ -795,7 +795,7 @@ mod tests {
         assert_eq!(status["started"], true);
         assert_eq!(status["project"], "pi-rust");
         let launch = control::read_launch(&repin).unwrap();
-        assert!(launch.started && launch.resume && launch.prompt.is_none());
+        assert!(launch.started && !launch.resume && launch.prompt.is_none());
         assert_eq!(launch.conversation, "pi-rust-repin-conversation");
 
         // An explicit project that differs from the record still fails.
@@ -815,7 +815,18 @@ mod tests {
         };
         let status = dispatch(home.path(), &config, request).await.unwrap();
         assert_eq!(status["started"], true);
-        assert!(control::read_launch(&stopped).unwrap().resume);
+        assert!(!control::read_launch(&stopped).unwrap().resume);
+
+        // An explicitly resumed conversation keeps `--session` across restarts.
+        let resumed = write_stopped_session(home.path(), "resumed", "pi-rust");
+        let mut launch = control::read_launch(&resumed).unwrap();
+        launch.resume = true;
+        control::write_private_json(&resumed.join("launch.json"), &launch).unwrap();
+        let request = ControlRequest::Restart {
+            name: "resumed".into(),
+        };
+        dispatch(home.path(), &config, request).await.unwrap();
+        assert!(control::read_launch(&resumed).unwrap().resume);
 
         let rename = |name: &str, new_name: &str| ControlRequest::Rename {
             name: name.into(),
@@ -849,7 +860,7 @@ mod tests {
         assert!(!stopped.exists());
         let renamed = control::session_dir(home.path(), "renamed").unwrap();
         let launch = control::read_launch(&renamed).unwrap();
-        assert!(launch.name == "renamed" && launch.started && launch.resume);
+        assert!(launch.name == "renamed" && launch.started && !launch.resume);
 
         // An unstarted session is only moved.
         let status = dispatch(home.path(), &config, rename("other", "other-two"))
@@ -865,6 +876,7 @@ mod tests {
             std::fs::read_to_string(calls).unwrap(),
             "--user enable --now remote-agent@pi-rust-repin.service\n\
              --user enable --now remote-agent@stopped.service\n\
+             --user enable --now remote-agent@resumed.service\n\
              --user disable --now remote-agent@stopped.service\n\
              --user enable --now remote-agent@renamed.service\n\
              --user disable --now remote-agent@other.service\n"
